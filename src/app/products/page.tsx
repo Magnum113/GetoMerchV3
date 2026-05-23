@@ -71,13 +71,20 @@ export default function ProductsPage() {
         title="Каталог SKU"
         description="Все уникальные комбинации товаров (футболка/худи × ткань × цвет × размер × дизайн × тип украшения)"
         action={
-          <div className="flex gap-2">
+          <>
             <Button variant="outline" onClick={syncOzonPrices} disabled={syncing}>
               <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Синхронизация…" : "Синхронизировать цены с Ozon"}
+              <span className="hidden sm:inline">
+                {syncing ? "Синхронизация…" : "Синхронизировать цены с Ozon"}
+              </span>
+              <span className="sm:hidden">{syncing ? "…" : "Цены Ozon"}</span>
             </Button>
-            <Button onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4" /> Создать SKU</Button>
-          </div>
+            <Button onClick={() => setOpenCreate(true)}>
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Создать SKU</span>
+              <span className="sm:hidden">Новый</span>
+            </Button>
+          </>
         }
       />
 
@@ -109,45 +116,82 @@ export default function ProductsPage() {
               action={<Button onClick={() => setOpenCreate(true)}><Plus className="h-4 w-4" /> Создать SKU</Button>}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Товар</TableHead>
-                  <TableHead>Артикул</TableHead>
-                  <TableHead className="text-right">Себестоимость</TableHead>
-                  <TableHead className="text-right">Цена продажи</TableHead>
-                  <TableHead className="text-right w-24">Действия</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop / tablet table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Товар</TableHead>
+                      <TableHead>Артикул</TableHead>
+                      <TableHead className="text-right">Себестоимость</TableHead>
+                      <TableHead className="text-right">Цена продажи</TableHead>
+                      <TableHead className="text-right w-24">Действия</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell><ProductDisplay p={p} compact /></TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{p.sku ?? "—"}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <PriceCell productId={p.id} field="cost_price" value={p.cost_price} onSaved={reload} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <PriceCell productId={p.id} field="sale_price" value={p.sale_price} onSaved={reload} />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button size="icon" variant="ghost" title="Редактировать" onClick={() => setEditing(p)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" title="Удалить" onClick={async () => {
+                              if (!confirm("Удалить SKU? Это удалит и все остатки.")) return;
+                              try { await api.deleteProduct(p.id); toast.success("Удалено"); reload(); }
+                              catch (e) { toast.error(errorMessage(e)); }
+                            }}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden divide-y">
                 {filtered.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell><ProductDisplay p={p} compact /></TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{p.sku ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      <PriceCell productId={p.id} field="cost_price" value={p.cost_price} onSaved={reload} />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      <PriceCell productId={p.id} field="sale_price" value={p.sale_price} onSaved={reload} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button size="icon" variant="ghost" title="Редактировать" onClick={() => setEditing(p)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" title="Удалить" onClick={async () => {
-                          if (!confirm("Удалить SKU? Это удалит и все остатки.")) return;
-                          try { await api.deleteProduct(p.id); toast.success("Удалено"); reload(); }
-                          catch (e) { toast.error(errorMessage(e)); }
-                        }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                  <div key={p.id} className="p-4 space-y-2">
+                    <ProductDisplay p={p} compact />
+                    <div className="font-mono text-[11px] text-muted-foreground break-all">{p.sku ?? "—"}</div>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Себестоимость</div>
+                        <PriceCell productId={p.id} field="cost_price" value={p.cost_price} onSaved={reload} />
                       </div>
-                    </TableCell>
-                  </TableRow>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Цена</div>
+                        <PriceCell productId={p.id} field="sale_price" value={p.sale_price} onSaved={reload} />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-1 pt-1">
+                      <Button size="sm" variant="outline" onClick={() => setEditing(p)}>
+                        <Pencil className="h-3.5 w-3.5" /> Изменить
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={async () => {
+                        if (!confirm("Удалить SKU? Это удалит и все остатки.")) return;
+                        try { await api.deleteProduct(p.id); toast.success("Удалено"); reload(); }
+                        catch (e) { toast.error(errorMessage(e)); }
+                      }}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

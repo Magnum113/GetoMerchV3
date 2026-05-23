@@ -210,10 +210,12 @@ export const api = {
   // ---------- TRANSACTIONS ----------
   async listTransactions(limit = 100): Promise<Transaction[]> {
     const sb = createClient();
+    // Important: merch_transactions has TWO FKs to merch_products (product_id, source_product_id).
+    // We MUST disambiguate by using !product_id, otherwise PostgREST returns 300 PGRST201.
     const { data, error } = await sb
       .from("merch_transactions")
       .select(
-        `*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}), from_warehouse:merch_warehouses!from_warehouse_id(*), to_warehouse:merch_warehouses!to_warehouse_id(*)`,
+        `*, product:merch_products!product_id(${PRODUCT_SELECT.replace(/\n/g, " ")}), from_warehouse:merch_warehouses!from_warehouse_id(*), to_warehouse:merch_warehouses!to_warehouse_id(*)`,
       )
       .order("occurred_at", { ascending: false })
       .limit(limit);

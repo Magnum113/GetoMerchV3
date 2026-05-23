@@ -52,7 +52,7 @@ export default function DesignsPage() {
                     <Palette className="h-10 w-10 opacity-30" />
                   </div>
                 )}
-                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                <div className="absolute top-2 right-2 flex gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition">
                   <Button size="icon" variant="secondary" className="h-7 w-7" onClick={() => setEdit(d)}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
