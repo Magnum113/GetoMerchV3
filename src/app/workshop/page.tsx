@@ -172,7 +172,7 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId }: { 
   useEffect(() => {
     if (open) {
       setWorkshopId(defaultWorkshopId);
-      api.listDesigns().then(setDesigns);
+      api.listDesigns({ type: "embroidery" }).then(setDesigns);
       api.listDecorationTypes().then((dts) => setDecorationTypes(dts.filter((d) => d.made_at === "workshop")));
     }
   }, [open, defaultWorkshopId]);

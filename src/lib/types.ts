@@ -1,5 +1,6 @@
 export type WarehouseType = "own" | "workshop";
 export type DecorationLocation = "own" | "workshop";
+export type DesignType = "print" | "embroidery";
 
 export type WorkshopOrderStatus =
   | "pending"
@@ -58,6 +59,7 @@ export interface Size {
 export interface Design {
   id: string;
   name: string;
+  type: DesignType;
   description: string | null;
   image_url: string | null;
   created_at: string;

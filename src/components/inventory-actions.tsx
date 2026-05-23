@@ -331,9 +331,10 @@ export function AdjustInline({ item, onDone }: { item: Inventory; onDone?: () =>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Корректировка остатка</DialogTitle>
-            <DialogDescription>
-              <ProductDisplay p={item.product} /> · склад «{item.warehouse?.name}» · сейчас {item.quantity} шт
-            </DialogDescription>
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <ProductDisplay p={item.product} />
+              <div>Склад «{item.warehouse?.name}» · сейчас {item.quantity} шт</div>
+            </div>
           </DialogHeader>
 
           <div className="space-y-4">

@@ -267,9 +267,9 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Редактирование SKU</DialogTitle>
-          <DialogDescription>
+          <div className="text-sm text-muted-foreground">
             <ProductDisplay p={product} compact />
-          </DialogDescription>
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">

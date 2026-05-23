@@ -15,6 +15,7 @@ import type {
   WorkshopOrder,
   WorkshopOrderItem,
   DecorationType,
+  DesignType,
 } from "@/lib/types";
 
 const PRODUCT_SELECT = `
@@ -72,9 +73,11 @@ export const api = {
     return (data ?? []) as DecorationType[];
   },
 
-  async listDesigns(): Promise<Design[]> {
+  async listDesigns(filters?: { type?: DesignType }): Promise<Design[]> {
     const sb = createClient();
-    const { data, error } = await sb.from("merch_designs").select("*").order("name");
+    let q = sb.from("merch_designs").select("*").order("name");
+    if (filters?.type) q = q.eq("type", filters.type);
+    const { data, error } = await q;
     if (error) throw toError(error);
     return (data ?? []) as Design[];
   },
@@ -484,7 +487,7 @@ export const api = {
   },
 
   // ---------- DESIGNS CRUD ----------
-  async createDesign(input: { name: string; description?: string; image_url?: string }) {
+  async createDesign(input: { name: string; type: DesignType; description?: string; image_url?: string }) {
     const sb = createClient();
     const { data, error } = await sb.from("merch_designs").insert(input).select().single();
     if (error) throw toError(error);

@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 import { toast } from "sonner";
 import type {
-  Color, Design, DecorationType, FabricType, ProductCategory, Size, Product,
+  Color, Design, DecorationType, DesignType, FabricType, ProductCategory, Size, Product,
 } from "@/lib/types";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -80,6 +80,12 @@ export function ProductPicker({ blankOnly = false, finishedOnly = false, onChang
   }, [categoryId, fabricId, colorId, sizeId, designId, decorationTypeId]);
 
   const showDesignFields = !blankOnly;
+  const selectedDecorationType = decorationTypes.find((d) => d.id === decorationTypeId);
+  const selectedDesignType: DesignType | null =
+    selectedDecorationType?.slug === "embroidery" ? "embroidery" :
+    selectedDecorationType?.slug === "print" ? "print" :
+    null;
+  const filteredDesigns = selectedDesignType ? designs.filter((d) => d.type === selectedDesignType) : designs;
 
   return (
     <div className={className ?? "grid grid-cols-2 gap-3"}>
@@ -134,7 +140,7 @@ export function ProductPicker({ blankOnly = false, finishedOnly = false, onChang
         <>
           <div className="space-y-1.5">
             <Label className="text-xs">Тип украшения</Label>
-            <Select value={decorationTypeId} onValueChange={setDecorationTypeId}>
+            <Select value={decorationTypeId} onValueChange={(v) => { setDecorationTypeId(v); setDesignId(""); }}>
               <SelectTrigger><SelectValue placeholder={finishedOnly ? "—" : "(пустая, если не нужен дизайн)"} /></SelectTrigger>
               <SelectContent>
                 {decorationTypes.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
@@ -147,10 +153,10 @@ export function ProductPicker({ blankOnly = false, finishedOnly = false, onChang
             <Select value={designId} onValueChange={setDesignId}>
               <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
               <SelectContent>
-                {designs.length === 0 ? (
+                {filteredDesigns.length === 0 ? (
                   <div className="text-xs text-muted-foreground p-2">Добавьте дизайн в разделе «Дизайны»</div>
                 ) : (
-                  designs.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)
+                  filteredDesigns.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)
                 )}
               </SelectContent>
             </Select>

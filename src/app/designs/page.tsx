@@ -9,12 +9,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import type { Design } from "@/lib/types";
+import type { Design, DesignType } from "@/lib/types";
 import { Palette, Plus, Trash2, Pencil } from "lucide-react";
 import { formatDate, errorMessage } from "@/lib/utils";
+
+const DESIGN_TYPE_LABELS: Record<DesignType, string> = {
+  print: "Принт",
+  embroidery: "Вышивка",
+};
 
 export default function DesignsPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -66,7 +73,10 @@ export default function DesignsPage() {
                 </div>
               </div>
               <CardContent className="p-3">
-                <div className="font-medium truncate">{d.name}</div>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-medium truncate">{d.name}</div>
+                  <Badge variant="outline" className="shrink-0">{DESIGN_TYPE_LABELS[d.type]}</Badge>
+                </div>
                 {d.description && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{d.description}</div>}
                 <div className="text-[10px] text-muted-foreground mt-2">{formatDate(d.created_at)}</div>
               </CardContent>
@@ -83,6 +93,7 @@ export default function DesignsPage() {
 
 function DesignDialog({ design, open, onOpenChange, onDone }: { design?: Design; open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
   const [name, setName] = useState("");
+  const [type, setType] = useState<DesignType>("print");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,6 +101,7 @@ function DesignDialog({ design, open, onOpenChange, onDone }: { design?: Design;
   useEffect(() => {
     if (open) {
       setName(design?.name ?? "");
+      setType(design?.type ?? "print");
       setDescription(design?.description ?? "");
       setImageUrl(design?.image_url ?? "");
     }
@@ -100,10 +112,10 @@ function DesignDialog({ design, open, onOpenChange, onDone }: { design?: Design;
     setBusy(true);
     try {
       if (design) {
-        await api.updateDesign(design.id, { name, description: description || null, image_url: imageUrl || null });
+        await api.updateDesign(design.id, { name, type, description: description || null, image_url: imageUrl || null });
         toast.success("Сохранено");
       } else {
-        await api.createDesign({ name, description: description || undefined, image_url: imageUrl || undefined });
+        await api.createDesign({ name, type, description: description || undefined, image_url: imageUrl || undefined });
         toast.success("Дизайн добавлен");
       }
       onOpenChange(false);
@@ -120,6 +132,16 @@ function DesignDialog({ design, open, onOpenChange, onDone }: { design?: Design;
           <div className="space-y-1.5">
             <Label>Название</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Логотип, Геометрия 1…" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Тип</Label>
+            <Select value={type} onValueChange={(v) => setType(v as DesignType)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="print">Принт</SelectItem>
+                <SelectItem value="embroidery">Вышивка</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
             <Label>Описание</Label>
