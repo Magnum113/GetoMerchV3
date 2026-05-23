@@ -1,0 +1,102 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+// Server-side route — keeps OZON keys hidden from the browser
+
+export const dynamic = "force-dynamic";
+
+const OZON_BASE = "https://api-seller.ozon.ru";
+
+async function ozonPost<T = unknown>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${OZON_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Client-Id": process.env.OZON_CLIEN_ID!,
+      "Api-Key": process.env.OZON_API_KEY!,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Ozon ${path} ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+interface OzonPriceItem {
+  offer_id: string;
+  price: {
+    marketing_seller_price?: number | string;
+    price?: number | string;
+    old_price?: number | string;
+    min_price?: number | string;
+  };
+}
+
+async function fetchAllOzonPrices(): Promise<Record<string, OzonPriceItem["price"]>> {
+  const map: Record<string, OzonPriceItem["price"]> = {};
+  let cursor = "";
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const r: { items?: OzonPriceItem[]; cursor?: string } = await ozonPost("/v5/product/info/prices", {
+      filter: { visibility: "ALL" },
+      cursor,
+      limit: 1000,
+    });
+    for (const it of r.items ?? []) map[it.offer_id] = it.price;
+    if (!r.cursor || (r.items?.length ?? 0) < 1000) break;
+    cursor = r.cursor;
+  }
+  return map;
+}
+
+export async function POST() {
+  try {
+    if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
+      return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
+    }
+
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    );
+
+    const [{ data: products, error }, priceMap] = await Promise.all([
+      supabase.from("merch_products").select("id, sku, sale_price").not("sku", "is", null),
+      fetchAllOzonPrices(),
+    ]);
+    if (error) throw error;
+
+    let updated = 0;
+    let unchanged = 0;
+    let notFound = 0;
+    const notFoundList: string[] = [];
+
+    for (const p of products ?? []) {
+      if (!p.sku) continue;
+      const price = priceMap[p.sku];
+      if (!price) {
+        notFound++;
+        if (notFoundList.length < 10) notFoundList.push(p.sku);
+        continue;
+      }
+      const sale = Number(price.marketing_seller_price || price.price || 0);
+      if (!sale) { notFound++; continue; }
+      if (Number(p.sale_price) === sale) { unchanged++; continue; }
+      const { error: upErr } = await supabase.from("merch_products").update({ sale_price: sale }).eq("id", p.id);
+      if (upErr) throw upErr;
+      updated++;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      total: products?.length ?? 0,
+      updated,
+      unchanged,
+      notFound,
+      notFoundSamples: notFoundList,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
