@@ -16,6 +16,7 @@ import type {
   WorkshopOrderItem,
   DecorationType,
   DesignType,
+  OzonOrder,
 } from "@/lib/types";
 
 const PRODUCT_SELECT = `
@@ -452,22 +453,13 @@ export const api = {
           .update({ result_product_id: finished.id })
           .eq("id", it.id);
 
-        // Производство в цехе
+        // Производство в цехе. Готовое остаётся в цехе — оттуда цех сам отправляет в Ozon.
         await api.produce({
           blankProductId: it.blank_product_id,
           finishedProductId: finished.id,
           warehouseId: order.workshop_id,
           quantity: it.quantity,
           workshopOrderId: orderId,
-        });
-
-        // Перевозка готового на свой склад
-        await api.transfer({
-          productId: finished.id,
-          fromWarehouseId: order.workshop_id,
-          toWarehouseId: options.ownWarehouseId,
-          quantity: it.quantity,
-          notes: `Возврат с цеха по заказу ${order.order_number}`,
         });
       }
     }
@@ -484,6 +476,126 @@ export const api = {
       .single();
     if (error) throw toError(error);
     return (data as unknown) as WorkshopOrder;
+  },
+
+  // ---------- OZON ORDERS ----------
+  async listOzonOrders(): Promise<OzonOrder[]> {
+    const sb = createClient();
+    const { data, error } = await sb
+      .from("merch_ozon_orders")
+      .select(
+        `*, items:merch_ozon_order_items(*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}))`,
+      )
+      .order("in_process_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
+    if (error) throw toError(error);
+    return ((data ?? []) as unknown) as OzonOrder[];
+  },
+
+  async findBlankFor(p: Product): Promise<Product | null> {
+    const sb = createClient();
+    const { data } = await sb
+      .from("merch_products")
+      .select(PRODUCT_SELECT)
+      .eq("category_id", p.category_id)
+      .eq("fabric_id", p.fabric_id)
+      .eq("color_id", p.color_id)
+      .eq("size_id", p.size_id)
+      .eq("is_blank", true)
+      .is("design_id", null)
+      .is("decoration_type_id", null)
+      .maybeSingle();
+    return (data as Product | null) ?? null;
+  },
+
+  async shipOzonOrder(orderId: string, preferredWarehouseId?: string) {
+    const sb = createClient();
+    const { data: order, error } = await sb
+      .from("merch_ozon_orders")
+      .select(`*, items:merch_ozon_order_items(*)`)
+      .eq("id", orderId)
+      .single();
+    if (error) throw toError(error);
+    if (!order) throw new Error("Заказ не найден");
+    if (order.shipped_at) throw new Error("Заказ уже отправлен");
+
+    const warehouses = await api.listWarehouses();
+    const warehouseOrder = [
+      ...warehouses.filter((w) => w.id === preferredWarehouseId),
+      ...warehouses.filter((w) => w.id !== preferredWarehouseId && w.type === "own"),
+      ...warehouses.filter((w) => w.id !== preferredWarehouseId && w.type !== "own"),
+    ];
+
+    const plan: { itemId: string; productId: string; warehouseId: string; quantity: number; offer_id: string }[] = [];
+    for (const it of (order.items ?? []) as { id: string; product_id: string | null; quantity: number; offer_id: string }[]) {
+      if (!it.product_id) throw new Error(`Не сопоставлен товар для offer_id=${it.offer_id}`);
+      let picked: string | null = null;
+      for (const w of warehouseOrder) {
+        const have = await api.getInventoryFor(it.product_id, w.id);
+        if (have >= it.quantity) { picked = w.id; break; }
+      }
+      if (!picked) throw new Error(`Недостаточно остатка ни на одном складе: ${it.offer_id} (нужно ${it.quantity})`);
+      plan.push({ itemId: it.id, productId: it.product_id, warehouseId: picked, quantity: it.quantity, offer_id: it.offer_id });
+    }
+
+    for (const step of plan) {
+      await api.sale({
+        productId: step.productId,
+        warehouseId: step.warehouseId,
+        quantity: step.quantity,
+        notes: `Ozon ${order.posting_number}`,
+      });
+      await sb
+        .from("merch_ozon_order_items")
+        .update({ shipped_from_warehouse_id: step.warehouseId })
+        .eq("id", step.itemId);
+    }
+
+    const primary = plan[0]?.warehouseId ?? preferredWarehouseId ?? null;
+    const { error: upErr } = await sb
+      .from("merch_ozon_orders")
+      .update({
+        shipped_at: new Date().toISOString(),
+        shipped_from_warehouse_id: primary,
+      })
+      .eq("id", orderId);
+    if (upErr) throw toError(upErr);
+  },
+
+  async unshipOzonOrder(orderId: string) {
+    const sb = createClient();
+    const { data: order, error } = await sb
+      .from("merch_ozon_orders")
+      .select(`*, items:merch_ozon_order_items(*)`)
+      .eq("id", orderId)
+      .single();
+    if (error) throw toError(error);
+    if (!order?.shipped_at) throw new Error("Заказ не был отправлен");
+    for (const it of (order.items ?? []) as { product_id: string | null; quantity: number; shipped_from_warehouse_id: string | null }[]) {
+      if (!it.product_id) continue;
+      const wh = it.shipped_from_warehouse_id ?? order.shipped_from_warehouse_id;
+      if (!wh) continue;
+      await api.adjustInventory(it.product_id, wh, it.quantity);
+      await sb.from("merch_transactions").insert({
+        type: "adjustment",
+        product_id: it.product_id,
+        to_warehouse_id: wh,
+        quantity: it.quantity,
+        notes: `Отмена отправки Ozon ${order.posting_number}`,
+      });
+    }
+    await sb.from("merch_ozon_order_items").update({ shipped_from_warehouse_id: null }).eq("order_id", orderId);
+    await sb
+      .from("merch_ozon_orders")
+      .update({ shipped_at: null, shipped_from_warehouse_id: null })
+      .eq("id", orderId);
+  },
+
+  async syncOzonOrders(days = 60): Promise<{ created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[] }> {
+    const res = await fetch(`/api/ozon/sync-orders?days=${days}`, { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Sync failed");
+    return json;
   },
 
   // ---------- DESIGNS CRUD ----------

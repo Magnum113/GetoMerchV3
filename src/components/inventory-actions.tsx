@@ -1,18 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProductPicker } from "@/components/product-picker";
 import { WarehouseSelect } from "@/components/warehouse-select";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Plus, ArrowLeftRight, ShoppingCart, Wrench, Settings, MinusCircle } from "lucide-react";
-import type { Product, Inventory } from "@/lib/types";
+import { Plus, ArrowLeftRight, ShoppingCart, Wrench, Settings, MinusCircle, Trash2 } from "lucide-react";
+import type { Product, Inventory, ProductCategory, FabricType, Color, Size, Design, DecorationType, DesignType } from "@/lib/types";
 import { ProductDisplay } from "@/components/product-display";
 
 export function InventoryActions({ onChange }: { onChange?: () => void }) {
@@ -44,21 +45,112 @@ export function InventoryActions({ onChange }: { onChange?: () => void }) {
   );
 }
 
+interface BulkRow {
+  id: string;
+  colorId: string;
+  decorationTypeId: string;
+  designId: string;
+  qty: Record<string, string>; // sizeId -> qty string
+}
+
+function newRow(): BulkRow {
+  return { id: Math.random().toString(36).slice(2), colorId: "", decorationTypeId: "", designId: "", qty: {} };
+}
+
 function ReceiveDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone?: () => void }) {
-  const [product, setProduct] = useState<Product | null>(null);
-  const [warehouseId, setWarehouseId] = useState("");
-  const [qty, setQty] = useState("1");
-  const [notes, setNotes] = useState("");
   const [blank, setBlank] = useState(true);
+  const [warehouseId, setWarehouseId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [fabricId, setFabricId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [rows, setRows] = useState<BulkRow[]>([newRow()]);
   const [busy, setBusy] = useState(false);
 
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [fabrics, setFabrics] = useState<FabricType[]>([]);
+  const [colors, setColors] = useState<Color[]>([]);
+  const [sizes, setSizes] = useState<Size[]>([]);
+  const [designs, setDesigns] = useState<Design[]>([]);
+  const [decorationTypes, setDecorationTypes] = useState<DecorationType[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const [c, f, col, s, d, dt, w] = await Promise.all([
+        api.listCategories(),
+        api.listFabrics(),
+        api.listColors(),
+        api.listSizes(),
+        api.listDesigns(),
+        api.listDecorationTypes(),
+        api.listWarehouses(),
+      ]);
+      setCategories(c); setFabrics(f); setColors(col); setSizes(s); setDesigns(d); setDecorationTypes(dt);
+
+      setWarehouseId((prev) => prev || w.find((x) => x.type === "own")?.id || w[0]?.id || "");
+      setCategoryId((prev) => prev || c.find((x) => x.slug === "tshirt" || /^футболк/i.test(x.name))?.id || c[0]?.id || "");
+      setFabricId((prev) => prev || f.find((x) => x.slug === "regular" || /^обычн/i.test(x.name))?.id || f[0]?.id || "");
+    })();
+  }, [open]);
+
+  function reset() {
+    setRows([newRow()]); setNotes(""); setCategoryId(""); setFabricId(""); setWarehouseId("");
+  }
+
+  function updateRow(i: number, patch: Partial<BulkRow>) {
+    setRows((xs) => xs.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  }
+  function updateRowQty(i: number, sizeId: string, val: string) {
+    setRows((xs) => xs.map((x, idx) => (idx === i ? { ...x, qty: { ...x.qty, [sizeId]: val } } : x)));
+  }
+  function addRow() { setRows((xs) => [...xs, newRow()]); }
+  function removeRow(i: number) { setRows((xs) => xs.filter((_, idx) => idx !== i)); }
+
+  const totals = useMemo(() => {
+    let units = 0, skus = 0;
+    for (const r of rows) {
+      for (const sid of Object.keys(r.qty)) {
+        const n = parseInt(r.qty[sid] || "0", 10);
+        if (n > 0) { units += n; skus += 1; }
+      }
+    }
+    return { units, skus };
+  }, [rows]);
+
+  const canSubmit = warehouseId && categoryId && fabricId && totals.units > 0 &&
+    rows.every((r) => {
+      const anyQty = Object.values(r.qty).some((v) => parseInt(v || "0", 10) > 0);
+      if (!anyQty) return true; // empty row OK
+      if (!r.colorId) return false;
+      if (!blank && (!r.decorationTypeId || !r.designId)) return false;
+      return true;
+    });
+
   async function submit() {
-    if (!product || !warehouseId || +qty <= 0) return toast.error("Заполните все поля");
+    if (!canSubmit) return toast.error("Заполните склад, тип, ткань и хотя бы одно количество");
     setBusy(true);
     try {
-      await api.receive({ productId: product.id, warehouseId, quantity: +qty, notes });
-      toast.success(`Принято ${qty} шт`);
-      setProduct(null); setQty("1"); setNotes("");
+      let count = 0;
+      for (const r of rows) {
+        const entries = Object.entries(r.qty).filter(([, v]) => parseInt(v || "0", 10) > 0);
+        if (entries.length === 0) continue;
+        if (!r.colorId) continue;
+        for (const [sizeId, vStr] of entries) {
+          const n = parseInt(vStr, 10);
+          const product = await api.findOrCreateProduct({
+            category_id: categoryId,
+            fabric_id: fabricId,
+            color_id: r.colorId,
+            size_id: sizeId,
+            design_id: blank ? null : r.designId,
+            decoration_type_id: blank ? null : r.decorationTypeId,
+          });
+          await api.receive({ productId: product.id, warehouseId, quantity: n, notes });
+          count += n;
+        }
+      }
+      toast.success(`Принято ${count} шт по ${totals.skus} SKU`);
+      reset();
       onOpenChange(false);
       onDone?.();
     } catch (e) {
@@ -67,11 +159,11 @@ function ReceiveDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Приёмка товара</DialogTitle>
-          <DialogDescription>Поступление новых пустых или готовых товаров на склад</DialogDescription>
+          <DialogDescription>Сразу несколько цветов и размеров. Каждая ячейка с количеством → отдельный SKU.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -80,30 +172,155 @@ function ReceiveDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
             <button type="button" onClick={() => setBlank(false)} className={`px-3 py-1.5 rounded-md border ${!blank ? "bg-primary text-primary-foreground border-primary" : "bg-background"}`}>Готовые с дизайном</button>
           </div>
 
-          <ProductPicker blankOnly={blank} finishedOnly={!blank} onChange={setProduct} />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Склад</Label>
+              <WarehouseSelect value={warehouseId} onChange={setWarehouseId} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Тип</Label>
+              <Select value={categoryId} onValueChange={setCategoryId}>
+                <SelectTrigger><SelectValue placeholder="Футболка / худи" /></SelectTrigger>
+                <SelectContent>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Ткань</Label>
+              <Select value={fabricId} onValueChange={setFabricId}>
+                <SelectTrigger><SelectValue placeholder="Обычная / варёнка" /></SelectTrigger>
+                <SelectContent>{fabrics.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
 
-          <div className="space-y-1.5">
-            <Label>Склад поступления</Label>
-            <WarehouseSelect value={warehouseId} onChange={setWarehouseId} />
+          <div className="space-y-2">
+            {rows.map((r, idx) => (
+              <BulkRowEditor
+                key={r.id}
+                row={r}
+                blank={blank}
+                colors={colors}
+                sizes={sizes}
+                designs={designs}
+                decorationTypes={decorationTypes}
+                onChange={(p) => updateRow(idx, p)}
+                onChangeQty={(sid, v) => updateRowQty(idx, sid, v)}
+                onRemove={rows.length > 1 ? () => removeRow(idx) : undefined}
+              />
+            ))}
+            <Button variant="outline" size="sm" onClick={addRow}>
+              <Plus className="h-4 w-4" /> Ещё {blank ? "цвет" : "цвет / дизайн"}
+            </Button>
           </div>
 
           <div className="space-y-1.5">
-            <Label>Количество</Label>
-            <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Комментарий</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Источник, поставщик и т.д." />
+            <Label className="text-xs">Комментарий (необязательно)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Поставщик, накладная и т.д." />
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? "..." : "Принять"}</Button>
+        <DialogFooter className="sm:justify-between gap-2">
+          <div className="text-sm text-muted-foreground">
+            {totals.units > 0 ? <>Итого: <span className="font-semibold text-foreground tabular-nums">{totals.units} шт</span> по {totals.skus} SKU</> : "Введите количества"}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+            <Button onClick={submit} disabled={busy || !canSubmit}>{busy ? "..." : "Принять"}</Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BulkRowEditor({
+  row, blank, colors, sizes, designs, decorationTypes, onChange, onChangeQty, onRemove,
+}: {
+  row: BulkRow;
+  blank: boolean;
+  colors: Color[];
+  sizes: Size[];
+  designs: Design[];
+  decorationTypes: DecorationType[];
+  onChange: (p: Partial<BulkRow>) => void;
+  onChangeQty: (sizeId: string, val: string) => void;
+  onRemove?: () => void;
+}) {
+  const selectedDecoration = decorationTypes.find((d) => d.id === row.decorationTypeId);
+  const designType: DesignType | null =
+    selectedDecoration?.slug === "embroidery" ? "embroidery" :
+    selectedDecoration?.slug === "print" ? "print" : null;
+  const filteredDesigns = designType ? designs.filter((d) => d.type === designType) : designs;
+
+  return (
+    <div className="rounded-lg border p-3 bg-muted/20 space-y-3">
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="space-y-1.5 flex-1 min-w-[150px]">
+          <Label className="text-xs">Цвет</Label>
+          <Select value={row.colorId} onValueChange={(v) => onChange({ colorId: v })}>
+            <SelectTrigger>
+              <SelectValue placeholder="—" />
+            </SelectTrigger>
+            <SelectContent>
+              {colors.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: c.hex_code ?? "#999" }} />
+                    {c.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {!blank && (
+          <>
+            <div className="space-y-1.5 flex-1 min-w-[140px]">
+              <Label className="text-xs">Украшение</Label>
+              <Select value={row.decorationTypeId} onValueChange={(v) => onChange({ decorationTypeId: v, designId: "" })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>{decorationTypes.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 flex-1 min-w-[160px]">
+              <Label className="text-xs">Дизайн</Label>
+              <Select value={row.designId} onValueChange={(v) => onChange({ designId: v })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {filteredDesigns.length === 0 ? (
+                    <div className="text-xs text-muted-foreground p-2">Нет дизайнов</div>
+                  ) : filteredDesigns.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
+        {onRemove && (
+          <Button size="icon" variant="ghost" className="h-9 w-9" onClick={onRemove}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+
+      <div>
+        <Label className="text-xs mb-1.5 block">Количество по размерам</Label>
+        <div className="flex flex-wrap gap-2">
+          {sizes.map((s) => (
+            <label key={s.id} className="flex flex-col items-center gap-1">
+              <span className="text-[11px] text-muted-foreground font-medium">{s.name}</span>
+              <Input
+                type="number"
+                min="0"
+                value={row.qty[s.id] ?? ""}
+                onChange={(e) => onChangeQty(s.id, e.target.value)}
+                className="h-9 w-16 text-center tabular-nums"
+                placeholder="0"
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

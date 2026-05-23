@@ -14,11 +14,13 @@ import {
   Shirt,
   Menu,
   X,
+  ShoppingBag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Дашборд", icon: LayoutDashboard },
+  { href: "/orders", label: "Заказы Ozon", icon: ShoppingBag },
   { href: "/inventory", label: "Остатки", icon: WarehouseIcon },
   { href: "/products", label: "Каталог SKU", icon: Package },
   { href: "/workshop", label: "Заказы в цех", icon: Hammer },
