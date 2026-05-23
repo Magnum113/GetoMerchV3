@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api";
 import type { Transaction, TransactionType } from "@/lib/types";
 import { TRANSACTION_LABELS } from "@/lib/types";
-import { ArrowLeftRight, Search } from "lucide-react";
+import { ArrowLeftRight, Search, Image as ImageIcon } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
 const TX_COLORS: Record<TransactionType, string> = {
@@ -90,7 +90,33 @@ export default function TransactionsPage() {
                     <TableCell>
                       <Badge className={TX_COLORS[t.type]}>{TRANSACTION_LABELS[t.type]}</Badge>
                     </TableCell>
-                    <TableCell><ProductDisplay p={t.product} compact /></TableCell>
+                    <TableCell>
+                      {t.product ? (
+                        <div className="space-y-0.5">
+                          <ProductDisplay p={t.product} compact />
+                          {t.source_design && (
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <ImageIcon className="h-3 w-3" /> принт: {t.source_design.name} −{t.quantity}
+                            </div>
+                          )}
+                        </div>
+                      ) : t.design ? (
+                        <div className="flex items-center gap-2">
+                          {t.design.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={t.design.image_url} alt={t.design.name} className="h-8 w-8 rounded object-cover border" />
+                          ) : (
+                            <div className="h-8 w-8 rounded border bg-muted flex items-center justify-center">
+                              <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{t.design.name}</div>
+                            <div className="text-[11px] text-muted-foreground">принт</div>
+                          </div>
+                        </div>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {t.from_warehouse?.name ?? "—"} <span className="mx-1">→</span> {t.to_warehouse?.name ?? "—"}
                     </TableCell>

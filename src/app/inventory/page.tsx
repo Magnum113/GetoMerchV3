@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -10,23 +11,33 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { InventoryActions, AdjustInline } from "@/components/inventory-actions";
+import { PrintInventoryActions, AdjustPrintInline } from "@/components/print-inventory-actions";
 import { api } from "@/lib/api";
-import type { Inventory, Warehouse } from "@/lib/types";
-import { Warehouse as WarehouseIcon, Search } from "lucide-react";
+import type { Inventory, PrintInventory, Warehouse } from "@/lib/types";
+import { Warehouse as WarehouseIcon, Search, Image as ImageIcon } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
+type Mode = "products" | "prints";
+
 export default function InventoryPage() {
+  const [mode, setMode] = useState<Mode>("products");
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [inv, setInv] = useState<Inventory[]>([]);
+  const [prints, setPrints] = useState<PrintInventory[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "blank" | "finished">("all");
   const [loading, setLoading] = useState(true);
 
   async function reload() {
     setLoading(true);
-    const [w, i] = await Promise.all([api.listWarehouses(), api.listInventory()]);
+    const [w, i, p] = await Promise.all([
+      api.listWarehouses(),
+      api.listInventory(),
+      api.listPrintInventory(),
+    ]);
     setWarehouses(w);
     setInv(i);
+    setPrints(p);
     setLoading(false);
   }
 
@@ -45,23 +56,39 @@ export default function InventoryPage() {
           i.product?.size?.name,
           i.product?.design?.name,
           i.product?.decoration_type?.name,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
+        ].filter(Boolean).join(" ").toLowerCase();
         if (!haystack.includes(search.toLowerCase())) return false;
       }
       return true;
     });
   }, [inv, filter, search]);
 
+  const filteredPrints = useMemo(() => {
+    return prints.filter((p) => {
+      if (search) {
+        const hay = [p.design?.name, p.design?.description, p.warehouse?.name].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(search.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [prints, search]);
+
   return (
     <div>
       <PageHeader
         title="Остатки на складах"
-        description="Все позиции с положительным остатком. Быстрые действия — приёмка, перемещение, продажа, производство"
-        action={<InventoryActions onChange={reload} />}
+        description={mode === "products"
+          ? "Все позиции с положительным остатком. Быстрые действия — приёмка, перемещение, продажа, производство"
+          : "Запас готовых принтов на складе. При производстве с типом «принт» система автоматически списывает 1 принт на изделие."}
+        action={mode === "products" ? <InventoryActions onChange={reload} /> : <PrintInventoryActions onChange={reload} />}
       />
+
+      <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="mb-4">
+        <TabsList>
+          <TabsTrigger value="products">Изделия</TabsTrigger>
+          <TabsTrigger value="prints">Принты</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <Card className="mb-4">
         <CardContent className="p-4">
@@ -71,44 +98,72 @@ export default function InventoryPage() {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Поиск по SKU, цвету, дизайну…"
+                placeholder={mode === "products" ? "Поиск по SKU, цвету, дизайну…" : "Поиск по дизайну…"}
                 className="pl-8"
               />
             </div>
-            <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "blank" | "finished")}>
-              <TabsList>
-                <TabsTrigger value="all">Все</TabsTrigger>
-                <TabsTrigger value="blank">Пустые</TabsTrigger>
-                <TabsTrigger value="finished">Готовые</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {mode === "products" && (
+              <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "blank" | "finished")}>
+                <TabsList>
+                  <TabsTrigger value="all">Все</TabsTrigger>
+                  <TabsTrigger value="blank">Пустые</TabsTrigger>
+                  <TabsTrigger value="finished">Готовые</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="all">
-        <TabsList>
-          <TabsTrigger value="all">Все склады</TabsTrigger>
-          {warehouses.map((w) => (
-            <TabsTrigger key={w.id} value={w.id}>
-              <span className="inline-flex items-center gap-2">
-                <span className={`h-2 w-2 rounded-full ${w.type === "own" ? "bg-emerald-500" : "bg-amber-500"}`} />
-                {w.name}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      {mode === "products" ? (
+        <Tabs defaultValue="all">
+          <TabsList>
+            <TabsTrigger value="all">Все склады</TabsTrigger>
+            {warehouses.map((w) => (
+              <TabsTrigger key={w.id} value={w.id}>
+                <span className="inline-flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${w.type === "own" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                  {w.name}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-        <TabsContent value="all">
-          <InvTable items={filtered} loading={loading} onChange={reload} showWarehouse />
-        </TabsContent>
-
-        {warehouses.map((w) => (
-          <TabsContent key={w.id} value={w.id}>
-            <InvTable items={filtered.filter((i) => i.warehouse_id === w.id)} loading={loading} onChange={reload} />
+          <TabsContent value="all">
+            <InvTable items={filtered} loading={loading} onChange={reload} showWarehouse />
           </TabsContent>
-        ))}
-      </Tabs>
+
+          {warehouses.map((w) => (
+            <TabsContent key={w.id} value={w.id}>
+              <InvTable items={filtered.filter((i) => i.warehouse_id === w.id)} loading={loading} onChange={reload} />
+            </TabsContent>
+          ))}
+        </Tabs>
+      ) : (
+        <Tabs defaultValue="all">
+          <TabsList>
+            <TabsTrigger value="all">Все склады</TabsTrigger>
+            {warehouses.map((w) => (
+              <TabsTrigger key={w.id} value={w.id}>
+                <span className="inline-flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${w.type === "own" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                  {w.name}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="all">
+            <PrintTable items={filteredPrints} loading={loading} onChange={reload} showWarehouse />
+          </TabsContent>
+
+          {warehouses.map((w) => (
+            <TabsContent key={w.id} value={w.id}>
+              <PrintTable items={filteredPrints.filter((i) => i.warehouse_id === w.id)} loading={loading} onChange={reload} />
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   );
 }
@@ -161,6 +216,79 @@ function InvTable({ items, loading, onChange, showWarehouse }: { items: Inventor
                 <TableCell className="hidden md:table-cell text-muted-foreground text-xs">{formatDate(i.updated_at)}</TableCell>
                 <TableCell className="text-right">
                   <AdjustInline item={i} onDone={onChange} />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PrintTable({ items, loading, onChange, showWarehouse }: { items: PrintInventory[]; loading: boolean; onChange: () => void; showWarehouse?: boolean }) {
+  if (loading) {
+    return <Card className="mt-4"><CardContent className="p-10 text-center text-muted-foreground">Загрузка…</CardContent></Card>;
+  }
+  if (items.length === 0) {
+    return (
+      <Card className="mt-4">
+        <CardContent>
+          <EmptyState
+            icon={ImageIcon}
+            title="Принтов на складе пока нет"
+            description="Нажми «Приёмка принтов», чтобы добавить поступление."
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card className="mt-4">
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Дизайн</TableHead>
+              {showWarehouse && <TableHead>Склад</TableHead>}
+              <TableHead className="text-right">Количество</TableHead>
+              <TableHead className="hidden md:table-cell">Обновлено</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((i) => (
+              <TableRow key={i.id}>
+                <TableCell>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {i.design?.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={i.design.image_url} alt={i.design.name} className="h-9 w-9 rounded object-cover border" />
+                    ) : (
+                      <div className="h-9 w-9 rounded border bg-muted flex items-center justify-center">
+                        <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{i.design?.name ?? "—"}</div>
+                      {i.design?.description && (
+                        <div className="text-xs text-muted-foreground truncate">{i.design.description}</div>
+                      )}
+                    </div>
+                  </div>
+                </TableCell>
+                {showWarehouse && (
+                  <TableCell>
+                    <Badge variant="outline">
+                      <span className={`h-2 w-2 rounded-full mr-1.5 ${i.warehouse?.type === "own" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                      {i.warehouse?.name}
+                    </Badge>
+                  </TableCell>
+                )}
+                <TableCell className="text-right font-semibold tabular-nums">{i.quantity} шт</TableCell>
+                <TableCell className="hidden md:table-cell text-muted-foreground text-xs">{formatDate(i.updated_at)}</TableCell>
+                <TableCell className="text-right">
+                  <AdjustPrintInline item={i} onDone={onChange} />
                 </TableCell>
               </TableRow>
             ))}

@@ -17,6 +17,7 @@ import type {
   DecorationType,
   DesignType,
   OzonOrder,
+  PrintInventory,
 } from "@/lib/types";
 
 const PRODUCT_SELECT = `
@@ -219,7 +220,7 @@ export const api = {
     const { data, error } = await sb
       .from("merch_transactions")
       .select(
-        `*, product:merch_products!product_id(${PRODUCT_SELECT.replace(/\n/g, " ")}), from_warehouse:merch_warehouses!from_warehouse_id(*), to_warehouse:merch_warehouses!to_warehouse_id(*)`,
+        `*, product:merch_products!product_id(${PRODUCT_SELECT.replace(/\n/g, " ")}), design:merch_designs!design_id(*), source_design:merch_designs!source_design_id(*), from_warehouse:merch_warehouses!from_warehouse_id(*), to_warehouse:merch_warehouses!to_warehouse_id(*)`,
       )
       .order("occurred_at", { ascending: false })
       .limit(limit);
@@ -326,7 +327,8 @@ export const api = {
     if (error) throw toError(error);
   },
 
-  // Производство — превращение пустого в готовый
+  // Производство — превращение пустого в готовый. Если на готовом стоит decoration_type='print'
+  // — автоматически списывается 1 принт нужного дизайна со склада производства.
   async produce(args: {
     blankProductId: string;
     finishedProductId: string;
@@ -336,15 +338,125 @@ export const api = {
     notes?: string;
   }) {
     const sb = createClient();
+    const { data: finished, error: fErr } = await sb
+      .from("merch_products")
+      .select("design_id, decoration_type:merch_decoration_types(slug)")
+      .eq("id", args.finishedProductId)
+      .single();
+    if (fErr) throw toError(fErr);
+
+    const dt = (finished?.decoration_type as { slug?: string } | null)?.slug ?? null;
+    const consumesPrint = dt === "print" && !!finished?.design_id;
+
+    if (consumesPrint) {
+      const have = await api.getPrintInventoryFor(finished!.design_id!, args.warehouseId);
+      if (have < args.quantity) throw new Error(`Недостаточно принтов на складе (есть ${have}, нужно ${args.quantity})`);
+    }
+
     await api.adjustInventory(args.blankProductId, args.warehouseId, -args.quantity);
     await api.adjustInventory(args.finishedProductId, args.warehouseId, args.quantity);
+    if (consumesPrint) {
+      await api.adjustPrintInventory(finished!.design_id!, args.warehouseId, -args.quantity);
+    }
+
     const { error } = await sb.from("merch_transactions").insert({
       type: "production",
       product_id: args.finishedProductId,
       source_product_id: args.blankProductId,
+      source_design_id: consumesPrint ? finished!.design_id : null,
       to_warehouse_id: args.warehouseId,
       quantity: args.quantity,
       workshop_order_id: args.workshopOrderId ?? null,
+      notes: args.notes ?? null,
+    });
+    if (error) throw toError(error);
+  },
+
+  // ---------- PRINT INVENTORY ----------
+  async listPrintInventory(warehouseId?: string): Promise<PrintInventory[]> {
+    const sb = createClient();
+    let q = sb
+      .from("merch_print_inventory")
+      .select(`*, design:merch_designs(*), warehouse:merch_warehouses(*)`)
+      .gt("quantity", 0)
+      .order("updated_at", { ascending: false });
+    if (warehouseId) q = q.eq("warehouse_id", warehouseId);
+    const { data, error } = await q;
+    if (error) throw toError(error);
+    return ((data ?? []) as unknown) as PrintInventory[];
+  },
+
+  async getPrintInventoryFor(designId: string, warehouseId: string): Promise<number> {
+    const sb = createClient();
+    const { data } = await sb
+      .from("merch_print_inventory")
+      .select("quantity")
+      .eq("design_id", designId)
+      .eq("warehouse_id", warehouseId)
+      .maybeSingle();
+    return data?.quantity ?? 0;
+  },
+
+  async adjustPrintInventory(designId: string, warehouseId: string, delta: number) {
+    const sb = createClient();
+    const { data: existing } = await sb
+      .from("merch_print_inventory")
+      .select("id, quantity")
+      .eq("design_id", designId)
+      .eq("warehouse_id", warehouseId)
+      .maybeSingle();
+    if (existing) {
+      const next = existing.quantity + delta;
+      if (next < 0) throw new Error("Недостаточно принтов на складе");
+      const { error } = await sb
+        .from("merch_print_inventory")
+        .update({ quantity: next, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+      if (error) throw toError(error);
+    } else {
+      if (delta < 0) throw new Error("Недостаточно принтов на складе");
+      const { error } = await sb
+        .from("merch_print_inventory")
+        .insert({ design_id: designId, warehouse_id: warehouseId, quantity: delta });
+      if (error) throw toError(error);
+    }
+  },
+
+  async receivePrint(args: { designId: string; warehouseId: string; quantity: number; notes?: string }) {
+    const sb = createClient();
+    await api.adjustPrintInventory(args.designId, args.warehouseId, args.quantity);
+    const { error } = await sb.from("merch_transactions").insert({
+      type: "receive",
+      design_id: args.designId,
+      to_warehouse_id: args.warehouseId,
+      quantity: args.quantity,
+      notes: args.notes ?? null,
+    });
+    if (error) throw toError(error);
+  },
+
+  async writeoffPrint(args: { designId: string; warehouseId: string; quantity: number; notes?: string }) {
+    const sb = createClient();
+    await api.adjustPrintInventory(args.designId, args.warehouseId, -args.quantity);
+    const { error } = await sb.from("merch_transactions").insert({
+      type: "writeoff",
+      design_id: args.designId,
+      from_warehouse_id: args.warehouseId,
+      quantity: args.quantity,
+      notes: args.notes ?? null,
+    });
+    if (error) throw toError(error);
+  },
+
+  async adjustPrint(args: { designId: string; warehouseId: string; delta: number; notes?: string }) {
+    const sb = createClient();
+    await api.adjustPrintInventory(args.designId, args.warehouseId, args.delta);
+    const { error } = await sb.from("merch_transactions").insert({
+      type: "adjustment",
+      design_id: args.designId,
+      to_warehouse_id: args.delta > 0 ? args.warehouseId : null,
+      from_warehouse_id: args.delta < 0 ? args.warehouseId : null,
+      quantity: Math.abs(args.delta),
       notes: args.notes ?? null,
     });
     if (error) throw toError(error);

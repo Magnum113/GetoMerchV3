@@ -443,6 +443,20 @@ function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
   const [qty, setQty] = useState("1");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [printStock, setPrintStock] = useState<number | null>(null);
+
+  const isPrint = finished?.decoration_type?.slug === "print" && !!finished?.design_id;
+
+  useEffect(() => {
+    if (!open || !isPrint || !finished?.design_id || !warehouseId) {
+      setPrintStock(null);
+      return;
+    }
+    api.getPrintInventoryFor(finished.design_id, warehouseId).then(setPrintStock).catch(() => setPrintStock(null));
+  }, [open, isPrint, finished?.design_id, warehouseId]);
+
+  const need = parseInt(qty || "0", 10);
+  const printShortfall = isPrint && printStock != null && need > 0 && printStock < need;
 
   async function submit() {
     if (!blank || !finished || !warehouseId || +qty <= 0) return toast.error("Заполните все поля");
@@ -496,10 +510,17 @@ function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
               <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
           </div>
+          {isPrint && printStock != null && (
+            <div className={`text-sm rounded-md border p-2.5 ${printShortfall ? "border-red-300 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200"}`}>
+              Принт <span className="font-medium">{finished?.design?.name}</span> на этом складе: <span className="font-semibold tabular-nums">{printStock} шт</span>
+              {printShortfall && <> · не хватает {need - printStock} шт для производства</>}
+              {!printShortfall && need > 0 && <> · останется {printStock - need} после производства</>}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? "..." : "Произвести"}</Button>
+          <Button onClick={submit} disabled={busy || printShortfall}>{busy ? "..." : "Произвести"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

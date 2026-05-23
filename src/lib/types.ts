@@ -108,7 +108,9 @@ export interface Inventory {
 export interface Transaction {
   id: string;
   type: TransactionType;
-  product_id: string;
+  product_id: string | null;
+  design_id: string | null;
+  source_design_id: string | null;
   from_warehouse_id: string | null;
   to_warehouse_id: string | null;
   quantity: number;
@@ -117,7 +119,9 @@ export interface Transaction {
   notes: string | null;
   occurred_at: string;
   created_at: string;
-  product?: Product;
+  product?: Product | null;
+  design?: Design | null;
+  source_design?: Design | null;
   from_warehouse?: Warehouse | null;
   to_warehouse?: Warehouse | null;
 }
@@ -149,6 +153,16 @@ export interface WorkshopOrderItem {
   design?: Design;
   decoration_type?: DecorationType;
   result_product?: Product | null;
+}
+
+export interface PrintInventory {
+  id: string;
+  design_id: string;
+  warehouse_id: string;
+  quantity: number;
+  updated_at: string;
+  design?: Design;
+  warehouse?: Warehouse;
 }
 
 export interface OzonOrder {

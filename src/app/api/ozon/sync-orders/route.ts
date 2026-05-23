@@ -85,11 +85,14 @@ export async function POST(req: Request) {
 
     const [postings, { data: products }] = await Promise.all([
       fetchAllPostings(days),
-      supabase.from("merch_products").select("id, sku").not("sku", "is", null),
+      supabase.from("merch_products").select("id, sku, legacy_skus").not("sku", "is", null),
     ]);
 
     const productByOffer = new Map<string, string>();
-    for (const p of products ?? []) if (p.sku) productByOffer.set(String(p.sku), p.id);
+    for (const p of (products ?? []) as { id: string; sku: string | null; legacy_skus: string[] | null }[]) {
+      if (p.sku) productByOffer.set(String(p.sku), p.id);
+      for (const ls of p.legacy_skus ?? []) productByOffer.set(String(ls), p.id);
+    }
 
     let upserted = 0;
     let created = 0;
