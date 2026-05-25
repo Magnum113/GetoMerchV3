@@ -3,9 +3,7 @@ export type DecorationLocation = "own" | "workshop";
 export type DesignType = "print" | "embroidery";
 
 export type WorkshopOrderStatus =
-  | "pending"
   | "sent"
-  | "in_progress"
   | "ready"
   | "received"
   | "cancelled";
@@ -182,9 +180,11 @@ export interface OzonOrder {
   synced_at: string;
   shipped_at: string | null;
   shipped_from_warehouse_id: string | null;
+  workshop_order_id: string | null;
   notes: string | null;
   created_at: string;
   items?: OzonOrderItem[];
+  workshop_order?: WorkshopOrder | null;
 }
 
 export interface OzonOrderItem {
@@ -233,18 +233,14 @@ export const TRANSACTION_LABELS: Record<TransactionType, string> = {
 };
 
 export const WORKSHOP_STATUS_LABELS: Record<WorkshopOrderStatus, string> = {
-  pending: "Черновик",
-  sent: "Отправлено в цех",
-  in_progress: "В работе",
+  sent: "В работе у цеха",
   ready: "Готово",
   received: "Получено",
   cancelled: "Отменено",
 };
 
 export const WORKSHOP_STATUS_COLORS: Record<WorkshopOrderStatus, string> = {
-  pending: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  sent: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-  in_progress: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  sent: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
   ready: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   received: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
   cancelled: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",

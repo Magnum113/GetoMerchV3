@@ -91,8 +91,8 @@ supabase/
 | `merch_inventory` | Остатки `(product_id, warehouse_id) → quantity`. UNIQUE по паре, `quantity >= 0` |
 | `merch_print_inventory` | Остатки готовых принтов `(design_id, warehouse_id) → quantity` |
 | `merch_transactions` | Журнал любых движений товара или принта. `product_id` и `design_id` оба nullable, но обязательно одно из двух. Поле `type` ∈ {`receive`, `transfer`, `sale`, `production`, `adjustment`, `writeoff`} |
-| `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `pending → sent → in_progress → ready → received` |
-| `merch_ozon_orders` / `_items` | Зеркало отправлений FBS из Ozon |
+| `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `sent → ready → received` (плюс терминальный `cancelled`). Колонка `merch_ozon_orders.workshop_order_id` указывает на заказ в цех, созданный из заказа Ozon |
+| `merch_ozon_orders` / `_items` | Зеркало отправлений FBS из Ozon. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) — связь с заказом в цех, если для отгрузки требуется производство вышивки |
 
 ### 4.2. Бизнес-правила (НЕ нарушать)
 
@@ -152,25 +152,43 @@ supabase/
 
 #### Цех вышивки
 
-11. **Заказ в цех `sent` → автоперемещение заготовок** со своего склада в цех
-    (`api.updateWorkshopOrderStatus` → `transfer`).
+11. **Заказ в цех создаётся сразу в статусе `sent`.** Статусы `pending`
+    («черновик») и `in_progress` («в работе») были удалены — отправка в цех ≡
+    «цех взял в работу», дублировать не нужно. Поток: `sent → ready → received`
+    (плюс терминальный `cancelled`, доступен только из `sent`).
+    `api.createWorkshopOrder` сразу выставляет `sent_at` и перемещает заготовки
+    со своего склада в цех, если их там не хватает.
 
 12. **Заказ в цех `received` → автопроизводство** в цехе. Готовое остаётся в
     цехе (т.к. цех сам отправляет клиенту). Перемещения на свой склад больше
     нет (см. правило 2).
 
+13. **Заказ Ozon на вышивку без готового остатка → «Отправить в цех».** Если у
+    заказа Ozon все позиции с `decoration_type.made_at='workshop'`, готовых нет
+    и заготовок хватает, в карточке доступна кнопка «Отправить в цех» —
+    `api.createWorkshopOrderFromOzon` создаёт связанный заказ в цех (мапит
+    finished → blank через `findBlankFor`) и проставляет
+    `merch_ozon_orders.workshop_order_id`.
+
+14. **«Произвели и отправили» закрывает оба заказа одним кликом.** Пока
+    `workshop_order_id` заполнен, в карточке Ozon доступна только эта кнопка
+    (не голая «Отправил заказ»). `api.fulfillOzonViaWorkshop` сначала ведёт
+    заказ в цех в `received` (производство → списание заготовок + готовое в
+    цехе), затем вызывает `shipOzonOrder` (отгрузка готового из цеха через
+    штатный приоритет складов).
+
 #### Целостность данных
 
-13. **FK при удалении товара (`merch_products`):**
+15. **FK при удалении товара (`merch_products`):**
     - `merch_transactions.product_id` / `source_product_id` → `ON DELETE SET NULL` (сохраняем историю)
     - `merch_inventory.product_id` → `ON DELETE CASCADE` (без товара нет складской карточки)
     - `merch_workshop_order_items.blank_product_id` / `result_product_id` → `ON DELETE SET NULL`
     - `merch_ozon_order_items.product_id` → `ON DELETE SET NULL`
 
-14. **Транзакции не редактируются и не удаляются вручную.** Хочешь откатить —
+16. **Транзакции не редактируются и не удаляются вручную.** Хочешь откатить —
     создавай корректирующую транзакцию (`adjustment`).
 
-15. **В `merch_transactions` `product_id` и `design_id` оба nullable, без check
+17. **В `merch_transactions` `product_id` и `design_id` оба nullable, без check
     `OR NOT NULL`.** На INSERT прикладной код гарантирует, что одно из двух
     заполнено. CHECK-констрейнт был раньше, но конфликтовал с `ON DELETE SET NULL`
     при удалении товара (см. миграцию `202605241500_drop_tx_subject_check.sql`).
@@ -335,7 +353,7 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к O
 - RLS включён везде с `for all using (true) with check (true)` — однопользовательский режим, без аутентификации
 - Все таблицы — префикс `merch_`
 - Колонки snake_case
-- Все FK прописывать явно с правильным `ON DELETE` (см. правило 13)
+- Все FK прописывать явно с правильным `ON DELETE` (см. правило 15)
 - Любой `select` с join: при двух FK на одну таблицу — обязательно `relation!fk_column(...)`,
   иначе PostgREST вернёт `PGRST201`. Пример в `api.listTransactions` (две связи на `merch_products`)
 

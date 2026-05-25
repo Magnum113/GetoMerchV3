@@ -18,10 +18,10 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import type { WorkshopOrder, WorkshopOrderStatus, Product, Design, DecorationType, Warehouse } from "@/lib/types";
 import { WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
-import { Hammer, Plus, Send, CheckCircle2, X, ArrowRight, Trash2 } from "lucide-react";
+import { Hammer, Plus, CheckCircle2, X, Trash2 } from "lucide-react";
 import { formatDate, errorMessage } from "@/lib/utils";
 
-const FLOW: WorkshopOrderStatus[] = ["pending", "sent", "in_progress", "ready", "received"];
+const FLOW: WorkshopOrderStatus[] = ["sent", "ready", "received"];
 
 export default function WorkshopPage() {
   const [orders, setOrders] = useState<WorkshopOrder[]>([]);
@@ -70,6 +70,7 @@ export default function WorkshopPage() {
         onOpenChange={setOpenCreate}
         onDone={reload}
         defaultWorkshopId={warehouses.find((w) => w.type === "workshop")?.id ?? ""}
+        ownWarehouseId={ownWarehouse?.id ?? null}
       />
     </div>
   );
@@ -90,7 +91,7 @@ function OrderCard({ order, ownWarehouseId, onChange }: { order: WorkshopOrder; 
 
   const idx = FLOW.indexOf(order.status);
   const next = idx >= 0 && idx < FLOW.length - 1 ? FLOW[idx + 1] : null;
-  const canCancel = ["pending", "sent"].includes(order.status);
+  const canCancel = order.status === "sent";
 
   return (
     <Card>
@@ -108,8 +109,6 @@ function OrderCard({ order, ownWarehouseId, onChange }: { order: WorkshopOrder; 
           <div className="flex flex-wrap gap-2">
             {next && (
               <Button size="sm" onClick={() => moveTo(next)} disabled={busy}>
-                {next === "sent" && <><Send className="h-3.5 w-3.5" /> Отправить</>}
-                {next === "in_progress" && <><ArrowRight className="h-3.5 w-3.5" /> В работу</>}
                 {next === "ready" && <><CheckCircle2 className="h-3.5 w-3.5" /> Готово</>}
                 {next === "received" && <><CheckCircle2 className="h-3.5 w-3.5" /> Получено</>}
               </Button>
@@ -161,7 +160,7 @@ interface ItemDraft {
   notes: string;
 }
 
-function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void; defaultWorkshopId: string }) {
+function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId, ownWarehouseId }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void; defaultWorkshopId: string; ownWarehouseId: string | null }) {
   const [workshopId, setWorkshopId] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<ItemDraft[]>([{ blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "" }]);
@@ -196,6 +195,7 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId }: { 
       await api.createWorkshopOrder({
         workshopId,
         notes,
+        ownWarehouseId,
         items: valid.map((it) => ({
           blankProductId: it.blank!.id,
           designId: it.designId,
@@ -218,7 +218,7 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId }: { 
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Новый заказ в цех</DialogTitle>
-          <DialogDescription>Список пустых товаров и дизайнов для вышивки. После отправки система автоматически переместит товары в цех (если их недостаточно — со своего склада).</DialogDescription>
+          <DialogDescription>Список пустых товаров и дизайнов для вышивки. Заказ сразу уходит в работу: заготовки переносятся со своего склада в цех автоматически.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
