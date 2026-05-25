@@ -6,16 +6,18 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Pill } from "@/components/ui/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
-import { ProductPicker } from "@/components/product-picker";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import type { Product } from "@/lib/types";
+import type { Color, DecorationType, Design, DesignType, FabricType, Product, ProductCategory, Size } from "@/lib/types";
 import { Package, Plus, Search, Trash2, Pencil, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { formatMoney, errorMessage } from "@/lib/utils";
 
 export default function ProductsPage() {
@@ -309,32 +311,272 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
   );
 }
 
+interface SkuRow {
+  id: string;
+  colorId: string;
+  decorationTypeId: string;
+  designId: string;
+  sizes: Set<string>;
+}
+
+function newSkuRow(): SkuRow {
+  return { id: Math.random().toString(36).slice(2), colorId: "", decorationTypeId: "", designId: "", sizes: new Set() };
+}
+
 function CreateSkuDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void }) {
-  const [product, setProduct] = useState<Product | null>(null);
   const [blank, setBlank] = useState(true);
+  const [categoryId, setCategoryId] = useState("");
+  const [fabricId, setFabricId] = useState("");
+  const [rows, setRows] = useState<SkuRow[]>([newSkuRow()]);
+  const [busy, setBusy] = useState(false);
+
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+  const [fabrics, setFabrics] = useState<FabricType[]>([]);
+  const [colors, setColors] = useState<Color[]>([]);
+  const [sizes, setSizes] = useState<Size[]>([]);
+  const [designs, setDesigns] = useState<Design[]>([]);
+  const [decorationTypes, setDecorationTypes] = useState<DecorationType[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const [c, f, col, s, d, dt] = await Promise.all([
+        api.listCategories(),
+        api.listFabrics(),
+        api.listColors(),
+        api.listSizes(),
+        api.listDesigns(),
+        api.listDecorationTypes(),
+      ]);
+      setCategories(c); setFabrics(f); setColors(col); setSizes(s); setDesigns(d); setDecorationTypes(dt);
+      setCategoryId((prev) => prev || c.find((x) => x.slug === "tshirt" || /^футболк/i.test(x.name))?.id || c[0]?.id || "");
+      setFabricId((prev) => prev || f.find((x) => x.slug === "regular" || /^обычн/i.test(x.name))?.id || f[0]?.id || "");
+    })();
+  }, [open]);
+
+  function reset() {
+    setRows([newSkuRow()]); setCategoryId(""); setFabricId("");
+  }
+
+  function updateRow(i: number, patch: Partial<SkuRow>) {
+    setRows((xs) => xs.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  }
+  function toggleSize(i: number, sizeId: string) {
+    setRows((xs) => xs.map((x, idx) => {
+      if (idx !== i) return x;
+      const ns = new Set(x.sizes);
+      if (ns.has(sizeId)) ns.delete(sizeId); else ns.add(sizeId);
+      return { ...x, sizes: ns };
+    }));
+  }
+  function addRow() { setRows((xs) => [...xs, newSkuRow()]); }
+  function removeRow(i: number) { setRows((xs) => xs.filter((_, idx) => idx !== i)); }
+
+  const sortedSizes = useMemo(() => [...sizes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)), [sizes]);
+
+  const totalCount = useMemo(
+    () => rows.reduce((s, r) => s + (r.colorId && (blank || (r.decorationTypeId && r.designId)) ? r.sizes.size : 0), 0),
+    [rows, blank]
+  );
+
+  const canSubmit = !!categoryId && !!fabricId && totalCount > 0 &&
+    rows.every((r) => {
+      if (r.sizes.size === 0) return true; // пустая строка ОК
+      if (!r.colorId) return false;
+      if (!blank && (!r.decorationTypeId || !r.designId)) return false;
+      return true;
+    });
+
+  async function submit() {
+    if (!canSubmit) return toast.error("Заполните тип, ткань и выберите размеры");
+    setBusy(true);
+    try {
+      const tasks: { colorId: string; sizeId: string; designId: string | null; decorationTypeId: string | null }[] = [];
+      for (const r of rows) {
+        if (!r.colorId || r.sizes.size === 0) continue;
+        for (const sizeId of r.sizes) {
+          tasks.push({
+            colorId: r.colorId,
+            sizeId,
+            designId: blank ? null : r.designId,
+            decorationTypeId: blank ? null : r.decorationTypeId,
+          });
+        }
+      }
+      const created = await Promise.all(
+        tasks.map((t) => api.findOrCreateProduct({
+          category_id: categoryId,
+          fabric_id: fabricId,
+          color_id: t.colorId,
+          size_id: t.sizeId,
+          design_id: t.designId,
+          decoration_type_id: t.decorationTypeId,
+        }))
+      );
+      toast.success(`Готово: ${created.length} SKU создано / найдено`);
+      reset();
+      onOpenChange(false);
+      onDone();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally { setBusy(false); }
+  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Создание SKU</DialogTitle></DialogHeader>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Создание SKU</DialogTitle>
+        </DialogHeader>
+
         <div className="space-y-4">
-          <div className="flex gap-2 text-sm">
-            <button type="button" onClick={() => setBlank(true)} className={`px-3 py-1.5 rounded-md border ${blank ? "bg-primary text-primary-foreground border-primary" : "bg-background"}`}>Пустой</button>
-            <button type="button" onClick={() => setBlank(false)} className={`px-3 py-1.5 rounded-md border ${!blank ? "bg-primary text-primary-foreground border-primary" : "bg-background"}`}>Готовый (с дизайном)</button>
+          <div className="flex gap-2">
+            <Pill shape="square" active={blank} onClick={() => setBlank(true)}>Пустой</Pill>
+            <Pill shape="square" active={!blank} onClick={() => setBlank(false)}>Готовый (с дизайном)</Pill>
           </div>
-          <ProductPicker blankOnly={blank} finishedOnly={!blank} onChange={setProduct} />
-          {product && (
-            <div className="rounded-md border bg-muted/30 p-3 text-sm">
-              <Label className="text-xs">Будет создан / найден SKU:</Label>
-              <div className="mt-1 font-mono">{product.sku}</div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Тип</Label>
+              <Select value={categoryId} onValueChange={setCategoryId}>
+                <SelectTrigger><SelectValue placeholder="Футболка / худи" /></SelectTrigger>
+                <SelectContent>{categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-          )}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Ткань</Label>
+              <Select value={fabricId} onValueChange={setFabricId}>
+                <SelectTrigger><SelectValue placeholder="Обычная / варёнка" /></SelectTrigger>
+                <SelectContent>{fabrics.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {rows.map((r, idx) => (
+              <SkuRowEditor
+                key={r.id}
+                row={r}
+                blank={blank}
+                colors={colors}
+                sizes={sortedSizes}
+                designs={designs}
+                decorationTypes={decorationTypes}
+                onChange={(p) => updateRow(idx, p)}
+                onToggleSize={(sid) => toggleSize(idx, sid)}
+                onRemove={rows.length > 1 ? () => removeRow(idx) : undefined}
+              />
+            ))}
+            <Button variant="outline" size="sm" onClick={addRow}>
+              <Plus className="h-4 w-4" /> Ещё {blank ? "цвет" : "цвет / дизайн"}
+            </Button>
+          </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-          <Button disabled={!product} onClick={() => { toast.success(`SKU «${product?.sku}» создан/найден`); onDone(); onOpenChange(false); }}>Готово</Button>
+
+        <DialogFooter className="sm:justify-between gap-2">
+          <div className="text-sm text-muted-foreground">
+            {totalCount > 0 ? <>Итого: <span className="font-semibold text-foreground tabular-nums">{totalCount}</span> SKU</> : "Выберите размеры"}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+            <Button onClick={submit} disabled={busy || !canSubmit}>{busy ? "..." : "Создать"}</Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SkuRowEditor({
+  row, blank, colors, sizes, designs, decorationTypes, onChange, onToggleSize, onRemove,
+}: {
+  row: SkuRow;
+  blank: boolean;
+  colors: Color[];
+  sizes: Size[];
+  designs: Design[];
+  decorationTypes: DecorationType[];
+  onChange: (p: Partial<SkuRow>) => void;
+  onToggleSize: (sizeId: string) => void;
+  onRemove?: () => void;
+}) {
+  const selectedDecoration = decorationTypes.find((d) => d.id === row.decorationTypeId);
+  const designType: DesignType | null =
+    selectedDecoration?.slug === "embroidery" ? "embroidery" :
+    selectedDecoration?.slug === "print" ? "print" : null;
+  const filteredDesigns = designType ? designs.filter((d) => d.type === designType) : designs;
+
+  return (
+    <div className="rounded-lg border p-3 bg-muted/20 space-y-3">
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="space-y-1.5 flex-1 min-w-[150px]">
+          <Label className="text-xs">Цвет</Label>
+          <Select value={row.colorId} onValueChange={(v) => onChange({ colorId: v })}>
+            <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+            <SelectContent>
+              {colors.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: c.hex_code ?? "#999" }} />
+                    {c.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {!blank && (
+          <>
+            <div className="space-y-1.5 flex-1 min-w-[140px]">
+              <Label className="text-xs">Украшение</Label>
+              <Select value={row.decorationTypeId} onValueChange={(v) => onChange({ decorationTypeId: v, designId: "" })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>{decorationTypes.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 flex-1 min-w-[160px]">
+              <Label className="text-xs">Дизайн</Label>
+              <Select value={row.designId} onValueChange={(v) => onChange({ designId: v })}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent>
+                  {filteredDesigns.length === 0 ? (
+                    <div className="text-xs text-muted-foreground p-2">Нет дизайнов</div>
+                  ) : filteredDesigns.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
+        {onRemove && (
+          <Button size="icon" variant="ghost" className="h-9 w-9" onClick={onRemove}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+
+      <div>
+        <Label className="text-xs mb-1.5 block">Размеры (клик — выбрать / снять)</Label>
+        <div className="flex flex-wrap gap-1.5">
+          {sizes.map((s) => {
+            const active = row.sizes.has(s.id);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onToggleSize(s.id)}
+                className={cn(
+                  "h-9 min-w-[2.5rem] px-2.5 rounded-md border text-sm font-medium tabular-nums transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background hover:bg-accent",
+                )}
+              >
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
