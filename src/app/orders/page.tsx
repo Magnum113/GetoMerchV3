@@ -12,8 +12,8 @@ import { ProductDisplay } from "@/components/product-display";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse } from "@/lib/types";
-import { OZON_STATUS_LABELS, OZON_STATUS_COLORS } from "@/lib/types";
-import { ShoppingBag, RefreshCw, CheckCircle2, AlertTriangle, PackageCheck, Hammer, X, Search, Undo2, ExternalLink, Truck } from "lucide-react";
+import { OZON_STATUS_LABELS, OZON_STATUS_COLORS, WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
+import { ShoppingBag, RefreshCw, CheckCircle2, AlertTriangle, PackageCheck, Hammer, X, Search, Undo2, ExternalLink, Truck, Send } from "lucide-react";
 
 const POST_SHIPMENT_STATUSES = new Set([
   "delivering",
@@ -66,6 +66,7 @@ export default function OrdersPage() {
   useEffect(() => { reload(); }, []);
 
   const ownWarehouse = warehouses.find((w) => w.type === "own");
+  const defaultWorkshop = warehouses.find((w) => w.type === "workshop");
   const warehouseNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const w of warehouses) m.set(w.id, w.name);
@@ -121,11 +122,12 @@ export default function OrdersPage() {
     return order.items.every((it) => it.product && (stockByProduct.get(it.product.id)?.total ?? 0) >= it.quantity);
   }
 
-  async function doSync() {
+  async function doSync(scope: "active" | "all" = "active") {
     setSyncing(true);
     try {
-      const r = await api.syncOzonOrders(60);
-      toast.success(`Синхронизировано: ${r.fetched} (новых ${r.created}, обновлено ${r.updated})${r.unmatchedItems ? `, без SKU ${r.unmatchedItems}` : ""}`);
+      const r = await api.syncOzonOrders({ scope, days: 60 });
+      const scopeLabel = r.scope === "active" ? "активных" : "всех";
+      toast.success(`Синхронизировано ${scopeLabel}: ${r.fetched} (новых ${r.created}, обновлено ${r.updated})${r.unmatchedItems ? `, без SKU ${r.unmatchedItems}` : ""}`);
       await reload();
     } catch (e) { toast.error(errorMessage(e)); }
     finally { setSyncing(false); }
@@ -136,6 +138,45 @@ export default function OrdersPage() {
     try {
       await api.shipOzonOrder(order.id, ownWarehouse?.id);
       toast.success("Отправлено, товар списан");
+      await reload();
+    } catch (e) { toast.error(errorMessage(e)); }
+  }
+
+  function workshopEligible(order: OzonOrder): boolean {
+    if (order.workshop_order_id) return false;
+    if (!order.items || order.items.length === 0) return false;
+    if (!defaultWorkshop) return false;
+    return order.items.every((it) => {
+      if (!it.product) return false;
+      const a = availability(it);
+      if (a.status === "ready") return false;
+      const dec = it.product.decoration_type;
+      if (!dec || dec.made_at !== "workshop") return false;
+      if (!a.blankProduct) return false;
+      if (a.blank < a.need) return false;
+      return true;
+    });
+  }
+
+  async function sendToWorkshop(order: OzonOrder) {
+    if (!defaultWorkshop) return toast.error("Не настроен цех вышивки");
+    if (!confirm(`Создать заказ в цех на ${order.items?.length ?? 0} позиций?`)) return;
+    try {
+      await api.createWorkshopOrderFromOzon({
+        ozonOrderId: order.id,
+        workshopId: defaultWorkshop.id,
+        ownWarehouseId: ownWarehouse?.id ?? null,
+      });
+      toast.success("Заказ отправлен в цех, заготовки перенесены");
+      await reload();
+    } catch (e) { toast.error(errorMessage(e)); }
+  }
+
+  async function fulfillViaWorkshop(order: OzonOrder) {
+    if (!confirm("Подтвердить, что заказ произведён и отправлен покупателю?")) return;
+    try {
+      await api.fulfillOzonViaWorkshop({ ozonOrderId: order.id, ownWarehouseId: ownWarehouse?.id ?? null });
+      toast.success("Заказ закрыт, материалы списаны");
       await reload();
     } catch (e) { toast.error(errorMessage(e)); }
   }
@@ -167,9 +208,14 @@ export default function OrdersPage() {
         title="Заказы Ozon"
         description="Заказы FBS из личного кабинета Ozon. Видно наличие готовой продукции и пустых для производства. Кнопка «Отправил» списывает товар со склада."
         action={
-          <Button onClick={doSync} disabled={syncing}>
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Синхронизация…" : "Синхронизировать"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => doSync("active")} disabled={syncing} title="Тянет только заказы, требующие действий (ждут упаковки / отгрузки)">
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Синхронизация…" : "Синхронизировать"}
+            </Button>
+            <Button variant="outline" onClick={() => doSync("all")} disabled={syncing} title="Полная синхронизация за 60 дней — медленнее, обновит и доставленные/отменённые">
+              Полная
+            </Button>
+          </div>
         }
       />
 
@@ -195,7 +241,7 @@ export default function OrdersPage() {
             icon={ShoppingBag}
             title="Заказов ещё нет"
             description="Нажми «Синхронизировать», чтобы подтянуть отправления FBS из Ozon за последние 60 дней."
-            action={<Button onClick={doSync} disabled={syncing}><RefreshCw className="h-4 w-4" /> Синхронизировать</Button>}
+            action={<Button onClick={() => doSync("active")} disabled={syncing}><RefreshCw className="h-4 w-4" /> Синхронизировать</Button>}
           />
         </CardContent></Card>
       ) : filtered.length === 0 ? (
@@ -210,8 +256,11 @@ export default function OrdersPage() {
               order={o}
               ready={orderReady(o)}
               availability={availability}
+              canSendToWorkshop={workshopEligible(o)}
               onShip={() => ship(o)}
               onUnship={() => unship(o)}
+              onSendToWorkshop={() => sendToWorkshop(o)}
+              onFulfillViaWorkshop={() => fulfillViaWorkshop(o)}
             />
           ))}
         </div>
@@ -220,12 +269,15 @@ export default function OrdersPage() {
   );
 }
 
-function OrderCard({ order, ready, availability, onShip, onUnship }: {
+function OrderCard({ order, ready, availability, canSendToWorkshop, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop }: {
   order: OzonOrder;
   ready: boolean;
   availability: (it: OzonOrderItem) => ItemAvailability;
+  canSendToWorkshop: boolean;
   onShip: () => void;
   onUnship: () => void;
+  onSendToWorkshop: () => void;
+  onFulfillViaWorkshop: () => void;
 }) {
   const statusLabel = OZON_STATUS_LABELS[order.status] ?? order.status;
   const statusColor = OZON_STATUS_COLORS[order.status] ?? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
@@ -234,6 +286,8 @@ function OrderCard({ order, ready, availability, onShip, onUnship }: {
   const cancelled = order.status === "cancelled";
   const showActions = !cancelled && !onOzonSide;
   const showAvailability = !shipped && !cancelled && !onOzonSide;
+  const wsLinked = !!order.workshop_order_id && !shipped && !cancelled && !onOzonSide;
+  const ws = order.workshop_order ?? null;
 
   return (
     <Card>
@@ -244,6 +298,11 @@ function OrderCard({ order, ready, availability, onShip, onUnship }: {
               <CardTitle className="text-base font-mono">{order.posting_number}</CardTitle>
               <Badge className={statusColor}>{statusLabel}</Badge>
               {shipped && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"><PackageCheck className="h-3 w-3 mr-1" /> Отправлен</Badge>}
+              {wsLinked && ws && (
+                <Badge className={`${WORKSHOP_STATUS_COLORS[ws.status]} gap-1`}>
+                  <Hammer className="h-3 w-3" /> Цех: {WORKSHOP_STATUS_LABELS[ws.status]}
+                </Badge>
+              )}
             </div>
             <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
               {order.in_process_at && <span>Создан: {formatDate(order.in_process_at)}</span>}
@@ -253,8 +312,18 @@ function OrderCard({ order, ready, availability, onShip, onUnship }: {
             </div>
           </div>
           <div className="flex gap-2">
-            {showActions && !shipped && (
-              <Button size="sm" onClick={onShip} disabled={!ready}>
+            {showActions && !shipped && wsLinked && (
+              <Button size="sm" onClick={onFulfillViaWorkshop}>
+                <CheckCircle2 className="h-3.5 w-3.5" /> Произвели и отправили
+              </Button>
+            )}
+            {showActions && !shipped && !wsLinked && canSendToWorkshop && !ready && (
+              <Button size="sm" onClick={onSendToWorkshop}>
+                <Send className="h-3.5 w-3.5" /> Отправить в цех
+              </Button>
+            )}
+            {showActions && !shipped && !wsLinked && ready && (
+              <Button size="sm" onClick={onShip}>
                 <CheckCircle2 className="h-3.5 w-3.5" /> Отправил заказ
               </Button>
             )}
@@ -320,8 +389,11 @@ function ItemRow({ item, availability, top, showPrice }: { item: OzonOrderItem; 
   );
 }
 
-function whDetail(list: { warehouseName: string; qty: number }[]) {
+function whDetail(list: { warehouseName: string; qty: number }[], total?: number) {
   if (list.length === 0) return "";
+  if (list.length === 1 && (total == null || list[0].qty === total)) {
+    return ` · ${list[0].warehouseName}`;
+  }
   return ` · ${list.map((w) => `${w.warehouseName}: ${w.qty}`).join(", ")}`;
 }
 
@@ -336,7 +408,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   if (a.status === "ready") {
     return (
       <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 gap-1">
-        <CheckCircle2 className="h-3 w-3" /> Готово: {a.finished}{whDetail(a.finishedByWh)}
+        <CheckCircle2 className="h-3 w-3" /> Готово: {a.finished}{whDetail(a.finishedByWh, a.finished)}
       </Badge>
     );
   }
@@ -344,11 +416,11 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
     return (
       <div className="flex flex-wrap gap-1.5">
         <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 gap-1">
-          <AlertTriangle className="h-3 w-3" /> Готово: {a.finished} / {a.need}{whDetail(a.finishedByWh)}
+          <AlertTriangle className="h-3 w-3" /> Готово: {a.finished} / {a.need}{whDetail(a.finishedByWh, a.finished)}
         </Badge>
         {a.blankProduct && a.blank > 0 && (
           <Badge variant="outline" className="gap-1">
-            <Hammer className="h-3 w-3" /> Пустых для допроизводства: {a.blank}{whDetail(a.blankByWh)}
+            <Hammer className="h-3 w-3" /> Пустых для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
           </Badge>
         )}
       </div>
@@ -357,7 +429,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   if (a.status === "needs_production") {
     return (
       <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 gap-1">
-        <Hammer className="h-3 w-3" /> Готовых нет, есть пустые: {a.blank}{whDetail(a.blankByWh)}
+        <Hammer className="h-3 w-3" /> Готовых нет, есть пустые: {a.blank}{whDetail(a.blankByWh, a.blank)}
       </Badge>
     );
   }

@@ -46,12 +46,13 @@ interface FbsListResponse {
   result?: { postings?: OzonPosting[]; has_next?: boolean };
 }
 
+// Полная история — /v3/posting/fbs/list. Тянет ВСЁ за период.
 async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
   const since = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
   let offset = 0;
-  const limit = 1000; // Ozon allows up to 1000 — берём максимум, меньше страниц
+  const limit = 1000;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const r: FbsListResponse = await ozonPost("/v3/posting/fbs/list", {
@@ -64,6 +65,38 @@ async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
     const items = r.result?.postings ?? [];
     all.push(...items);
     if (!r.result?.has_next || items.length < limit) break;
+    offset += limit;
+    if (offset > 10000) break;
+  }
+  return all;
+}
+
+// Активные — /v3/posting/fbs/unfulfilled/list. Только то, что требует действий
+// продавца (awaiting_packaging / awaiting_deliver и т.п.). Доставленные, отменённые,
+// доставляющиеся пропускаем — для них статус в нашей БД не обновляем, экономя время.
+async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
+  // cutoff — дедлайн упаковки/отгрузки. Берём широкое окно вокруг "сейчас"
+  // (на случай просроченных и далёких будущих).
+  const cutoffFrom = new Date(Date.now() - 60 * 86400 * 1000).toISOString();
+  const cutoffTo = new Date(Date.now() + 90 * 86400 * 1000).toISOString();
+  const all: OzonPosting[] = [];
+  let offset = 0;
+  const limit = 1000;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const r = await ozonPost<{ result?: { postings?: OzonPosting[]; count?: number } }>(
+      "/v3/posting/fbs/unfulfilled/list",
+      {
+        dir: "ASC",
+        filter: { cutoff_from: cutoffFrom, cutoff_to: cutoffTo },
+        limit,
+        offset,
+        with: { analytics_data: true, financial_data: false },
+      },
+    );
+    const items = r.result?.postings ?? [];
+    all.push(...items);
+    if (items.length < limit) break;
     offset += limit;
     if (offset > 10000) break;
   }
@@ -83,6 +116,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
     const url = new URL(req.url);
+    const scope = url.searchParams.get("scope") === "all" ? "all" : "active";
     const days = Math.min(180, Math.max(1, Number(url.searchParams.get("days") ?? 60)));
 
     const supabase = createClient(
@@ -91,13 +125,14 @@ export async function POST(req: Request) {
     );
 
     // 1) Параллельно тянем Ozon + каталог
+    const fetcher = scope === "all" ? fetchAllPostings(days) : fetchUnfulfilledPostings();
     const [postings, { data: products }] = await Promise.all([
-      fetchAllPostings(days),
+      fetcher,
       supabase.from("merch_products").select("id, sku, legacy_skus").not("sku", "is", null),
     ]);
 
     if (postings.length === 0) {
-      return NextResponse.json({ ok: true, fetched: 0, created: 0, updated: 0, unmatchedItems: 0, unmatchedSamples: [] });
+      return NextResponse.json({ ok: true, scope, fetched: 0, created: 0, updated: 0, unmatchedItems: 0, unmatchedSamples: [] });
     }
 
     // Карта offer_id → product_id (включает legacy_skus для переименованных в Ozon артикулов)
@@ -212,6 +247,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      scope,
       fetched: postings.length,
       created,
       updated,

@@ -478,6 +478,7 @@ export const api = {
   async createWorkshopOrder(args: {
     workshopId: string;
     notes?: string;
+    ownWarehouseId?: string | null;
     items: {
       blankProductId: string;
       designId: string;
@@ -493,7 +494,8 @@ export const api = {
       .insert({
         workshop_id: args.workshopId,
         notes: args.notes ?? null,
-        status: "pending",
+        status: "sent",
+        sent_at: new Date().toISOString(),
         order_number: orderNumber,
       })
       .select()
@@ -510,40 +512,39 @@ export const api = {
     }));
     const { error: itemsErr } = await sb.from("merch_workshop_order_items").insert(itemsPayload);
     if (itemsErr) throw toError(itemsErr);
+
+    // Заказ сразу «в работе у цеха» — переносим заготовки со своего склада, если их там не хватает в цехе.
+    if (args.ownWarehouseId) {
+      for (const it of args.items) {
+        const inWorkshop = await api.getInventoryFor(it.blankProductId, args.workshopId);
+        const need = Math.max(0, it.quantity - inWorkshop);
+        if (need <= 0) continue;
+        const inOwn = await api.getInventoryFor(it.blankProductId, args.ownWarehouseId);
+        if (inOwn >= need) {
+          await api.transfer({
+            productId: it.blankProductId,
+            fromWarehouseId: args.ownWarehouseId,
+            toWarehouseId: args.workshopId,
+            quantity: need,
+            notes: `Авто-перемещение для заказа ${orderNumber}`,
+          });
+        }
+      }
+    }
+
     return order.id as string;
   },
 
   async updateWorkshopOrderStatus(orderId: string, status: WorkshopOrder["status"], options?: { ownWarehouseId?: string }) {
     const sb = createClient();
     const patch: Record<string, unknown> = { status };
-    if (status === "sent") patch.sent_at = new Date().toISOString();
     if (status === "ready") patch.completed_at = new Date().toISOString();
     if (status === "received") patch.received_at = new Date().toISOString();
 
     const { error } = await sb.from("merch_workshop_orders").update(patch).eq("id", orderId);
     if (error) throw toError(error);
 
-    // Если статус «отправлено» — переместить пустые товары со своего склада в цех
-    if (status === "sent" && options?.ownWarehouseId) {
-      const order = await api.getWorkshopOrder(orderId);
-      if (!order) return;
-      for (const it of order.items ?? []) {
-        const hasInOwn = await api.getInventoryFor(it.blank_product_id, options.ownWarehouseId);
-        const hasInWorkshop = await api.getInventoryFor(it.blank_product_id, order.workshop_id);
-        const needFromOwn = Math.max(0, it.quantity - hasInWorkshop);
-        if (needFromOwn > 0 && hasInOwn >= needFromOwn) {
-          await api.transfer({
-            productId: it.blank_product_id,
-            fromWarehouseId: options.ownWarehouseId,
-            toWarehouseId: order.workshop_id,
-            quantity: needFromOwn,
-            notes: `Авто-перемещение для заказа ${order.order_number}`,
-          });
-        }
-      }
-    }
-
-    // Если статус «получено» — автоматически сделать производство и переместить на свой склад
+    // Если статус «получено» — автоматически сделать производство в цехе
     if (status === "received" && options?.ownWarehouseId) {
       const order = await api.getWorkshopOrder(orderId);
       if (!order) return;
@@ -596,7 +597,7 @@ export const api = {
     const { data, error } = await sb
       .from("merch_ozon_orders")
       .select(
-        `*, items:merch_ozon_order_items(*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}))`,
+        `*, workshop_order:merch_workshop_orders(*), items:merch_ozon_order_items(*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}))`,
       )
       .order("in_process_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false });
@@ -703,8 +704,79 @@ export const api = {
       .eq("id", orderId);
   },
 
-  async syncOzonOrders(days = 60): Promise<{ created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[] }> {
-    const res = await fetch(`/api/ozon/sync-orders?days=${days}`, { method: "POST" });
+  // Создать заказ в цех из заказа Ozon (для embroidery-позиций без готового остатка).
+  async createWorkshopOrderFromOzon(args: { ozonOrderId: string; workshopId: string; ownWarehouseId?: string | null }): Promise<string> {
+    const sb = createClient();
+    const { data: ozonRaw, error } = await sb
+      .from("merch_ozon_orders")
+      .select(`*, items:merch_ozon_order_items(*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}))`)
+      .eq("id", args.ozonOrderId)
+      .single();
+    if (error) throw toError(error);
+    const ozon = (ozonRaw as unknown) as OzonOrder | null;
+    if (!ozon) throw new Error("Заказ Ozon не найден");
+    if (ozon.workshop_order_id) throw new Error("Заказ в цех уже создан");
+
+    const items: { blankProductId: string; designId: string; decorationTypeId: string; quantity: number; notes?: string }[] = [];
+    for (const it of (ozon.items ?? [])) {
+      const p = it.product;
+      if (!p) throw new Error(`Не сопоставлен товар: ${it.offer_id}`);
+      if (!p.design_id || !p.decoration_type_id) throw new Error(`Позиция ${it.offer_id} без дизайна — не для цеха`);
+      const blank = await api.findBlankFor(p);
+      if (!blank) throw new Error(`Нет пустого SKU для ${it.offer_id}`);
+      items.push({
+        blankProductId: blank.id,
+        designId: p.design_id,
+        decorationTypeId: p.decoration_type_id,
+        quantity: it.quantity,
+        notes: `Ozon ${ozon.posting_number} · ${it.offer_id}`,
+      });
+    }
+    if (items.length === 0) throw new Error("Нет позиций для цеха");
+
+    const workshopOrderId = await api.createWorkshopOrder({
+      workshopId: args.workshopId,
+      notes: `Из заказа Ozon ${ozon.posting_number}`,
+      ownWarehouseId: args.ownWarehouseId ?? null,
+      items,
+    });
+
+    const { error: linkErr } = await sb
+      .from("merch_ozon_orders")
+      .update({ workshop_order_id: workshopOrderId })
+      .eq("id", args.ozonOrderId);
+    if (linkErr) throw toError(linkErr);
+
+    return workshopOrderId;
+  },
+
+  // «Произвели и отправили»: закрывает заказ в цех (production), затем отгружает Ozon.
+  async fulfillOzonViaWorkshop(args: { ozonOrderId: string; ownWarehouseId?: string | null }) {
+    const sb = createClient();
+    const { data: ozon, error } = await sb
+      .from("merch_ozon_orders")
+      .select("workshop_order_id, shipped_at")
+      .eq("id", args.ozonOrderId)
+      .single();
+    if (error) throw toError(error);
+    if (!ozon?.workshop_order_id) throw new Error("Заказ в цех не привязан");
+    if (ozon.shipped_at) throw new Error("Заказ уже отправлен");
+
+    const wsId = ozon.workshop_order_id as string;
+    const ws = await api.getWorkshopOrder(wsId);
+    if (ws && ws.status !== "received") {
+      await api.updateWorkshopOrderStatus(wsId, "received", {
+        ownWarehouseId: args.ownWarehouseId ?? undefined,
+      });
+    }
+    await api.shipOzonOrder(args.ozonOrderId, args.ownWarehouseId ?? undefined);
+  },
+
+  async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[] }> {
+    const params = new URLSearchParams();
+    if (opts.scope) params.set("scope", opts.scope);
+    if (opts.days != null) params.set("days", String(opts.days));
+    const res = await fetch(`/api/ozon/sync-orders?${params.toString()}`, { method: "POST" });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error ?? "Sync failed");
     return json;
