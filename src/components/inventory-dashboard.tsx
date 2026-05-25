@@ -135,14 +135,55 @@ export function InventoryDashboard({
     };
   }, [blankRows, finishedRows, prints, whFilter]);
 
-  if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
-
-  const showBreakdownInCells = whFilter === "all" && warehouses.length > 1;
   const activeWarehouse = whFilter === "all" ? null : warehouses.find((w) => w.id === whFilter) ?? null;
   const filterLabel = activeWarehouse?.name?.toLowerCase() ?? "все склады";
   // В цехе вышивки готовые не задерживаются — отправляются клиенту или на свой склад.
   // Скрываем готовые матрицу, дефицит и KPI.
   const hideFinished = activeWarehouse?.type === "workshop";
+
+  // Сортировка строк: сначала с полным отсутствием, затем с дефицитом, затем по алфавиту.
+  const bySeverity = (a: MatrixRow, b: MatrixRow) => {
+    if (b.missingCount !== a.missingCount) return b.missingCount - a.missingCount;
+    if (b.shortageCount !== a.shortageCount) return b.shortageCount - a.shortageCount;
+    return `${a.label} ${a.designLabel ?? ""} ${a.subLabel}`.localeCompare(
+      `${b.label} ${b.designLabel ?? ""} ${b.subLabel}`, "ru"
+    );
+  };
+  const sortedBlankRows = useMemo(() => [...blankRows].sort(bySeverity), [blankRows]);
+  const sortedFinishedRows = useMemo(() => [...finishedRows].sort(bySeverity), [finishedRows]);
+
+  // Список конкретных дефицитных позиций для карточки «Дефицит»
+  const shortageItems = useMemo(() => {
+    const sizeById = new Map(sizes.map((s) => [s.id, s]));
+    const items: ShortageItem[] = [];
+    const collect = (rows: MatrixRow[], kind: "blank" | "finished") => {
+      for (const row of rows) {
+        for (const [sizeId, cell] of Object.entries(row.cells)) {
+          if (!cell.hasProduct || cell.qty >= MIN_STOCK) continue;
+          items.push({
+            kind,
+            modelLabel: `${row.label} · ${row.subLabel}`,
+            designLabel: row.designLabel,
+            hex: row.hex,
+            sizeLabel: sizeById.get(sizeId)?.name ?? "?",
+            sizeOrder: sizeById.get(sizeId)?.sort_order ?? 0,
+            qty: cell.qty,
+          });
+        }
+      }
+    };
+    collect(blankRows, "blank");
+    if (!hideFinished) collect(finishedRows, "finished");
+    return items.sort((a, b) => {
+      if (a.qty !== b.qty) return a.qty - b.qty; // 0 → 1
+      if (a.modelLabel !== b.modelLabel) return a.modelLabel.localeCompare(b.modelLabel, "ru");
+      return a.sizeOrder - b.sizeOrder;
+    });
+  }, [blankRows, finishedRows, sizes, hideFinished]);
+
+  if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
+
+  const showBreakdownInCells = whFilter === "all" && warehouses.length > 1;
 
   return (
     <div className="space-y-5">
@@ -157,12 +198,17 @@ export function InventoryDashboard({
         ))}
       </div>
 
-      {/* KPI */}
+      {/* KPI — единицы по типам всегда складываются в "всего" (без неучтённого) */}
       <div className={cn("grid gap-3", hideFinished ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 lg:grid-cols-4")}>
-        <Kpi icon={Package} label="Единиц на складе" value={hideFinished ? stats.blankUnits : stats.totalUnits} sub={filterLabel} />
-        <Kpi icon={Shirt} label="Пустых SKU" value={stats.blankSkuCount} sub={`${stats.blankUnits} ед`} />
+        <Kpi
+          icon={Package}
+          label="Единиц на складе"
+          value={hideFinished ? stats.blankUnits : stats.blankUnits + stats.finishedUnits}
+          sub={filterLabel}
+        />
+        <Kpi icon={Shirt} label="Пустых" value={stats.blankUnits} sub={`${stats.blankSkuCount} SKU`} />
         {!hideFinished && (
-          <Kpi icon={Package} label="Готовых SKU" value={stats.finishedSkuCount} sub={`${stats.finishedUnits} ед`} />
+          <Kpi icon={Package} label="Готовых" value={stats.finishedUnits} sub={`${stats.finishedSkuCount} SKU`} />
         )}
         {!hideFinished && (
           <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
@@ -172,8 +218,8 @@ export function InventoryDashboard({
       {/* Дефицит */}
       <ShortageCard
         minStock={MIN_STOCK}
-        blank={{ shortage: stats.blankShortage, missing: stats.blankMissing }}
-        finished={hideFinished ? null : { shortage: stats.finishedShortage, missing: stats.finishedMissing }}
+        items={shortageItems}
+        finishedHidden={hideFinished}
       />
 
       <MatrixCard
@@ -181,7 +227,7 @@ export function InventoryDashboard({
         description={`Заготовки для нанесения принта или вышивки · ${filterLabel}`}
         icon={Shirt}
         sizes={sortedSizes}
-        rows={blankRows}
+        rows={sortedBlankRows}
         warehouses={warehouses}
         showBreakdown={showBreakdownInCells}
         emptyText="Пустых нет"
@@ -193,7 +239,7 @@ export function InventoryDashboard({
           description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
           icon={Package}
           sizes={sortedSizes}
-          rows={finishedRows}
+          rows={sortedFinishedRows}
           warehouses={warehouses}
           showBreakdown={showBreakdownInCells}
           emptyText="Готовых нет"
@@ -216,7 +262,7 @@ function Kpi({ icon: Icon, label, value, sub }: { icon: React.ComponentType<{ cl
         <div className="flex items-center gap-3">
           <div className="rounded-md bg-muted p-2"><Icon className="h-4 w-4 text-muted-foreground" /></div>
           <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">{label}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{label}</div>
             <div className="text-2xl font-semibold tabular-nums leading-tight">{value}</div>
             {sub && <div className="text-[11px] text-muted-foreground truncate">{sub}</div>}
           </div>
@@ -228,17 +274,16 @@ function Kpi({ icon: Icon, label, value, sub }: { icon: React.ComponentType<{ cl
 
 function ShortageCard({
   minStock,
-  blank,
-  finished,
+  items,
+  finishedHidden,
 }: {
   minStock: number;
-  blank: { shortage: number; missing: number };
-  finished: { shortage: number; missing: number } | null;
+  items: ShortageItem[];
+  finishedHidden: boolean;
 }) {
-  const total = blank.shortage + (finished?.shortage ?? 0);
-  const allGood = total === 0;
+  const [expanded, setExpanded] = useState(false);
 
-  if (allGood) {
+  if (items.length === 0) {
     return (
       <Card className="border-state-success/40 bg-state-success/20">
         <CardContent className="p-4 flex items-center gap-3">
@@ -252,26 +297,89 @@ function ShortageCard({
     );
   }
 
+  const missing = items.filter((i) => i.qty === 0);
+  const low = items.filter((i) => i.qty > 0);
+  const PREVIEW = 6;
+  const visible = expanded ? items : items.slice(0, PREVIEW);
+  const hidden = Math.max(0, items.length - PREVIEW);
+
   return (
-    <Card className="border-state-warning/50 bg-state-warning/20">
-      <CardContent className="p-4">
-        <div className="flex items-start gap-3 min-w-0">
-          <AlertTriangle className="h-5 w-5 text-state-warning-fg mt-0.5" />
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-state-warning-fg">
-              Дефицит: {total} позиций ниже минимума ({minStock} шт)
-            </div>
-            <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
-              <span>Пустые: <span className="font-medium text-foreground">{blank.shortage}</span> ниже минимума {blank.missing > 0 && <span className="text-state-danger-fg">· из них {blank.missing} = 0</span>}</span>
-              {finished && (
-                <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-state-danger-fg">· из них {finished.missing} = 0</span>}</span>
-              )}
+    <Card className="border-state-warning/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3 min-w-0">
+            <AlertTriangle className="h-5 w-5 text-state-warning-fg mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold">
+                Дефицит — {items.length} {pluralPositions(items.length)} со стоком &lt; {minStock}
+              </CardTitle>
+              <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                {missing.length > 0 && (
+                  <span className="text-state-danger-fg font-medium">Полностью нет: {missing.length}</span>
+                )}
+                {low.length > 0 && (
+                  <span>В критическом минимуме (1 шт): {low.length}</span>
+                )}
+                {finishedHidden && <span>· только пустые</span>}
+              </div>
             </div>
           </div>
         </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <ul className="divide-y rounded-md border">
+          {visible.map((it, idx) => (
+            <li key={`${it.modelLabel}|${it.designLabel ?? ""}|${it.sizeLabel}|${idx}`} className="flex items-center gap-3 px-3 py-2">
+              <span className="h-3 w-3 rounded-full border shrink-0" style={{ backgroundColor: it.hex ?? "#999" }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate">
+                  {it.modelLabel}
+                  <span className="ml-1.5 inline-flex items-center justify-center text-[10px] font-semibold px-1.5 py-0.5 rounded border align-middle">{it.sizeLabel}</span>
+                </div>
+                {it.designLabel && (
+                  <div className="text-[11px] text-muted-foreground truncate">{it.designLabel}</div>
+                )}
+              </div>
+              <div className={cn(
+                "text-xs font-semibold tabular-nums px-2 py-0.5 rounded shrink-0",
+                it.qty === 0 ? "bg-state-danger text-state-danger-fg" : "bg-state-warning text-state-warning-fg"
+              )}>
+                {it.qty === 0 ? "нет" : `${it.qty} шт`}
+              </div>
+            </li>
+          ))}
+        </ul>
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-2 text-xs font-medium text-muted-foreground hover:text-foreground underline underline-offset-2"
+          >
+            {expanded ? "Свернуть" : `Показать ещё ${hidden}`}
+          </button>
+        )}
       </CardContent>
     </Card>
   );
+}
+
+function pluralPositions(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "позиций";
+  if (mod10 === 1) return "позиция";
+  if (mod10 >= 2 && mod10 <= 4) return "позиции";
+  return "позиций";
+}
+
+interface ShortageItem {
+  kind: "blank" | "finished";
+  modelLabel: string;
+  designLabel: string | null;
+  hex: string | null;
+  sizeLabel: string;
+  sizeOrder: number;
+  qty: number;
 }
 
 interface MatrixCell {
@@ -316,7 +424,7 @@ function MatrixCard({
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-base">{title}</CardTitle>
+          <CardTitle className="text-lg font-semibold">{title}</CardTitle>
         </div>
         <p className="text-xs text-muted-foreground">{description}</p>
       </CardHeader>
@@ -327,13 +435,12 @@ function MatrixCard({
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="text-xs text-muted-foreground">
-                  <th className="text-left font-medium pb-2 pr-3 sticky left-0 bg-background">Группа</th>
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <th className="text-left font-medium pb-2 pr-3 sticky left-0 bg-background">Модель</th>
                   {sizes.map((s) => (
                     <th key={s.id} className="font-medium pb-2 px-1 text-center w-12">{s.name}</th>
                   ))}
-                  <th className="font-medium pb-2 pl-3 text-right">Σ</th>
-                  <th className="font-medium pb-2 pl-3 text-right w-16">⚠</th>
+                  <th className="font-medium pb-2 pl-3 text-right">Всего</th>
                 </tr>
               </thead>
               <tbody>
@@ -353,16 +460,6 @@ function MatrixCard({
                       return <Cell key={s.id} cell={cell} warehouses={warehouses} showBreakdown={showBreakdown} />;
                     })}
                     <td className="py-1.5 pl-3 text-right font-semibold tabular-nums">{g.total}</td>
-                    <td className="py-1.5 pl-3 text-right">
-                      {g.shortageCount > 0 ? (
-                        <Badge className={cn("text-[10px] h-5 px-1.5",
-                          g.missingCount > 0
-                            ? "bg-state-danger text-state-danger-fg"
-                            : "bg-state-warning text-state-warning-fg")}>
-                          {g.shortageCount}
-                        </Badge>
-                      ) : <span className="text-state-success-fg text-xs">✓</span>}
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -435,7 +532,7 @@ function PrintsCard({ prints, warehouses, whFilter }: { prints: PrintInventory[]
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <ImageIcon className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-base">Принты на складе</CardTitle>
+          <CardTitle className="text-lg font-semibold">Принты на складе</CardTitle>
         </div>
         <p className="text-xs text-muted-foreground">Готовые принты для нанесения. При производстве система списывает 1 принт на изделие.</p>
       </CardHeader>
@@ -446,7 +543,7 @@ function PrintsCard({ prints, warehouses, whFilter }: { prints: PrintInventory[]
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="text-xs text-muted-foreground">
+                <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   <th className="text-left font-medium pb-2 pr-3">Дизайн</th>
                   {visibleWarehouses.map((w) => (
                     <th key={w.id} className="font-medium pb-2 px-2 text-center">
@@ -456,7 +553,7 @@ function PrintsCard({ prints, warehouses, whFilter }: { prints: PrintInventory[]
                       </span>
                     </th>
                   ))}
-                  <th className="font-medium pb-2 pl-3 text-right">Σ</th>
+                  <th className="font-medium pb-2 pl-3 text-right">Всего</th>
                 </tr>
               </thead>
               <tbody>
