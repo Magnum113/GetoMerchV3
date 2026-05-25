@@ -130,26 +130,39 @@ function ReceiveDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
     if (!canSubmit) return toast.error("Заполните склад, тип, ткань и хотя бы одно количество");
     setBusy(true);
     try {
-      let count = 0;
+      // Собираем все задачи в плоский список — параллелим все приёмки
+      const tasks: { colorId: string; sizeId: string; designId: string | null; decorationTypeId: string | null; qty: number }[] = [];
       for (const r of rows) {
-        const entries = Object.entries(r.qty).filter(([, v]) => parseInt(v || "0", 10) > 0);
-        if (entries.length === 0) continue;
         if (!r.colorId) continue;
-        for (const [sizeId, vStr] of entries) {
-          const n = parseInt(vStr, 10);
+        for (const [sizeId, vStr] of Object.entries(r.qty)) {
+          const n = parseInt(vStr || "0", 10);
+          if (n <= 0) continue;
+          tasks.push({
+            colorId: r.colorId,
+            sizeId,
+            designId: blank ? null : r.designId,
+            decorationTypeId: blank ? null : r.decorationTypeId,
+            qty: n,
+          });
+        }
+      }
+
+      const results = await Promise.all(
+        tasks.map(async (t) => {
           const product = await api.findOrCreateProduct({
             category_id: categoryId,
             fabric_id: fabricId,
-            color_id: r.colorId,
-            size_id: sizeId,
-            design_id: blank ? null : r.designId,
-            decoration_type_id: blank ? null : r.decorationTypeId,
+            color_id: t.colorId,
+            size_id: t.sizeId,
+            design_id: t.designId,
+            decoration_type_id: t.decorationTypeId,
           });
-          await api.receive({ productId: product.id, warehouseId, quantity: n, notes });
-          count += n;
-        }
-      }
-      toast.success(`Принято ${count} шт по ${totals.skus} SKU`);
+          await api.receive({ productId: product.id, warehouseId, quantity: t.qty, notes });
+          return t.qty;
+        })
+      );
+      const count = results.reduce((s, n) => s + n, 0);
+      toast.success(`Принято ${count} шт по ${tasks.length} SKU`);
       reset();
       onOpenChange(false);
       onDone?.();
