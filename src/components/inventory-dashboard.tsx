@@ -148,7 +148,6 @@ export function InventoryDashboard({
       {!hideFinished && (
         <MatrixCard
           title="Готовые по размерам"
-          description="Готовая продукция с принтом или вышивкой (с offer_id на Ozon)"
           icon={Package}
           sizes={sortedSizes}
           rows={sortedFinishedRows}
@@ -196,7 +195,7 @@ function MatrixCard({
   emptyText,
 }: {
   title: string;
-  description: string;
+  description?: string;
   icon: React.ComponentType<{ className?: string }>;
   sizes: Size[];
   rows: MatrixRow[];
@@ -211,7 +210,7 @@ function MatrixCard({
           <Icon className="h-4 w-4 text-muted-foreground" />
           <CardTitle className="text-lg font-semibold">{title}</CardTitle>
         </div>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </CardHeader>
       <CardContent className="pt-0">
         {rows.length === 0 ? (
