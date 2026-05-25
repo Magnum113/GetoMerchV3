@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import type { Inventory, PrintInventory, Product, Size, Warehouse } from "@/lib/types";
 import {
   Package,
@@ -34,7 +35,6 @@ export function InventoryDashboard({
   loading: boolean;
 }) {
   const [whFilter, setWhFilter] = useState<WarehouseFilter>("all");
-  const [onlyShortage, setOnlyShortage] = useState(false);
 
   // ---- Сток по продукту с учётом фильтра склада
   const stockByProduct = useMemo(() => {
@@ -135,15 +135,6 @@ export function InventoryDashboard({
     };
   }, [blankRows, finishedRows, prints, whFilter]);
 
-  const visibleBlankRows = useMemo(
-    () => (onlyShortage ? blankRows.filter((r) => r.shortageCount > 0) : blankRows),
-    [blankRows, onlyShortage]
-  );
-  const visibleFinishedRows = useMemo(
-    () => (onlyShortage ? finishedRows.filter((r) => r.shortageCount > 0) : finishedRows),
-    [finishedRows, onlyShortage]
-  );
-
   if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
 
   const showBreakdownInCells = whFilter === "all" && warehouses.length > 1;
@@ -155,7 +146,7 @@ export function InventoryDashboard({
 
   return (
     <div className="space-y-5">
-      {/* Фильтры */}
+      {/* Фильтр складов */}
       <div className="flex flex-wrap items-center gap-2">
         <Pill active={whFilter === "all"} onClick={() => setWhFilter("all")}>Все склады</Pill>
         {warehouses.map((w) => (
@@ -164,11 +155,6 @@ export function InventoryDashboard({
             {w.name}
           </Pill>
         ))}
-        <div className="mx-2 h-5 w-px bg-border" />
-        <Pill active={!onlyShortage} onClick={() => setOnlyShortage(false)}>Все позиции</Pill>
-        <Pill active={onlyShortage} onClick={() => setOnlyShortage(true)}>
-          <AlertTriangle className="h-3 w-3" /> Только дефициты
-        </Pill>
       </div>
 
       {/* KPI */}
@@ -188,7 +174,6 @@ export function InventoryDashboard({
         minStock={MIN_STOCK}
         blank={{ shortage: stats.blankShortage, missing: stats.blankMissing }}
         finished={hideFinished ? null : { shortage: stats.finishedShortage, missing: stats.finishedMissing }}
-        onShowOnly={() => setOnlyShortage(true)}
       />
 
       <MatrixCard
@@ -196,10 +181,10 @@ export function InventoryDashboard({
         description={`Заготовки для нанесения принта или вышивки · ${filterLabel}`}
         icon={Shirt}
         sizes={sortedSizes}
-        rows={visibleBlankRows}
+        rows={blankRows}
         warehouses={warehouses}
         showBreakdown={showBreakdownInCells}
-        emptyText={onlyShortage ? "Дефицита пустых нет" : "Пустых нет"}
+        emptyText="Пустых нет"
       />
 
       {!hideFinished && (
@@ -208,10 +193,10 @@ export function InventoryDashboard({
           description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
           icon={Package}
           sizes={sortedSizes}
-          rows={visibleFinishedRows}
+          rows={finishedRows}
           warehouses={warehouses}
           showBreakdown={showBreakdownInCells}
-          emptyText={onlyShortage ? "Дефицита готовых нет" : "Готовых нет"}
+          emptyText="Готовых нет"
         />
       )}
 
@@ -223,21 +208,6 @@ export function InventoryDashboard({
 }
 
 // ---------- subcomponents ----------
-
-function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-        active ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-      )}
-    >
-      {children}
-    </button>
-  );
-}
 
 function Kpi({ icon: Icon, label, value, sub }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; sub?: string }) {
   return (
@@ -260,23 +230,21 @@ function ShortageCard({
   minStock,
   blank,
   finished,
-  onShowOnly,
 }: {
   minStock: number;
   blank: { shortage: number; missing: number };
   finished: { shortage: number; missing: number } | null;
-  onShowOnly: () => void;
 }) {
   const total = blank.shortage + (finished?.shortage ?? 0);
   const allGood = total === 0;
 
   if (allGood) {
     return (
-      <Card className="border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20">
+      <Card className="border-state-success/40 bg-state-success/20">
         <CardContent className="p-4 flex items-center gap-3">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <CheckCircle2 className="h-5 w-5 text-state-success-fg" />
           <div className="text-sm">
-            <span className="font-semibold text-emerald-900 dark:text-emerald-200">Всё в норме</span>
+            <span className="font-semibold text-state-success-fg">Всё в норме</span>
             <span className="text-muted-foreground"> · на каждый размер каждого изделия ≥ {minStock} шт</span>
           </div>
         </CardContent>
@@ -285,30 +253,21 @@ function ShortageCard({
   }
 
   return (
-    <Card className="border-amber-200 bg-amber-50/40 dark:bg-amber-950/20">
+    <Card className="border-state-warning/50 bg-state-warning/20">
       <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex items-start gap-3 min-w-0">
-            <AlertTriangle className="h-5 w-5 text-amber-700 mt-0.5" />
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                Дефицит: {total} позиций ниже минимума ({minStock} шт)
-              </div>
-              <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
-                <span>Пустые: <span className="font-medium text-foreground">{blank.shortage}</span> ниже минимума {blank.missing > 0 && <span className="text-red-700">· из них {blank.missing} = 0</span>}</span>
-                {finished && (
-                  <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-red-700">· из них {finished.missing} = 0</span>}</span>
-                )}
-              </div>
+        <div className="flex items-start gap-3 min-w-0">
+          <AlertTriangle className="h-5 w-5 text-state-warning-fg mt-0.5" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-state-warning-fg">
+              Дефицит: {total} позиций ниже минимума ({minStock} шт)
+            </div>
+            <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
+              <span>Пустые: <span className="font-medium text-foreground">{blank.shortage}</span> ниже минимума {blank.missing > 0 && <span className="text-state-danger-fg">· из них {blank.missing} = 0</span>}</span>
+              {finished && (
+                <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-state-danger-fg">· из них {finished.missing} = 0</span>}</span>
+              )}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onShowOnly}
-            className="text-xs font-medium underline underline-offset-2 hover:text-foreground text-amber-900 dark:text-amber-200"
-          >
-            Показать только дефициты →
-          </button>
         </div>
       </CardContent>
     </Card>
@@ -398,11 +357,11 @@ function MatrixCard({
                       {g.shortageCount > 0 ? (
                         <Badge className={cn("text-[10px] h-5 px-1.5",
                           g.missingCount > 0
-                            ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
-                            : "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200")}>
+                            ? "bg-state-danger text-state-danger-fg"
+                            : "bg-state-warning text-state-warning-fg")}>
                           {g.shortageCount}
                         </Badge>
-                      ) : <span className="text-emerald-600 text-xs">✓</span>}
+                      ) : <span className="text-state-success-fg text-xs">✓</span>}
                     </td>
                   </tr>
                 ))}
@@ -427,10 +386,10 @@ function Cell({ cell, warehouses, showBreakdown }: { cell?: MatrixCell; warehous
   const qty = cell.qty;
   const cls =
     qty === 0
-      ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+      ? "bg-state-danger text-state-danger-fg"
       : qty < MIN_STOCK
-      ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-      : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200";
+      ? "bg-state-warning text-state-warning-fg"
+      : "bg-state-success text-state-success-fg";
 
   const breakdownEntries = Array.from(cell.byWh.entries())
     .filter(([, q]) => q > 0)
@@ -525,8 +484,8 @@ function PrintsCard({ prints, warehouses, whFilter }: { prints: PrintInventory[]
                         <td key={w.id} className="px-2 py-2 text-center">
                           <span className={cn("inline-flex items-center justify-center min-w-[2rem] h-7 rounded text-sm tabular-nums px-1.5",
                             q === 0 ? "text-muted-foreground/40" :
-                            q <= 2 ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200" :
-                            "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200")}>
+                            q <= 2 ? "bg-state-warning text-state-warning-fg" :
+                            "bg-state-success text-state-success-fg")}>
                             {q === 0 ? "·" : q}
                           </span>
                         </td>

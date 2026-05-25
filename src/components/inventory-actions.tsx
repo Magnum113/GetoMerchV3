@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Pill } from "@/components/ui/pill";
 import { ProductPicker } from "@/components/product-picker";
 import { WarehouseSelect } from "@/components/warehouse-select";
 import { api } from "@/lib/api";
@@ -180,9 +181,9 @@ function ReceiveDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex gap-2 text-sm">
-            <button type="button" onClick={() => setBlank(true)} className={`px-3 py-1.5 rounded-md border ${blank ? "bg-primary text-primary-foreground border-primary" : "bg-background"}`}>Пустые</button>
-            <button type="button" onClick={() => setBlank(false)} className={`px-3 py-1.5 rounded-md border ${!blank ? "bg-primary text-primary-foreground border-primary" : "bg-background"}`}>Готовые с дизайном</button>
+          <div className="flex gap-2">
+            <Pill shape="square" active={blank} onClick={() => setBlank(true)}>Пустые</Pill>
+            <Pill shape="square" active={!blank} onClick={() => setBlank(false)}>Готовые с дизайном</Pill>
           </div>
 
           <div className="grid grid-cols-3 gap-3">

@@ -222,23 +222,39 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к O
 `npx shadcn add <name>` (он положит файл в ту же папку).
 
 Текущий набор: `badge`, `button`, `card`, `dialog`, `empty-state`, `input`,
-`label`, `page-header`, `select`, `separator`, `sonner`, `table`, `tabs`,
+`label`, `page-header`, `pill`, `select`, `separator`, `sonner`, `table`, `tabs`,
 `textarea`.
 
-### 6.3. Цветовая палитра состояний (используем из Tailwind)
+Особо отметить:
+- **`Pill`** — компактная toggle-кнопка для inline-фильтров и сегмент-контролов.
+  Два варианта формы (`shape="rounded"` по умолчанию, `shape="square"` для
+  табоподобных переключателей) и состояние `active`. Используем вместо голых
+  `<button>` с классами. Не путать с `Button` — `Pill` плотнее, без тени, и
+  имеет встроенное `active`-состояние.
 
-| Семантика | Light | Dark |
-|---|---|---|
-| Норма / готово | `bg-emerald-100 text-emerald-800` | `bg-emerald-900/40 text-emerald-200` |
-| Внимание / ниже минимума / 1 шт | `bg-amber-100 text-amber-900` | `bg-amber-900/40 text-amber-200` |
-| Критично / 0 / ошибка | `bg-red-100 text-red-800` | `bg-red-900/40 text-red-200` |
-| В процессе / транзит | `bg-blue-100 text-blue-700` | `bg-blue-900/40 text-blue-300` |
-| Нейтральное / историческое | `bg-zinc-100 text-zinc-700` | `bg-zinc-800 text-zinc-300` |
-| Свой склад (индикатор-точка) | `bg-emerald-500` | |
-| Цех (индикатор-точка) | `bg-amber-500` | |
+### 6.3. Цветовая палитра состояний — семантические токены
 
-Дополнительно для специальных бейджей статусов: см. `OZON_STATUS_COLORS` и
-`WORKSHOP_STATUS_COLORS` в `lib/types.ts` — там фиксированный маппинг.
+Используем **семантические Tailwind-классы**, а не «эмеральд-100». Цвета
+живут в `globals.css` как CSS-переменные и доступны в Tailwind через
+`tailwind.config.ts → theme.extend.colors.state`.
+
+| Семантика | Класс фона | Класс текста | Когда |
+|---|---|---|---|
+| Норма / готово | `bg-state-success` | `text-state-success-fg` | ≥ MIN_STOCK, готово к отправке, успешная операция |
+| Внимание / ниже минимума | `bg-state-warning` | `text-state-warning-fg` | 1 шт, ждёт упаковки, требует внимания |
+| Критично / 0 / ошибка | `bg-state-danger` | `text-state-danger-fg` | 0 в наличии, FK violation, отмена |
+| В процессе / транзит | `bg-state-info` | `text-state-info-fg` | Доставляется, в работе, на упаковке |
+| Нейтральное | `bg-state-neutral` | `text-state-neutral-fg` | Без статуса, исторические записи |
+| Свой склад (индикатор-точка) | `bg-emerald-500` | — | Точка-индикатор в селекторах |
+| Цех (индикатор-точка) | `bg-amber-500` | — | Точка-индикатор в селекторах |
+
+**Чтобы поменять оттенок состояния глобально** — правьте CSS-переменные
+`--state-{success|warning|danger|info|neutral}-{bg|fg}` в `globals.css`. Каждая
+тема (light/dark) имеет свой набор. Не вшивайте `bg-emerald-100`/`bg-amber-100`
+напрямую — изоляцию ломает.
+
+Для исключений (статусные бейджи Ozon/Workshop с фиксированными оттенками) —
+см. `OZON_STATUS_COLORS` / `WORKSHOP_STATUS_COLORS` в `lib/types.ts`.
 
 ### 6.4. Иконки
 

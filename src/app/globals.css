@@ -24,6 +24,20 @@
     --input: 0 0% 89.8%;
     --ring: 0 0% 3.9%;
     --radius: 0.6rem;
+
+    /* Семантические токены состояний (success / warning / danger / info / neutral).
+       Используются через Tailwind: bg-state-success / text-state-success-fg и т.д.
+       Это правильное место менять цветовую семантику — компоненты подхватят сами. */
+    --state-success-bg: 152 76% 90%;
+    --state-success-fg: 158 64% 22%;
+    --state-warning-bg: 48 96% 89%;
+    --state-warning-fg: 28 71% 22%;
+    --state-danger-bg: 0 93% 94%;
+    --state-danger-fg: 0 70% 35%;
+    --state-info-bg: 214 95% 93%;
+    --state-info-fg: 217 91% 35%;
+    --state-neutral-bg: 0 0% 96%;
+    --state-neutral-fg: 0 0% 30%;
   }
   .dark {
     --background: 0 0% 3.9%;
@@ -45,6 +59,17 @@
     --border: 0 0% 14.9%;
     --input: 0 0% 14.9%;
     --ring: 0 0% 83.1%;
+
+    --state-success-bg: 158 64% 18%;
+    --state-success-fg: 152 76% 80%;
+    --state-warning-bg: 28 71% 18%;
+    --state-warning-fg: 48 96% 76%;
+    --state-danger-bg: 0 70% 20%;
+    --state-danger-fg: 0 93% 84%;
+    --state-info-bg: 217 91% 20%;
+    --state-info-fg: 214 95% 80%;
+    --state-neutral-bg: 0 0% 14.9%;
+    --state-neutral-fg: 0 0% 75%;
   }
 }
 

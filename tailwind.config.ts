@@ -44,6 +44,31 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Семантические цвета состояний — единая палитра для бейджей,
+        // ячеек матрицы остатков, статусов заказов и пр.
+        // Меняй переменные в globals.css, чтобы переопределить.
+        state: {
+          success: {
+            DEFAULT: "hsl(var(--state-success-bg))",
+            fg: "hsl(var(--state-success-fg))",
+          },
+          warning: {
+            DEFAULT: "hsl(var(--state-warning-bg))",
+            fg: "hsl(var(--state-warning-fg))",
+          },
+          danger: {
+            DEFAULT: "hsl(var(--state-danger-bg))",
+            fg: "hsl(var(--state-danger-fg))",
+          },
+          info: {
+            DEFAULT: "hsl(var(--state-info-bg))",
+            fg: "hsl(var(--state-info-fg))",
+          },
+          neutral: {
+            DEFAULT: "hsl(var(--state-neutral-bg))",
+            fg: "hsl(var(--state-neutral-fg))",
+          },
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
