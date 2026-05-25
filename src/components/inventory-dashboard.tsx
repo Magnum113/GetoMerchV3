@@ -11,6 +11,7 @@ import {
   Image as ImageIcon,
   AlertTriangle,
   CheckCircle2,
+  Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -103,38 +104,6 @@ export function InventoryDashboard({
     };
   }, [products, stockByProduct]);
 
-  // ---- KPI и сводка дефицита
-  const stats = useMemo(() => {
-    const sum = (rows: MatrixRow[]) =>
-      rows.reduce(
-        (a, r) => ({
-          units: a.units + r.total,
-          shortage: a.shortage + r.shortageCount,
-          missing: a.missing + r.missingCount,
-          rowsWithShortage: a.rowsWithShortage + (r.shortageCount > 0 ? 1 : 0),
-        }),
-        { units: 0, shortage: 0, missing: 0, rowsWithShortage: 0 }
-      );
-    const b = sum(blankRows);
-    const f = sum(finishedRows);
-    const printsFiltered = whFilter === "all" ? prints : prints.filter((p) => p.warehouse_id === whFilter);
-    const printUnits = printsFiltered.reduce((s, p) => s + p.quantity, 0);
-    const printDesigns = new Set(printsFiltered.map((p) => p.design_id)).size;
-    return {
-      blankUnits: b.units,
-      blankShortage: b.shortage,
-      blankMissing: b.missing,
-      blankSkuCount: blankRows.reduce((s, r) => s + Object.keys(r.cells).length, 0),
-      finishedUnits: f.units,
-      finishedShortage: f.shortage,
-      finishedMissing: f.missing,
-      finishedSkuCount: finishedRows.reduce((s, r) => s + Object.keys(r.cells).length, 0),
-      printUnits,
-      printDesigns,
-      totalUnits: b.units + f.units,
-    };
-  }, [blankRows, finishedRows, prints, whFilter]);
-
   const activeWarehouse = whFilter === "all" ? null : warehouses.find((w) => w.id === whFilter) ?? null;
   const filterLabel = activeWarehouse?.name?.toLowerCase() ?? "все склады";
   // В цехе вышивки готовые не задерживаются — отправляются клиенту или на свой склад.
@@ -152,32 +121,43 @@ export function InventoryDashboard({
   const sortedBlankRows = useMemo(() => [...blankRows].sort(bySeverity), [blankRows]);
   const sortedFinishedRows = useMemo(() => [...finishedRows].sort(bySeverity), [finishedRows]);
 
-  // Список конкретных дефицитных позиций для карточки «Дефицит»
-  const shortageItems = useMemo(() => {
+  // Группированный план «что произвести»: по модели/цвету, для каждого размера
+  // считаем сколько ещё нужно до MIN_STOCK.
+  const shortageGroups = useMemo(() => {
     const sizeById = new Map(sizes.map((s) => [s.id, s]));
-    const items: ShortageItem[] = [];
-    const collect = (rows: MatrixRow[], kind: "blank" | "finished") => {
+    const groups: ShortageGroup[] = [];
+    const collect = (rows: MatrixRow[]) => {
       for (const row of rows) {
+        const shortSizes: ShortageSize[] = [];
         for (const [sizeId, cell] of Object.entries(row.cells)) {
           if (!cell.hasProduct || cell.qty >= MIN_STOCK) continue;
-          items.push({
-            kind,
-            modelLabel: `${row.label} · ${row.subLabel}`,
-            designLabel: row.designLabel,
-            hex: row.hex,
+          shortSizes.push({
+            sizeId,
             sizeLabel: sizeById.get(sizeId)?.name ?? "?",
             sizeOrder: sizeById.get(sizeId)?.sort_order ?? 0,
             qty: cell.qty,
+            need: MIN_STOCK - cell.qty,
           });
         }
+        if (shortSizes.length === 0) continue;
+        shortSizes.sort((a, b) => a.sizeOrder - b.sizeOrder);
+        groups.push({
+          key: row.key,
+          modelLabel: `${row.label} · ${row.subLabel}`,
+          designLabel: row.designLabel,
+          hex: row.hex,
+          sizes: shortSizes,
+          totalNeed: shortSizes.reduce((s, x) => s + x.need, 0),
+          missingCount: shortSizes.filter((x) => x.qty === 0).length,
+        });
       }
     };
-    collect(blankRows, "blank");
-    if (!hideFinished) collect(finishedRows, "finished");
-    return items.sort((a, b) => {
-      if (a.qty !== b.qty) return a.qty - b.qty; // 0 → 1
-      if (a.modelLabel !== b.modelLabel) return a.modelLabel.localeCompare(b.modelLabel, "ru");
-      return a.sizeOrder - b.sizeOrder;
+    collect(blankRows);
+    if (!hideFinished) collect(finishedRows);
+    return groups.sort((a, b) => {
+      if (b.missingCount !== a.missingCount) return b.missingCount - a.missingCount;
+      if (b.totalNeed !== a.totalNeed) return b.totalNeed - a.totalNeed;
+      return a.modelLabel.localeCompare(b.modelLabel, "ru");
     });
   }, [blankRows, finishedRows, sizes, hideFinished]);
 
@@ -198,28 +178,12 @@ export function InventoryDashboard({
         ))}
       </div>
 
-      {/* KPI — единицы по типам всегда складываются в "всего" (без неучтённого) */}
-      <div className={cn("grid gap-3", hideFinished ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 lg:grid-cols-4")}>
-        <Kpi
-          icon={Package}
-          label="Единиц на складе"
-          value={hideFinished ? stats.blankUnits : stats.blankUnits + stats.finishedUnits}
-          sub={filterLabel}
-        />
-        <Kpi icon={Shirt} label="Пустых" value={stats.blankUnits} sub={`${stats.blankSkuCount} SKU`} />
-        {!hideFinished && (
-          <Kpi icon={Package} label="Готовых" value={stats.finishedUnits} sub={`${stats.finishedSkuCount} SKU`} />
-        )}
-        {!hideFinished && (
-          <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
-        )}
-      </div>
-
-      {/* Дефицит */}
+      {/* План «Что произвести» — заменяет KPI и старую карточку дефицита */}
       <ShortageCard
         minStock={MIN_STOCK}
-        items={shortageItems}
+        groups={shortageGroups}
         finishedHidden={hideFinished}
+        filterLabel={filterLabel}
       />
 
       <MatrixCard
@@ -255,96 +219,93 @@ export function InventoryDashboard({
 
 // ---------- subcomponents ----------
 
-function Kpi({ icon: Icon, label, value, sub }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; sub?: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3">
-          <div className="rounded-md bg-muted p-2"><Icon className="h-4 w-4 text-muted-foreground" /></div>
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{label}</div>
-            <div className="text-2xl font-semibold tabular-nums leading-tight">{value}</div>
-            {sub && <div className="text-[11px] text-muted-foreground truncate">{sub}</div>}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function ShortageCard({
   minStock,
-  items,
+  groups,
   finishedHidden,
+  filterLabel,
 }: {
   minStock: number;
-  items: ShortageItem[];
+  groups: ShortageGroup[];
   finishedHidden: boolean;
+  filterLabel: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  if (items.length === 0) {
+  if (groups.length === 0) {
     return (
       <Card className="border-state-success/40 bg-state-success/20">
         <CardContent className="p-4 flex items-center gap-3">
           <CheckCircle2 className="h-5 w-5 text-state-success-fg" />
           <div className="text-sm">
             <span className="font-semibold text-state-success-fg">Всё в норме</span>
-            <span className="text-muted-foreground"> · на каждый размер каждого изделия ≥ {minStock} шт</span>
+            <span className="text-muted-foreground"> · ≥ {minStock} шт на каждый размер · {filterLabel}</span>
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  const missing = items.filter((i) => i.qty === 0);
-  const low = items.filter((i) => i.qty > 0);
+  const totalNeed = groups.reduce((s, g) => s + g.totalNeed, 0);
+  const totalMissing = groups.reduce((s, g) => s + g.missingCount, 0);
   const PREVIEW = 6;
-  const visible = expanded ? items : items.slice(0, PREVIEW);
-  const hidden = Math.max(0, items.length - PREVIEW);
+  const visible = expanded ? groups : groups.slice(0, PREVIEW);
+  const hidden = Math.max(0, groups.length - PREVIEW);
 
   return (
     <Card className="border-state-warning/50">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex items-start gap-3 min-w-0">
-            <AlertTriangle className="h-5 w-5 text-state-warning-fg mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <CardTitle className="text-lg font-semibold">
-                Дефицит — {items.length} {pluralPositions(items.length)} со стоком &lt; {minStock}
-              </CardTitle>
-              <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                {missing.length > 0 && (
-                  <span className="text-state-danger-fg font-medium">Полностью нет: {missing.length}</span>
-                )}
-                {low.length > 0 && (
-                  <span>В критическом минимуме (1 шт): {low.length}</span>
-                )}
-                {finishedHidden && <span>· только пустые</span>}
-              </div>
+        <div className="flex items-start gap-3 min-w-0">
+          <Hammer className="h-5 w-5 text-state-warning-fg mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <CardTitle className="text-lg font-semibold">
+              Произвести {totalNeed} шт · {groups.length} {pluralPositions(groups.length)}
+            </CardTitle>
+            <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+              <span>Цель: ≥ {minStock} шт на каждый размер · {filterLabel}</span>
+              {totalMissing > 0 && (
+                <span className="text-state-danger-fg font-medium inline-flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  Полностью нет: {totalMissing}
+                </span>
+              )}
+              {finishedHidden && <span>только пустые</span>}
             </div>
           </div>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
         <ul className="divide-y rounded-md border">
-          {visible.map((it, idx) => (
-            <li key={`${it.modelLabel}|${it.designLabel ?? ""}|${it.sizeLabel}|${idx}`} className="flex items-center gap-3 px-3 py-2">
-              <span className="h-3 w-3 rounded-full border shrink-0" style={{ backgroundColor: it.hex ?? "#999" }} />
+          {visible.map((g) => (
+            <li key={g.key} className="flex items-start gap-3 px-3 py-2.5">
+              <span className="h-3 w-3 rounded-full border shrink-0 mt-1" style={{ backgroundColor: g.hex ?? "#999" }} />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate">
-                  {it.modelLabel}
-                  <span className="ml-1.5 inline-flex items-center justify-center text-[10px] font-semibold px-1.5 py-0.5 rounded border align-middle">{it.sizeLabel}</span>
+                <div className="flex items-baseline justify-between gap-3">
+                  <div className="text-sm font-medium truncate">{g.modelLabel}</div>
+                  <div className="text-sm font-semibold tabular-nums shrink-0 text-state-warning-fg">
+                    +{g.totalNeed} шт
+                  </div>
                 </div>
-                {it.designLabel && (
-                  <div className="text-[11px] text-muted-foreground truncate">{it.designLabel}</div>
+                {g.designLabel && (
+                  <div className="text-[11px] text-muted-foreground truncate">{g.designLabel}</div>
                 )}
-              </div>
-              <div className={cn(
-                "text-xs font-semibold tabular-nums px-2 py-0.5 rounded shrink-0",
-                it.qty === 0 ? "bg-state-danger text-state-danger-fg" : "bg-state-warning text-state-warning-fg"
-              )}>
-                {it.qty === 0 ? "нет" : `${it.qty} шт`}
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {g.sizes.map((s) => (
+                    <span
+                      key={s.sizeId}
+                      title={`${s.sizeLabel}: сейчас ${s.qty}, нужно ещё ${s.need}`}
+                      className={cn(
+                        "inline-flex items-center gap-1 text-[11px] font-semibold tabular-nums px-1.5 py-0.5 rounded",
+                        s.qty === 0
+                          ? "bg-state-danger text-state-danger-fg"
+                          : "bg-state-warning text-state-warning-fg"
+                      )}
+                    >
+                      <span className="opacity-70 font-normal">{s.sizeLabel}</span>
+                      <span>+{s.need}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             </li>
           ))}
@@ -355,7 +316,7 @@ function ShortageCard({
             onClick={() => setExpanded((v) => !v)}
             className="mt-2 text-xs font-medium text-muted-foreground hover:text-foreground underline underline-offset-2"
           >
-            {expanded ? "Свернуть" : `Показать ещё ${hidden}`}
+            {expanded ? "Свернуть" : `Показать ещё ${hidden} ${pluralPositions(hidden)}`}
           </button>
         )}
       </CardContent>
@@ -372,14 +333,22 @@ function pluralPositions(n: number): string {
   return "позиций";
 }
 
-interface ShortageItem {
-  kind: "blank" | "finished";
-  modelLabel: string;
-  designLabel: string | null;
-  hex: string | null;
+interface ShortageSize {
+  sizeId: string;
   sizeLabel: string;
   sizeOrder: number;
   qty: number;
+  need: number;
+}
+
+interface ShortageGroup {
+  key: string;
+  modelLabel: string;
+  designLabel: string | null;
+  hex: string | null;
+  sizes: ShortageSize[];
+  totalNeed: number;
+  missingCount: number;
 }
 
 interface MatrixCell {
@@ -450,8 +419,14 @@ function MatrixCard({
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="h-3 w-3 rounded-full border shrink-0" style={{ backgroundColor: g.hex ?? "#999" }} />
                         <div className="min-w-0">
-                          <div className="font-medium text-sm truncate">{g.label} · <span className="font-normal">{g.subLabel}</span></div>
-                          {g.designLabel && <div className="text-[11px] text-muted-foreground truncate">{g.designLabel}</div>}
+                          {g.designLabel ? (
+                            <>
+                              <div className="font-medium text-sm truncate">{g.designLabel}</div>
+                              <div className="text-[11px] text-muted-foreground truncate">{g.label} · {g.subLabel}</div>
+                            </>
+                          ) : (
+                            <div className="font-medium text-sm truncate">{g.label} · <span className="font-normal">{g.subLabel}</span></div>
+                          )}
                         </div>
                       </div>
                     </td>

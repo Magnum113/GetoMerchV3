@@ -66,10 +66,6 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t p-4 text-xs text-muted-foreground">
-        <div className="font-medium text-foreground">Учёт мерча</div>
-        <div className="mt-1">v0.1 · Supabase</div>
-      </div>
     </aside>
   );
 }
