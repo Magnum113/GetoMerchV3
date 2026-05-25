@@ -3,126 +3,206 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { Inventory, PrintInventory, Size, Warehouse } from "@/lib/types";
+import type { Inventory, PrintInventory, Product, Size, Warehouse } from "@/lib/types";
 import {
   Package,
   Shirt,
   Image as ImageIcon,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type WarehouseFilter = "all" | string;
+
+/** Минимум на каждый (изделие × размер). Ниже — считается дефицитом. */
+const MIN_STOCK = 2;
 
 export function InventoryDashboard({
   inv,
   prints,
   warehouses,
   sizes,
+  products,
   loading,
 }: {
   inv: Inventory[];
   prints: PrintInventory[];
   warehouses: Warehouse[];
   sizes: Size[];
+  products: Product[];
   loading: boolean;
 }) {
   const [whFilter, setWhFilter] = useState<WarehouseFilter>("all");
+  const [onlyShortage, setOnlyShortage] = useState(false);
 
-  const filteredInv = useMemo(() =>
-    whFilter === "all" ? inv : inv.filter((i) => i.warehouse_id === whFilter),
-  [inv, whFilter]);
-  const filteredPrints = useMemo(() =>
-    whFilter === "all" ? prints : prints.filter((p) => p.warehouse_id === whFilter),
-  [prints, whFilter]);
-
-  // ---- KPIs (по выбранному фильтру)
-  const kpi = useMemo(() => {
-    let units = 0, blankSku = 0, finishedSku = 0;
-    const seen = new Set<string>();
-    for (const i of filteredInv) {
-      units += i.quantity;
-      if (!seen.has(i.product_id)) {
-        seen.add(i.product_id);
-        if (i.product?.is_blank) blankSku++; else finishedSku++;
-      }
-    }
-    const printUnits = filteredPrints.reduce((s, p) => s + p.quantity, 0);
-    return { units, blankSku, finishedSku, printUnits, printDesigns: new Set(filteredPrints.map((p) => p.design_id)).size };
-  }, [filteredInv, filteredPrints]);
-
-  // ---- Per-warehouse breakdown (всегда по всем складам, для блока «Распределение»)
-  const byWarehouse = useMemo(() => {
-    const m = new Map<string, { units: number; products: Set<string>; prints: number; printDesigns: Set<string> }>();
-    for (const w of warehouses) m.set(w.id, { units: 0, products: new Set(), prints: 0, printDesigns: new Set() });
-    for (const i of inv) {
-      const e = m.get(i.warehouse_id);
-      if (!e) continue;
-      e.units += i.quantity;
-      e.products.add(i.product_id);
-    }
-    for (const p of prints) {
-      const e = m.get(p.warehouse_id);
-      if (!e) continue;
-      e.prints += p.quantity;
-      e.printDesigns.add(p.design_id);
+  // ---- Сток по продукту с учётом фильтра склада
+  const stockByProduct = useMemo(() => {
+    const m = new Map<string, { total: number; byWh: Map<string, number> }>();
+    for (const r of inv) {
+      if (whFilter !== "all" && r.warehouse_id !== whFilter) continue;
+      const e = m.get(r.product_id) ?? { total: 0, byWh: new Map() };
+      e.total += r.quantity;
+      e.byWh.set(r.warehouse_id, (e.byWh.get(r.warehouse_id) ?? 0) + r.quantity);
+      m.set(r.product_id, e);
     }
     return m;
-  }, [inv, prints, warehouses]);
+  }, [inv, whFilter]);
 
-  // ---- Matrices
-  const sortedSizes = useMemo(() => [...sizes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)), [sizes]);
+  const sortedSizes = useMemo(
+    () => [...sizes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+    [sizes]
+  );
 
-  const blankMatrix = useMemo(() => buildSizeMatrix(filteredInv, (i) => !!i.product?.is_blank, (i) => ({
-    key: `${i.product!.category_id}|${i.product!.fabric_id}|${i.product!.color_id}`,
-    label: `${i.product!.category?.name ?? ""} ${i.product!.fabric?.name?.toLowerCase() ?? ""}`,
-    subLabel: i.product!.color?.name ?? "",
-    hex: i.product!.color?.hex_code ?? null,
-    designLabel: null,
-  })), [filteredInv]);
+  // ---- Строим матрицу из каталога продуктов (а не из инвентаря).
+  // Это позволяет показать ячейки даже там, где остаток = 0.
+  const { blankRows, finishedRows } = useMemo(() => {
+    const groups = new Map<string, MatrixRow>();
+    for (const p of products) {
+      const isBlank = !!p.is_blank;
+      // Готовые без offer_id (sku) скорее всего «внутренние» — пропускаем
+      if (!isBlank && !p.sku) continue;
 
-  const finishedMatrix = useMemo(() => buildSizeMatrix(filteredInv, (i) => i.product != null && !i.product.is_blank, (i) => ({
-    key: `${i.product!.category_id}|${i.product!.fabric_id}|${i.product!.color_id}|${i.product!.design_id}|${i.product!.decoration_type_id}`,
-    label: `${i.product!.category?.name ?? ""} ${i.product!.fabric?.name?.toLowerCase() ?? ""}`,
-    subLabel: i.product!.color?.name ?? "",
-    hex: i.product!.color?.hex_code ?? null,
-    designLabel: `${i.product!.decoration_type?.name ?? ""}: ${i.product!.design?.name ?? ""}`,
-  })), [filteredInv]);
+      const key = isBlank
+        ? `b|${p.category_id}|${p.fabric_id}|${p.color_id}`
+        : `f|${p.category_id}|${p.fabric_id}|${p.color_id}|${p.design_id}|${p.decoration_type_id}`;
 
-  if (loading) {
-    return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
-  }
+      let row = groups.get(key);
+      if (!row) {
+        row = {
+          key,
+          isBlank,
+          label: `${p.category?.name ?? ""} ${p.fabric?.name?.toLowerCase() ?? ""}`,
+          subLabel: p.color?.name ?? "",
+          hex: p.color?.hex_code ?? null,
+          designLabel: isBlank ? null : `${p.decoration_type?.name ?? ""}: ${p.design?.name ?? ""}`,
+          cells: {},
+          total: 0,
+          shortageCount: 0,
+          missingCount: 0,
+        };
+        groups.set(key, row);
+      }
+
+      const stock = stockByProduct.get(p.id);
+      const total = stock?.total ?? 0;
+      const byWh = stock?.byWh ?? new Map();
+      row.cells[p.size_id] = { qty: total, byWh, hasProduct: true };
+      row.total += total;
+      if (total < MIN_STOCK) row.shortageCount++;
+      if (total === 0) row.missingCount++;
+    }
+    const all = Array.from(groups.values()).sort((a, b) => {
+      const al = `${a.label} ${a.designLabel ?? ""} ${a.subLabel}`;
+      const bl = `${b.label} ${b.designLabel ?? ""} ${b.subLabel}`;
+      return al.localeCompare(bl, "ru");
+    });
+    return {
+      blankRows: all.filter((r) => r.isBlank),
+      finishedRows: all.filter((r) => !r.isBlank),
+    };
+  }, [products, stockByProduct]);
+
+  // ---- KPI и сводка дефицита
+  const stats = useMemo(() => {
+    const sum = (rows: MatrixRow[]) =>
+      rows.reduce(
+        (a, r) => ({
+          units: a.units + r.total,
+          shortage: a.shortage + r.shortageCount,
+          missing: a.missing + r.missingCount,
+          rowsWithShortage: a.rowsWithShortage + (r.shortageCount > 0 ? 1 : 0),
+        }),
+        { units: 0, shortage: 0, missing: 0, rowsWithShortage: 0 }
+      );
+    const b = sum(blankRows);
+    const f = sum(finishedRows);
+    const printsFiltered = whFilter === "all" ? prints : prints.filter((p) => p.warehouse_id === whFilter);
+    const printUnits = printsFiltered.reduce((s, p) => s + p.quantity, 0);
+    const printDesigns = new Set(printsFiltered.map((p) => p.design_id)).size;
+    return {
+      blankUnits: b.units,
+      blankShortage: b.shortage,
+      blankMissing: b.missing,
+      blankSkuCount: blankRows.reduce((s, r) => s + Object.keys(r.cells).length, 0),
+      finishedUnits: f.units,
+      finishedShortage: f.shortage,
+      finishedMissing: f.missing,
+      finishedSkuCount: finishedRows.reduce((s, r) => s + Object.keys(r.cells).length, 0),
+      printUnits,
+      printDesigns,
+      totalUnits: b.units + f.units,
+    };
+  }, [blankRows, finishedRows, prints, whFilter]);
+
+  const visibleBlankRows = useMemo(
+    () => (onlyShortage ? blankRows.filter((r) => r.shortageCount > 0) : blankRows),
+    [blankRows, onlyShortage]
+  );
+  const visibleFinishedRows = useMemo(
+    () => (onlyShortage ? finishedRows.filter((r) => r.shortageCount > 0) : finishedRows),
+    [finishedRows, onlyShortage]
+  );
+
+  if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
 
   const showBreakdownInCells = whFilter === "all" && warehouses.length > 1;
-  const filterLabel = whFilter === "all" ? "Все склады" : warehouses.find((w) => w.id === whFilter)?.name ?? "—";
+  const filterLabel = whFilter === "all" ? "все склады" : warehouses.find((w) => w.id === whFilter)?.name?.toLowerCase() ?? "—";
 
   return (
-    <div className="space-y-6">
-      <WarehouseFilterBar value={whFilter} onChange={setWhFilter} warehouses={warehouses} />
+    <div className="space-y-5">
+      {/* Фильтры */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill active={whFilter === "all"} onClick={() => setWhFilter("all")}>Все склады</Pill>
+        {warehouses.map((w) => (
+          <Pill key={w.id} active={whFilter === w.id} onClick={() => setWhFilter(w.id)}>
+            <span className={cn("h-2 w-2 rounded-full", w.type === "own" ? "bg-emerald-500" : "bg-amber-500")} />
+            {w.name}
+          </Pill>
+        ))}
+        <div className="mx-2 h-5 w-px bg-border" />
+        <Pill active={!onlyShortage} onClick={() => setOnlyShortage(false)}>Все позиции</Pill>
+        <Pill active={onlyShortage} onClick={() => setOnlyShortage(true)}>
+          <AlertTriangle className="h-3 w-3" /> Только дефициты
+        </Pill>
+      </div>
 
-      <KPIRow kpi={kpi} subtitle={filterLabel} />
+      {/* KPI */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Kpi icon={Package} label="Единиц на складе" value={stats.totalUnits} sub={filterLabel} />
+        <Kpi icon={Shirt} label="Пустых SKU" value={stats.blankSkuCount} sub={`${stats.blankUnits} ед`} />
+        <Kpi icon={Package} label="Готовых SKU" value={stats.finishedSkuCount} sub={`${stats.finishedUnits} ед`} />
+        <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
+      </div>
 
-      <WarehouseBreakdown warehouses={warehouses} byWarehouse={byWarehouse} activeId={whFilter} onPick={setWhFilter} />
+      {/* Дефицит */}
+      <ShortageCard
+        minStock={MIN_STOCK}
+        blank={{ shortage: stats.blankShortage, missing: stats.blankMissing }}
+        finished={{ shortage: stats.finishedShortage, missing: stats.finishedMissing }}
+        onShowOnly={() => setOnlyShortage(true)}
+      />
 
       <MatrixCard
         title="Пустые по размерам"
-        description={`Сколько чистых заготовок есть по каждой комбинации ткани и цвета · ${filterLabel}`}
+        description={`Заготовки для нанесения принта или вышивки · ${filterLabel}`}
         icon={Shirt}
         sizes={sortedSizes}
-        groups={blankMatrix}
+        rows={visibleBlankRows}
         warehouses={warehouses}
         showBreakdown={showBreakdownInCells}
-        emptyText="Пустых на складе нет"
+        emptyText={onlyShortage ? "Дефицита пустых нет" : "Пустых нет"}
       />
 
       <MatrixCard
         title="Готовые по размерам"
-        description={`Готовая продукция с принтом или вышивкой · ${filterLabel}`}
+        description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
         icon={Package}
         sizes={sortedSizes}
-        groups={finishedMatrix}
+        rows={visibleFinishedRows}
         warehouses={warehouses}
         showBreakdown={showBreakdownInCells}
-        emptyText="Готовых на складе нет"
+        emptyText={onlyShortage ? "Дефицита готовых нет" : "Готовых нет"}
       />
 
       <PrintsCard prints={prints} warehouses={warehouses} whFilter={whFilter} />
@@ -130,20 +210,7 @@ export function InventoryDashboard({
   );
 }
 
-function WarehouseFilterBar({ value, onChange, warehouses }: { value: WarehouseFilter; onChange: (v: WarehouseFilter) => void; warehouses: Warehouse[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-muted-foreground mr-1">Показать:</span>
-      <Pill active={value === "all"} onClick={() => onChange("all")}>Все склады</Pill>
-      {warehouses.map((w) => (
-        <Pill key={w.id} active={value === w.id} onClick={() => onChange(w.id)}>
-          <span className={cn("h-2 w-2 rounded-full", w.type === "own" ? "bg-emerald-500" : "bg-amber-500")} />
-          {w.name}
-        </Pill>
-      ))}
-    </div>
-  );
-}
+// ---------- subcomponents ----------
 
 function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -157,80 +224,6 @@ function Pill({ active, onClick, children }: { active: boolean; onClick: () => v
     >
       {children}
     </button>
-  );
-}
-
-function WarehouseBreakdown({ warehouses, byWarehouse, activeId, onPick }: {
-  warehouses: Warehouse[];
-  byWarehouse: Map<string, { units: number; products: Set<string>; prints: number; printDesigns: Set<string> }>;
-  activeId: WarehouseFilter;
-  onPick: (id: WarehouseFilter) => void;
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">Распределение по складам</CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {warehouses.map((w) => {
-          const data = byWarehouse.get(w.id) ?? { units: 0, products: new Set<string>(), prints: 0, printDesigns: new Set<string>() };
-          const active = activeId === w.id;
-          return (
-            <button
-              key={w.id}
-              type="button"
-              onClick={() => onPick(active ? "all" : w.id)}
-              className={cn(
-                "rounded-md border p-3 text-left transition-colors",
-                active ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "hover:bg-accent/40"
-              )}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <span className={cn("h-2 w-2 rounded-full", w.type === "own" ? "bg-emerald-500" : "bg-amber-500")} />
-                <span className="font-medium text-sm">{w.name}</span>
-                <Badge variant="outline" className="text-[10px] h-4 ml-auto">{w.type === "own" ? "свой" : "цех"}</Badge>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <Stat label="Изделий" value={data.units} sub={`${data.products.size} SKU`} />
-                <Stat label="Принтов" value={data.prints} sub={`${data.printDesigns.size} диз.`} />
-                <Stat label="Доля" value={percent(data.units, totalUnits(byWarehouse))} suffix="%" />
-              </div>
-            </button>
-          );
-        })}
-      </CardContent>
-    </Card>
-  );
-}
-
-function Stat({ label, value, sub, suffix }: { label: string; value: number; sub?: string; suffix?: string }) {
-  return (
-    <div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold tabular-nums leading-tight">{value}{suffix ?? ""}</div>
-      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
-    </div>
-  );
-}
-
-function totalUnits(m: Map<string, { units: number }>) {
-  let s = 0; for (const v of m.values()) s += v.units; return s;
-}
-function percent(n: number, total: number) {
-  if (!total) return 0;
-  return Math.round((n / total) * 100);
-}
-
-// ---------- subcomponents ----------
-
-function KPIRow({ kpi, subtitle }: { kpi: { units: number; blankSku: number; finishedSku: number; printUnits: number; printDesigns: number }; subtitle: string }) {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <Kpi icon={Package} label="Единиц на складе" value={kpi.units} sub={subtitle} />
-      <Kpi icon={Shirt} label="Пустых SKU" value={kpi.blankSku} />
-      <Kpi icon={Package} label="Готовых SKU" value={kpi.finishedSku} />
-      <Kpi icon={ImageIcon} label="Принтов в наличии" value={kpi.printUnits} sub={`${kpi.printDesigns} дизайнов`} />
-    </div>
   );
 }
 
@@ -251,42 +244,79 @@ function Kpi({ icon: Icon, label, value, sub }: { icon: React.ComponentType<{ cl
   );
 }
 
-interface MatrixGroup {
+function ShortageCard({
+  minStock,
+  blank,
+  finished,
+  onShowOnly,
+}: {
+  minStock: number;
+  blank: { shortage: number; missing: number };
+  finished: { shortage: number; missing: number };
+  onShowOnly: () => void;
+}) {
+  const total = blank.shortage + finished.shortage;
+  const allGood = total === 0;
+
+  if (allGood) {
+    return (
+      <Card className="border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/20">
+        <CardContent className="p-4 flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <div className="text-sm">
+            <span className="font-semibold text-emerald-900 dark:text-emerald-200">Всё в норме</span>
+            <span className="text-muted-foreground"> · на каждый размер каждого изделия ≥ {minStock} шт</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-amber-200 bg-amber-50/40 dark:bg-amber-950/20">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3 min-w-0">
+            <AlertTriangle className="h-5 w-5 text-amber-700 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Дефицит: {total} позиций ниже минимума ({minStock} шт)
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
+                <span>Пустые: <span className="font-medium text-foreground">{blank.shortage}</span> ниже минимума {blank.missing > 0 && <span className="text-red-700">· из них {blank.missing} = 0</span>}</span>
+                <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-red-700">· из них {finished.missing} = 0</span>}</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onShowOnly}
+            className="text-xs font-medium underline underline-offset-2 hover:text-foreground text-amber-900 dark:text-amber-200"
+          >
+            Показать только дефициты →
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface MatrixCell {
+  qty: number;
+  byWh: Map<string, number>;
+  hasProduct: boolean;
+}
+interface MatrixRow {
   key: string;
+  isBlank: boolean;
   label: string;
   subLabel: string;
   hex: string | null;
   designLabel: string | null;
-  cells: Record<string, { total: number; byWh: Map<string, number> }>; // sizeId -> stock
+  cells: Record<string, MatrixCell>;
   total: number;
-}
-
-function buildSizeMatrix(
-  inv: Inventory[],
-  filter: (i: Inventory) => boolean,
-  keyFn: (i: Inventory) => Omit<MatrixGroup, "cells" | "total">,
-): MatrixGroup[] {
-  const map = new Map<string, MatrixGroup>();
-  for (const i of inv) {
-    if (!filter(i) || !i.product) continue;
-    const meta = keyFn(i);
-    let g = map.get(meta.key);
-    if (!g) {
-      g = { ...meta, cells: {}, total: 0 };
-      map.set(meta.key, g);
-    }
-    const cell = g.cells[i.product.size_id] ?? { total: 0, byWh: new Map() };
-    cell.total += i.quantity;
-    cell.byWh.set(i.warehouse_id, (cell.byWh.get(i.warehouse_id) ?? 0) + i.quantity);
-    g.cells[i.product.size_id] = cell;
-    g.total += i.quantity;
-  }
-  // Sort: by label, then designLabel, then subLabel
-  return Array.from(map.values()).sort((a, b) => {
-    const al = `${a.label} ${a.designLabel ?? ""} ${a.subLabel}`;
-    const bl = `${b.label} ${b.designLabel ?? ""} ${b.subLabel}`;
-    return al.localeCompare(bl, "ru");
-  });
+  shortageCount: number;
+  missingCount: number;
 }
 
 function MatrixCard({
@@ -294,7 +324,7 @@ function MatrixCard({
   description,
   icon: Icon,
   sizes,
-  groups,
+  rows,
   warehouses,
   showBreakdown,
   emptyText,
@@ -303,7 +333,7 @@ function MatrixCard({
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   sizes: Size[];
-  groups: MatrixGroup[];
+  rows: MatrixRow[];
   warehouses: Warehouse[];
   showBreakdown: boolean;
   emptyText: string;
@@ -318,7 +348,7 @@ function MatrixCard({
         <p className="text-xs text-muted-foreground">{description}</p>
       </CardHeader>
       <CardContent className="pt-0">
-        {groups.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="text-sm text-muted-foreground py-6 text-center">{emptyText}</div>
         ) : (
           <div className="overflow-x-auto">
@@ -330,10 +360,11 @@ function MatrixCard({
                     <th key={s.id} className="font-medium pb-2 px-1 text-center w-12">{s.name}</th>
                   ))}
                   <th className="font-medium pb-2 pl-3 text-right">Σ</th>
+                  <th className="font-medium pb-2 pl-3 text-right w-16">⚠</th>
                 </tr>
               </thead>
               <tbody>
-                {groups.map((g) => (
+                {rows.map((g) => (
                   <tr key={g.key} className="border-t">
                     <td className="py-1.5 pr-3 sticky left-0 bg-background">
                       <div className="flex items-center gap-2 min-w-0">
@@ -349,6 +380,16 @@ function MatrixCard({
                       return <Cell key={s.id} cell={cell} warehouses={warehouses} showBreakdown={showBreakdown} />;
                     })}
                     <td className="py-1.5 pl-3 text-right font-semibold tabular-nums">{g.total}</td>
+                    <td className="py-1.5 pl-3 text-right">
+                      {g.shortageCount > 0 ? (
+                        <Badge className={cn("text-[10px] h-5 px-1.5",
+                          g.missingCount > 0
+                            ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+                            : "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200")}>
+                          {g.shortageCount}
+                        </Badge>
+                      ) : <span className="text-emerald-600 text-xs">✓</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -361,32 +402,34 @@ function MatrixCard({
 }
 
 function shortWh(name: string) {
-  if (!name) return "";
-  const trimmed = name.trim();
-  // «Мой склад» → «М», «Цех вышивки» → «Ц»
-  return trimmed.charAt(0).toUpperCase();
+  return (name?.trim().charAt(0) || "").toUpperCase();
 }
 
-function Cell({ cell, warehouses, showBreakdown }: { cell?: { total: number; byWh: Map<string, number> }; warehouses: Warehouse[]; showBreakdown: boolean }) {
-  const qty = cell?.total ?? 0;
-  const cls = qty === 0
-    ? "text-muted-foreground/40"
-    : qty <= 2
-    ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
-    : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200";
+function Cell({ cell, warehouses, showBreakdown }: { cell?: MatrixCell; warehouses: Warehouse[]; showBreakdown: boolean }) {
+  if (!cell?.hasProduct) {
+    // нет такого SKU в каталоге — пустая ячейка
+    return <td className="px-1 py-1.5 text-center align-top text-muted-foreground/30">—</td>;
+  }
+  const qty = cell.qty;
+  const cls =
+    qty === 0
+      ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
+      : qty < MIN_STOCK
+      ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+      : "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200";
 
-  const breakdownEntries = cell
-    ? Array.from(cell.byWh.entries())
-        .filter(([, q]) => q > 0)
-        .map(([wid, q]) => ({ wh: warehouses.find((w) => w.id === wid), q }))
-    : [];
-  const tooltip = breakdownEntries.map(({ wh, q }) => `${wh?.name ?? "?"}: ${q}`).join(" · ");
+  const breakdownEntries = Array.from(cell.byWh.entries())
+    .filter(([, q]) => q > 0)
+    .map(([wid, q]) => ({ wh: warehouses.find((w) => w.id === wid), q }));
+  const tooltip = breakdownEntries.length > 0
+    ? breakdownEntries.map(({ wh, q }) => `${wh?.name ?? "?"}: ${q}`).join(" · ")
+    : "нет на складе";
   const showSplit = showBreakdown && breakdownEntries.length > 1;
 
   return (
     <td className="px-1 py-1.5 text-center align-top">
       <div className={cn("inline-flex flex-col items-center justify-center min-w-[2.25rem] rounded px-1.5 py-0.5", cls)} title={tooltip}>
-        <div className="text-sm tabular-nums leading-tight">{qty === 0 ? "·" : qty}</div>
+        <div className="text-sm tabular-nums leading-tight">{qty}</div>
         {showSplit && (
           <div className="text-[9px] opacity-70 leading-tight font-medium">
             {breakdownEntries.map(({ wh, q }) => `${shortWh(wh?.name ?? "")}${q}`).join("·")}
@@ -399,7 +442,7 @@ function Cell({ cell, warehouses, showBreakdown }: { cell?: { total: number; byW
 
 function PrintsCard({ prints, warehouses, whFilter }: { prints: PrintInventory[]; warehouses: Warehouse[]; whFilter: WarehouseFilter }) {
   const visibleWarehouses = useMemo(
-    () => whFilter === "all" ? warehouses : warehouses.filter((w) => w.id === whFilter),
+    () => (whFilter === "all" ? warehouses : warehouses.filter((w) => w.id === whFilter)),
     [warehouses, whFilter]
   );
   const rows = useMemo(() => {

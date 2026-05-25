@@ -14,7 +14,7 @@ import { InventoryActions, AdjustInline } from "@/components/inventory-actions";
 import { PrintInventoryActions, AdjustPrintInline } from "@/components/print-inventory-actions";
 import { InventoryDashboard } from "@/components/inventory-dashboard";
 import { api } from "@/lib/api";
-import type { Inventory, PrintInventory, Size, Warehouse } from "@/lib/types";
+import type { Inventory, PrintInventory, Product, Size, Warehouse } from "@/lib/types";
 import { Warehouse as WarehouseIcon, Search, Image as ImageIcon, LayoutGrid } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
@@ -26,22 +26,25 @@ export default function InventoryPage() {
   const [inv, setInv] = useState<Inventory[]>([]);
   const [prints, setPrints] = useState<PrintInventory[]>([]);
   const [sizes, setSizes] = useState<Size[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "blank" | "finished">("all");
   const [loading, setLoading] = useState(true);
 
   async function reload() {
     setLoading(true);
-    const [w, i, p, s] = await Promise.all([
+    const [w, i, p, s, prods] = await Promise.all([
       api.listWarehouses(),
       api.listInventory(),
       api.listPrintInventory(),
       api.listSizes(),
+      api.listProducts(),
     ]);
     setWarehouses(w);
     setInv(i);
     setPrints(p);
     setSizes(s);
+    setProducts(prods);
     setLoading(false);
   }
 
@@ -129,7 +132,7 @@ export default function InventoryPage() {
       )}
 
       {mode === "dashboard" ? (
-        <InventoryDashboard inv={inv} prints={prints} warehouses={warehouses} sizes={sizes} loading={loading} />
+        <InventoryDashboard inv={inv} prints={prints} warehouses={warehouses} sizes={sizes} products={products} loading={loading} />
       ) : mode === "products" ? (
         <Tabs defaultValue="all">
           <TabsList>
