@@ -40,7 +40,8 @@ function ReceivePrintDialog({ open, onOpenChange, onDone }: { open: boolean; onO
         api.listWarehouses(),
       ]);
       setDesigns(d);
-      setWarehouseId((prev) => prev || ws.find((w) => w.type === "own")?.id || ws[0]?.id || "");
+      // Принты хранятся только на своём складе — цех вышивки в селекторе скрыт.
+      setWarehouseId((prev) => prev || ws.find((w) => w.type === "own")?.id || "");
     })();
   }, [open]);
 
@@ -95,7 +96,7 @@ function ReceivePrintDialog({ open, onOpenChange, onDone }: { open: boolean; onO
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Склад</Label>
-              <WarehouseSelect value={warehouseId} onChange={setWarehouseId} />
+              <WarehouseSelect value={warehouseId} onChange={setWarehouseId} filterType="own" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Комментарий (необязательно)</Label>

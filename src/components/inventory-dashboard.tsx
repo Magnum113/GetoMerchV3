@@ -172,13 +172,15 @@ export function InventoryDashboard({
       </div>
 
       {/* KPI */}
-      <div className={cn("grid gap-3", hideFinished ? "grid-cols-2 lg:grid-cols-3" : "grid-cols-2 lg:grid-cols-4")}>
+      <div className={cn("grid gap-3", hideFinished ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 lg:grid-cols-4")}>
         <Kpi icon={Package} label="Единиц на складе" value={hideFinished ? stats.blankUnits : stats.totalUnits} sub={filterLabel} />
         <Kpi icon={Shirt} label="Пустых SKU" value={stats.blankSkuCount} sub={`${stats.blankUnits} ед`} />
         {!hideFinished && (
           <Kpi icon={Package} label="Готовых SKU" value={stats.finishedSkuCount} sub={`${stats.finishedUnits} ед`} />
         )}
-        <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
+        {!hideFinished && (
+          <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
+        )}
       </div>
 
       {/* Дефицит */}
@@ -213,7 +215,9 @@ export function InventoryDashboard({
         />
       )}
 
-      <PrintsCard prints={prints} warehouses={warehouses} whFilter={whFilter} />
+      {!hideFinished && (
+        <PrintsCard prints={prints} warehouses={warehouses} whFilter={whFilter} />
+      )}
     </div>
   );
 }
