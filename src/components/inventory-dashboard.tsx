@@ -249,7 +249,7 @@ function MatrixCard({
                       const cell = g.cells[s.id];
                       return <Cell key={s.id} cell={cell} warehouses={warehouses} showBreakdown={showBreakdown} />;
                     })}
-                    <td className="py-1.5 pl-3 text-right font-semibold tabular-nums">{g.total}</td>
+                    <td className="py-1.5 pl-3 text-right align-middle font-semibold tabular-nums">{g.total}</td>
                   </tr>
                 ))}
               </tbody>
@@ -268,7 +268,7 @@ function shortWh(name: string) {
 function Cell({ cell, warehouses, showBreakdown }: { cell?: MatrixCell; warehouses: Warehouse[]; showBreakdown: boolean }) {
   if (!cell?.hasProduct) {
     // нет такого SKU в каталоге — пустая ячейка
-    return <td className="px-1 py-1.5 text-center align-top text-muted-foreground/30">—</td>;
+    return <td className="px-1 py-1.5 text-center align-middle text-muted-foreground/30">—</td>;
   }
   const qty = cell.qty;
   const cls =
@@ -287,7 +287,7 @@ function Cell({ cell, warehouses, showBreakdown }: { cell?: MatrixCell; warehous
   const showSplit = showBreakdown && breakdownEntries.length > 1;
 
   return (
-    <td className="px-1 py-1.5 text-center align-top">
+    <td className="px-1 py-1.5 text-center align-middle">
       <div className={cn("inline-flex flex-col items-center justify-center min-w-[2.25rem] rounded px-1.5 py-0.5", cls)} title={tooltip}>
         <div className="text-sm tabular-nums leading-tight">{qty}</div>
         {showSplit && (
