@@ -17,7 +17,10 @@ import type {
   DecorationType,
   DesignType,
   OzonOrder,
+  OzonFinanceOperation,
   PrintInventory,
+  Expense,
+  ExpenseCategory,
 } from "@/lib/types";
 
 const PRODUCT_SELECT = `
@@ -842,6 +845,118 @@ export const api = {
     const sb = createClient();
     const { error } = await sb.from("merch_warehouses").delete().eq("id", id);
     if (error) throw toError(error);
+  },
+
+  // ---------- EXPENSE CATEGORIES ----------
+  async listExpenseCategories(opts?: { includeArchived?: boolean }): Promise<ExpenseCategory[]> {
+    const sb = createClient();
+    let q = sb.from("merch_expense_categories").select("*").order("sort_order").order("name");
+    if (!opts?.includeArchived) q = q.eq("archived", false);
+    const { data, error } = await q;
+    if (error) throw toError(error);
+    return (data ?? []) as ExpenseCategory[];
+  },
+
+  async createExpenseCategory(input: { name: string; color?: string | null; sort_order?: number }) {
+    const sb = createClient();
+    const { data, error } = await sb
+      .from("merch_expense_categories")
+      .insert({ name: input.name, color: input.color ?? null, sort_order: input.sort_order ?? 0 })
+      .select()
+      .single();
+    if (error) throw toError(error);
+    return data as ExpenseCategory;
+  },
+
+  async updateExpenseCategory(id: string, patch: { name?: string; color?: string | null; sort_order?: number; archived?: boolean }) {
+    const sb = createClient();
+    const { error } = await sb.from("merch_expense_categories").update(patch).eq("id", id);
+    if (error) throw toError(error);
+  },
+
+  async deleteExpenseCategory(id: string) {
+    const sb = createClient();
+    const { error } = await sb.from("merch_expense_categories").delete().eq("id", id);
+    if (error) throw toError(error);
+  },
+
+  // ---------- EXPENSES ----------
+  async listExpenses(filters?: { from?: string; to?: string; categoryId?: string }): Promise<Expense[]> {
+    const sb = createClient();
+    let q = sb
+      .from("merch_expenses")
+      .select(`*, category:merch_expense_categories(*)`)
+      .order("occurred_at", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (filters?.from) q = q.gte("occurred_at", filters.from);
+    if (filters?.to) q = q.lte("occurred_at", filters.to);
+    if (filters?.categoryId) q = q.eq("category_id", filters.categoryId);
+    const { data, error } = await q;
+    if (error) throw toError(error);
+    return ((data ?? []) as unknown) as Expense[];
+  },
+
+  async createExpense(input: { categoryId: string | null; amount: number; occurredAt: string; description?: string | null }) {
+    const sb = createClient();
+    const { error } = await sb.from("merch_expenses").insert({
+      category_id: input.categoryId,
+      amount: input.amount,
+      occurred_at: input.occurredAt,
+      description: input.description ?? null,
+    });
+    if (error) throw toError(error);
+  },
+
+  async updateExpense(id: string, patch: { categoryId?: string | null; amount?: number; occurredAt?: string; description?: string | null }) {
+    const sb = createClient();
+    const upd: Record<string, unknown> = {};
+    if (patch.categoryId !== undefined) upd.category_id = patch.categoryId;
+    if (patch.amount !== undefined) upd.amount = patch.amount;
+    if (patch.occurredAt !== undefined) upd.occurred_at = patch.occurredAt;
+    if (patch.description !== undefined) upd.description = patch.description;
+    const { error } = await sb.from("merch_expenses").update(upd).eq("id", id);
+    if (error) throw toError(error);
+  },
+
+  async deleteExpense(id: string) {
+    const sb = createClient();
+    const { error } = await sb.from("merch_expenses").delete().eq("id", id);
+    if (error) throw toError(error);
+  },
+
+  // ---------- OZON FINANCE OPERATIONS ----------
+  async listFinanceOperations(filters?: { from?: string; to?: string }): Promise<OzonFinanceOperation[]> {
+    const sb = createClient();
+    let q = sb
+      .from("merch_ozon_finance_operations")
+      .select("id, operation_id, operation_type, operation_type_name, operation_date, posting_number, accruals_for_sale, sale_commission, amount, services, items, synced_at")
+      .order("operation_date", { ascending: false });
+    if (filters?.from) q = q.gte("operation_date", filters.from);
+    if (filters?.to) q = q.lte("operation_date", filters.to);
+    const { data, error } = await q;
+    if (error) throw toError(error);
+    return ((data ?? []) as unknown) as OzonFinanceOperation[];
+  },
+
+  async lastFinanceSyncAt(): Promise<string | null> {
+    const sb = createClient();
+    const { data } = await sb
+      .from("merch_ozon_finance_operations")
+      .select("synced_at")
+      .order("synced_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data?.synced_at as string | null) ?? null;
+  },
+
+  async syncOzonFinance(opts: { from?: string; to?: string } = {}): Promise<{ fetched: number; created: number; updated: number; from: string; to: string }> {
+    const params = new URLSearchParams();
+    if (opts.from) params.set("from", opts.from);
+    if (opts.to) params.set("to", opts.to);
+    const res = await fetch(`/api/ozon/sync-finance?${params.toString()}`, { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Sync failed");
+    return json;
   },
 };
 

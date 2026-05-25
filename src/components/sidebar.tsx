@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
+  LineChart,
   Package,
   Warehouse as WarehouseIcon,
   ArrowLeftRight,
@@ -15,15 +15,17 @@ import {
   Menu,
   X,
   ShoppingBag,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { href: "/", label: "Дашборд", icon: LayoutDashboard },
+  { href: "/", label: "Аналитика", icon: LineChart },
   { href: "/orders", label: "Заказы Ozon", icon: ShoppingBag },
   { href: "/inventory", label: "Остатки", icon: WarehouseIcon },
   { href: "/products", label: "Каталог SKU", icon: Package },
   { href: "/workshop", label: "Заказы в цех", icon: Hammer },
+  { href: "/expenses", label: "Расходы", icon: Wallet },
   { href: "/transactions", label: "Журнал", icon: ArrowLeftRight },
   { href: "/designs", label: "Дизайны", icon: Palette },
   { href: "/settings", label: "Справочники", icon: Settings },

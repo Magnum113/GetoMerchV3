@@ -199,6 +199,51 @@ export interface OzonOrderItem {
   product?: Product | null;
 }
 
+export interface OzonFinanceService {
+  name: string;
+  price: number;
+}
+
+export interface OzonFinanceItemSnapshot {
+  name?: string;
+  sku?: number | string;
+  [key: string]: unknown;
+}
+
+export interface OzonFinanceOperation {
+  id: string;
+  operation_id: number;
+  operation_type: string;
+  operation_type_name: string | null;
+  operation_date: string;
+  posting_number: string | null;
+  accruals_for_sale: number | null;
+  sale_commission: number | null;
+  amount: number;
+  services: OzonFinanceService[] | null;
+  items: OzonFinanceItemSnapshot[] | null;
+  synced_at: string;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  color: string | null;
+  sort_order: number;
+  archived: boolean;
+  created_at: string;
+}
+
+export interface Expense {
+  id: string;
+  category_id: string | null;
+  amount: number;
+  occurred_at: string;
+  description: string | null;
+  created_at: string;
+  category?: ExpenseCategory | null;
+}
+
 export const OZON_STATUS_LABELS: Record<string, string> = {
   acceptance_in_progress: "Идёт приёмка",
   awaiting_approve: "Ждёт подтверждения",
