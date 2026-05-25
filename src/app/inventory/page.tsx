@@ -12,32 +12,36 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { InventoryActions, AdjustInline } from "@/components/inventory-actions";
 import { PrintInventoryActions, AdjustPrintInline } from "@/components/print-inventory-actions";
+import { InventoryDashboard } from "@/components/inventory-dashboard";
 import { api } from "@/lib/api";
-import type { Inventory, PrintInventory, Warehouse } from "@/lib/types";
-import { Warehouse as WarehouseIcon, Search, Image as ImageIcon } from "lucide-react";
+import type { Inventory, PrintInventory, Size, Warehouse } from "@/lib/types";
+import { Warehouse as WarehouseIcon, Search, Image as ImageIcon, LayoutGrid } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
-type Mode = "products" | "prints";
+type Mode = "dashboard" | "products" | "prints";
 
 export default function InventoryPage() {
-  const [mode, setMode] = useState<Mode>("products");
+  const [mode, setMode] = useState<Mode>("dashboard");
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [inv, setInv] = useState<Inventory[]>([]);
   const [prints, setPrints] = useState<PrintInventory[]>([]);
+  const [sizes, setSizes] = useState<Size[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "blank" | "finished">("all");
   const [loading, setLoading] = useState(true);
 
   async function reload() {
     setLoading(true);
-    const [w, i, p] = await Promise.all([
+    const [w, i, p, s] = await Promise.all([
       api.listWarehouses(),
       api.listInventory(),
       api.listPrintInventory(),
+      api.listSizes(),
     ]);
     setWarehouses(w);
     setInv(i);
     setPrints(p);
+    setSizes(s);
     setLoading(false);
   }
 
@@ -77,45 +81,56 @@ export default function InventoryPage() {
     <div>
       <PageHeader
         title="Остатки на складах"
-        description={mode === "products"
+        description={mode === "dashboard"
+          ? "Сводка по складам, дефициты и готовность активных заказов"
+          : mode === "products"
           ? "Все позиции с положительным остатком. Быстрые действия — приёмка, перемещение, продажа, производство"
           : "Запас готовых принтов на складе. При производстве с типом «принт» система автоматически списывает 1 принт на изделие."}
-        action={mode === "products" ? <InventoryActions onChange={reload} /> : <PrintInventoryActions onChange={reload} />}
+        action={mode === "dashboard" ? (
+          <div className="flex gap-2">
+            <InventoryActions onChange={reload} />
+          </div>
+        ) : mode === "products" ? <InventoryActions onChange={reload} /> : <PrintInventoryActions onChange={reload} />}
       />
 
       <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="mb-4">
         <TabsList>
+          <TabsTrigger value="dashboard"><LayoutGrid className="h-3.5 w-3.5 mr-1.5" />Дашборд</TabsTrigger>
           <TabsTrigger value="products">Изделия</TabsTrigger>
           <TabsTrigger value="prints">Принты</TabsTrigger>
         </TabsList>
       </Tabs>
 
-      <Card className="mb-4">
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={mode === "products" ? "Поиск по SKU, цвету, дизайну…" : "Поиск по дизайну…"}
-                className="pl-8"
-              />
+      {mode !== "dashboard" && (
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={mode === "products" ? "Поиск по SKU, цвету, дизайну…" : "Поиск по дизайну…"}
+                  className="pl-8"
+                />
+              </div>
+              {mode === "products" && (
+                <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "blank" | "finished")}>
+                  <TabsList>
+                    <TabsTrigger value="all">Все</TabsTrigger>
+                    <TabsTrigger value="blank">Пустые</TabsTrigger>
+                    <TabsTrigger value="finished">Готовые</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              )}
             </div>
-            {mode === "products" && (
-              <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "blank" | "finished")}>
-                <TabsList>
-                  <TabsTrigger value="all">Все</TabsTrigger>
-                  <TabsTrigger value="blank">Пустые</TabsTrigger>
-                  <TabsTrigger value="finished">Готовые</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
-      {mode === "products" ? (
+      {mode === "dashboard" ? (
+        <InventoryDashboard inv={inv} prints={prints} warehouses={warehouses} sizes={sizes} loading={loading} />
+      ) : mode === "products" ? (
         <Tabs defaultValue="all">
           <TabsList>
             <TabsTrigger value="all">Все склады</TabsTrigger>
