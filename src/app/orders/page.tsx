@@ -37,6 +37,9 @@ interface ItemAvailability {
   need: number;
   finishedByWh: { warehouseId: string; warehouseName: string; qty: number }[];
   blankByWh: { warehouseId: string; warehouseName: string; qty: number }[];
+  /** true для изделий с принтом (made_at === "own" или не задано) — пустые из цеха
+   *  вышивки игнорируются, т.к. оттуда заготовки на мой склад для печати не возят. */
+  isPrint: boolean;
 }
 
 export default function OrdersPage() {
@@ -72,6 +75,11 @@ export default function OrdersPage() {
     for (const w of warehouses) m.set(w.id, w.name);
     return m;
   }, [warehouses]);
+  const warehouseTypeById = useMemo(() => {
+    const m = new Map<string, Warehouse["type"]>();
+    for (const w of warehouses) m.set(w.id, w.type);
+    return m;
+  }, [warehouses]);
 
   // qty by product across all warehouses + per-warehouse breakdown
   const stockByProduct = useMemo(() => {
@@ -93,24 +101,31 @@ export default function OrdersPage() {
     return m;
   }, [blanks]);
 
-  function breakdown(productId: string) {
+  function breakdown(productId: string, opts?: { excludeWorkshop?: boolean }) {
     const e = stockByProduct.get(productId);
     if (!e) return { total: 0, list: [] as { warehouseId: string; warehouseName: string; qty: number }[] };
-    const list = Array.from(e.byWh.entries())
-      .filter(([, q]) => q > 0)
-      .map(([warehouseId, qty]) => ({ warehouseId, warehouseName: warehouseNameById.get(warehouseId) ?? "—", qty }));
-    return { total: e.total, list };
+    const entries = Array.from(e.byWh.entries()).filter(([wid, q]) => {
+      if (q <= 0) return false;
+      if (opts?.excludeWorkshop && warehouseTypeById.get(wid) === "workshop") return false;
+      return true;
+    });
+    const list = entries.map(([warehouseId, qty]) => ({ warehouseId, warehouseName: warehouseNameById.get(warehouseId) ?? "—", qty }));
+    const total = entries.reduce((s, [, q]) => s + q, 0);
+    return { total, list };
   }
 
   function availability(item: OzonOrderItem): ItemAvailability {
     const need = item.quantity;
     if (!item.product) {
-      return { status: "unmatched", finished: 0, blank: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [] };
+      return { status: "unmatched", finished: 0, blank: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false };
     }
+    // Принт делается у меня на складе (или decoration_type не указан) — пустые из
+    // цеха вышивки не учитываем, т.к. оттуда заготовки на мой склад для печати не возят.
+    const isPrint = item.product.decoration_type?.made_at !== "workshop";
     const fin = breakdown(item.product.id);
     const blankProd = blankByKey.get(blankKey(item.product.category_id, item.product.fabric_id, item.product.color_id, item.product.size_id)) ?? null;
-    const blk = blankProd ? breakdown(blankProd.id) : { total: 0, list: [] };
-    const base = { finished: fin.total, blank: blk.total, blankProduct: blankProd, need, finishedByWh: fin.list, blankByWh: blk.list };
+    const blk = blankProd ? breakdown(blankProd.id, { excludeWorkshop: isPrint }) : { total: 0, list: [] };
+    const base = { finished: fin.total, blank: blk.total, blankProduct: blankProd, need, finishedByWh: fin.list, blankByWh: blk.list, isPrint };
     if (fin.total >= need) return { status: "ready", ...base };
     if (fin.total > 0) return { status: "partial", ...base };
     if (blk.total >= need) return { status: "needs_production", ...base };
@@ -412,6 +427,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
       </Badge>
     );
   }
+  const blanksLabel = a.isPrint ? "Пустых на моём складе" : "Пустых";
   if (a.status === "partial") {
     return (
       <div className="flex flex-wrap gap-1.5">
@@ -420,7 +436,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
         </Badge>
         {a.blankProduct && a.blank > 0 && (
           <Badge variant="outline" className="gap-1">
-            <Hammer className="h-3 w-3" /> Пустых для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
+            <Hammer className="h-3 w-3" /> {blanksLabel} для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
           </Badge>
         )}
       </div>
@@ -429,13 +445,18 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   if (a.status === "needs_production") {
     return (
       <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 gap-1">
-        <Hammer className="h-3 w-3" /> Готовых нет, есть пустые: {a.blank}{whDetail(a.blankByWh, a.blank)}
+        <Hammer className="h-3 w-3" />{" "}
+        {a.isPrint
+          ? `Готовых нет, есть пустые на моём складе: ${a.blank}`
+          : `Готовых нет, есть пустые: ${a.blank}`}
+        {whDetail(a.blankByWh, a.blank)}
       </Badge>
     );
   }
   return (
     <Badge className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 gap-1">
-      <X className="h-3 w-3" /> Нет ни готовых, ни пустых
+      <X className="h-3 w-3" />{" "}
+      {a.isPrint ? "Готовых нет · пустых нет на моём складе" : "Нет ни готовых, ни пустых"}
     </Badge>
   );
 }
