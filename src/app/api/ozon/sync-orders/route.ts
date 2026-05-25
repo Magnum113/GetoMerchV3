@@ -51,7 +51,7 @@ async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
   let offset = 0;
-  const limit = 100;
+  const limit = 1000; // Ozon allows up to 1000 — берём максимум, меньше страниц
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const r: FbsListResponse = await ozonPost("/v3/posting/fbs/list", {
@@ -65,9 +65,16 @@ async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
     all.push(...items);
     if (!r.result?.has_next || items.length < limit) break;
     offset += limit;
-    if (offset > 5000) break;
+    if (offset > 10000) break;
   }
   return all;
+}
+
+// Делит массив на чанки по N (на случай очень большого аккаунта, чтобы не упереться в лимиты PostgREST)
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 export async function POST(req: Request) {
@@ -83,35 +90,44 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     );
 
+    // 1) Параллельно тянем Ozon + каталог
     const [postings, { data: products }] = await Promise.all([
       fetchAllPostings(days),
       supabase.from("merch_products").select("id, sku, legacy_skus").not("sku", "is", null),
     ]);
 
+    if (postings.length === 0) {
+      return NextResponse.json({ ok: true, fetched: 0, created: 0, updated: 0, unmatchedItems: 0, unmatchedSamples: [] });
+    }
+
+    // Карта offer_id → product_id (включает legacy_skus для переименованных в Ozon артикулов)
     const productByOffer = new Map<string, string>();
     for (const p of (products ?? []) as { id: string; sku: string | null; legacy_skus: string[] | null }[]) {
       if (p.sku) productByOffer.set(String(p.sku), p.id);
       for (const ls of p.legacy_skus ?? []) productByOffer.set(String(ls), p.id);
     }
 
-    let upserted = 0;
-    let created = 0;
-    let unmatched = 0;
-    const unmatchedOffers = new Set<string>();
+    const postingNumbers = postings.map((p) => p.posting_number);
 
-    for (const p of postings) {
-      const total = (p.products ?? []).reduce(
-        (s, it) => s + Number(it.price ?? 0) * (it.quantity ?? 0),
-        0,
-      );
-
-      const { data: existing } = await supabase
+    // 2) Один SELECT: какие posting_number уже есть и какие из них отправлены.
+    //    shipped_at нужен, чтобы НЕ затирать позиции отправленных заказов
+    //    (там у позиций уже проставлен shipped_from_warehouse_id).
+    const existingByPosting = new Map<string, { id: string; shipped_at: string | null }>();
+    for (const ch of chunk(postingNumbers, 500)) {
+      const { data: ex, error: exErr } = await supabase
         .from("merch_ozon_orders")
-        .select("id, shipped_at")
-        .eq("posting_number", p.posting_number)
-        .maybeSingle();
+        .select("id, posting_number, shipped_at")
+        .in("posting_number", ch);
+      if (exErr) throw exErr;
+      for (const r of ex ?? []) existingByPosting.set(r.posting_number, { id: r.id, shipped_at: r.shipped_at });
+    }
 
-      const payload = {
+    // 3) Один UPSERT всех заказов разом. Колонки, отсутствующие в payload (shipped_at,
+    //    shipped_from_warehouse_id), при обновлении не трогаются.
+    const now = new Date().toISOString();
+    const orderPayloads = postings.map((p) => {
+      const total = (p.products ?? []).reduce((s, it) => s + Number(it.price ?? 0) * (it.quantity ?? 0), 0);
+      return {
         posting_number: p.posting_number,
         order_id: p.order_id ?? null,
         order_number: p.order_number ?? null,
@@ -124,38 +140,41 @@ export async function POST(req: Request) {
         customer_name: p.customer?.name ?? null,
         total_price: total || null,
         raw: p as unknown as Record<string, unknown>,
-        synced_at: new Date().toISOString(),
+        synced_at: now,
       };
+    });
 
-      let orderId: string;
-      if (existing) {
-        const { error: upErr } = await supabase
-          .from("merch_ozon_orders")
-          .update(payload)
-          .eq("id", existing.id);
-        if (upErr) throw upErr;
-        orderId = existing.id;
-        upserted++;
-      } else {
-        const { data: ins, error: insErr } = await supabase
-          .from("merch_ozon_orders")
-          .insert(payload)
-          .select("id")
-          .single();
-        if (insErr) throw insErr;
-        orderId = ins!.id;
-        created++;
-      }
+    const idByPosting = new Map<string, string>();
+    for (const ch of chunk(orderPayloads, 500)) {
+      const { data: upserted, error: upErr } = await supabase
+        .from("merch_ozon_orders")
+        .upsert(ch, { onConflict: "posting_number" })
+        .select("id, posting_number");
+      if (upErr) throw upErr;
+      for (const r of upserted ?? []) idByPosting.set(r.posting_number, r.id);
+    }
 
-      // Replace items
-      await supabase.from("merch_ozon_order_items").delete().eq("order_id", orderId);
-      const itemsPayload = (p.products ?? []).map((it) => {
+    // 4) Готовим позиции, но обновлять будем только у НЕотправленных заказов —
+    //    чтобы не потерять shipped_from_warehouse_id на позициях отправленного.
+    let unmatched = 0;
+    const unmatchedOffers = new Set<string>();
+    const refreshableOrderIds: string[] = [];
+    const allItems: Array<Record<string, unknown>> = [];
+
+    for (const p of postings) {
+      const orderId = idByPosting.get(p.posting_number);
+      if (!orderId) continue;
+      const wasShipped = existingByPosting.get(p.posting_number)?.shipped_at != null;
+      if (wasShipped) continue;
+
+      refreshableOrderIds.push(orderId);
+      for (const it of p.products ?? []) {
         const productId = productByOffer.get(String(it.offer_id));
         if (!productId) {
           unmatched++;
           unmatchedOffers.add(String(it.offer_id));
         }
-        return {
+        allItems.push({
           order_id: orderId,
           offer_id: String(it.offer_id),
           ozon_sku: it.sku != null ? String(it.sku) : null,
@@ -163,19 +182,39 @@ export async function POST(req: Request) {
           quantity: it.quantity ?? 0,
           price: it.price != null ? Number(it.price) : null,
           product_id: productId ?? null,
-        };
-      });
-      if (itemsPayload.length > 0) {
-        const { error: itemsErr } = await supabase.from("merch_ozon_order_items").insert(itemsPayload);
-        if (itemsErr) throw itemsErr;
+        });
       }
     }
+
+    // 5) Один DELETE и один INSERT для позиций
+    if (refreshableOrderIds.length > 0) {
+      for (const ch of chunk(refreshableOrderIds, 500)) {
+        const { error: delErr } = await supabase
+          .from("merch_ozon_order_items")
+          .delete()
+          .in("order_id", ch);
+        if (delErr) throw delErr;
+      }
+    }
+    if (allItems.length > 0) {
+      for (const ch of chunk(allItems, 1000)) {
+        const { error: insErr } = await supabase.from("merch_ozon_order_items").insert(ch);
+        if (insErr) throw insErr;
+      }
+    }
+
+    // 6) created / updated на основе того, что было до апсерта
+    let created = 0;
+    for (const pn of idByPosting.keys()) {
+      if (!existingByPosting.has(pn)) created++;
+    }
+    const updated = idByPosting.size - created;
 
     return NextResponse.json({
       ok: true,
       fetched: postings.length,
       created,
-      updated: upserted,
+      updated,
       unmatchedItems: unmatched,
       unmatchedSamples: Array.from(unmatchedOffers).slice(0, 10),
     });
