@@ -105,7 +105,6 @@ export function InventoryDashboard({
   }, [products, stockByProduct]);
 
   const activeWarehouse = whFilter === "all" ? null : warehouses.find((w) => w.id === whFilter) ?? null;
-  const filterLabel = activeWarehouse?.name?.toLowerCase() ?? "все склады";
   // В цехе вышивки готовые не задерживаются — отправляются клиенту или на свой склад.
   // Скрываем готовые матрицу, дефицит и KPI.
   const hideFinished = activeWarehouse?.type === "workshop";
@@ -183,12 +182,11 @@ export function InventoryDashboard({
         minStock={MIN_STOCK}
         groups={shortageGroups}
         finishedHidden={hideFinished}
-        filterLabel={filterLabel}
       />
 
       <MatrixCard
         title="Пустые по размерам"
-        description={`Заготовки для нанесения принта или вышивки · ${filterLabel}`}
+        description="Заготовки для нанесения принта или вышивки"
         icon={Shirt}
         sizes={sortedSizes}
         rows={sortedBlankRows}
@@ -200,7 +198,7 @@ export function InventoryDashboard({
       {!hideFinished && (
         <MatrixCard
           title="Готовые по размерам"
-          description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
+          description="Готовая продукция с принтом или вышивкой (с offer_id на Ozon)"
           icon={Package}
           sizes={sortedSizes}
           rows={sortedFinishedRows}
@@ -223,12 +221,10 @@ function ShortageCard({
   minStock,
   groups,
   finishedHidden,
-  filterLabel,
 }: {
   minStock: number;
   groups: ShortageGroup[];
   finishedHidden: boolean;
-  filterLabel: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -239,7 +235,6 @@ function ShortageCard({
           <CheckCircle2 className="h-5 w-5 text-state-success-fg" />
           <div className="text-sm">
             <span className="font-semibold text-state-success-fg">Всё в норме</span>
-            <span className="text-muted-foreground"> · ≥ {minStock} шт на каждый размер · {filterLabel}</span>
           </div>
         </CardContent>
       </Card>
@@ -261,16 +256,17 @@ function ShortageCard({
             <CardTitle className="text-lg font-semibold">
               Произвести {totalNeed} шт · {groups.length} {pluralPositions(groups.length)}
             </CardTitle>
-            <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-              <span>Цель: ≥ {minStock} шт на каждый размер · {filterLabel}</span>
-              {totalMissing > 0 && (
-                <span className="text-state-danger-fg font-medium inline-flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  Полностью нет: {totalMissing}
-                </span>
-              )}
-              {finishedHidden && <span>только пустые</span>}
-            </div>
+            {(totalMissing > 0 || finishedHidden) && (
+              <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                {totalMissing > 0 && (
+                  <span className="text-state-danger-fg font-medium inline-flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    Полностью нет: {totalMissing}
+                  </span>
+                )}
+                {finishedHidden && <span>только пустые</span>}
+              </div>
+            )}
           </div>
         </div>
       </CardHeader>
