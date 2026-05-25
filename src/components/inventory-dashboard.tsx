@@ -147,7 +147,11 @@ export function InventoryDashboard({
   if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
 
   const showBreakdownInCells = whFilter === "all" && warehouses.length > 1;
-  const filterLabel = whFilter === "all" ? "все склады" : warehouses.find((w) => w.id === whFilter)?.name?.toLowerCase() ?? "—";
+  const activeWarehouse = whFilter === "all" ? null : warehouses.find((w) => w.id === whFilter) ?? null;
+  const filterLabel = activeWarehouse?.name?.toLowerCase() ?? "все склады";
+  // В цехе вышивки готовые не задерживаются — отправляются клиенту или на свой склад.
+  // Скрываем готовые матрицу, дефицит и KPI.
+  const hideFinished = activeWarehouse?.type === "workshop";
 
   return (
     <div className="space-y-5">
@@ -168,10 +172,12 @@ export function InventoryDashboard({
       </div>
 
       {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi icon={Package} label="Единиц на складе" value={stats.totalUnits} sub={filterLabel} />
+      <div className={cn("grid gap-3", hideFinished ? "grid-cols-2 lg:grid-cols-3" : "grid-cols-2 lg:grid-cols-4")}>
+        <Kpi icon={Package} label="Единиц на складе" value={hideFinished ? stats.blankUnits : stats.totalUnits} sub={filterLabel} />
         <Kpi icon={Shirt} label="Пустых SKU" value={stats.blankSkuCount} sub={`${stats.blankUnits} ед`} />
-        <Kpi icon={Package} label="Готовых SKU" value={stats.finishedSkuCount} sub={`${stats.finishedUnits} ед`} />
+        {!hideFinished && (
+          <Kpi icon={Package} label="Готовых SKU" value={stats.finishedSkuCount} sub={`${stats.finishedUnits} ед`} />
+        )}
         <Kpi icon={ImageIcon} label="Принтов" value={stats.printUnits} sub={`${stats.printDesigns} дизайнов`} />
       </div>
 
@@ -179,7 +185,7 @@ export function InventoryDashboard({
       <ShortageCard
         minStock={MIN_STOCK}
         blank={{ shortage: stats.blankShortage, missing: stats.blankMissing }}
-        finished={{ shortage: stats.finishedShortage, missing: stats.finishedMissing }}
+        finished={hideFinished ? null : { shortage: stats.finishedShortage, missing: stats.finishedMissing }}
         onShowOnly={() => setOnlyShortage(true)}
       />
 
@@ -194,16 +200,18 @@ export function InventoryDashboard({
         emptyText={onlyShortage ? "Дефицита пустых нет" : "Пустых нет"}
       />
 
-      <MatrixCard
-        title="Готовые по размерам"
-        description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
-        icon={Package}
-        sizes={sortedSizes}
-        rows={visibleFinishedRows}
-        warehouses={warehouses}
-        showBreakdown={showBreakdownInCells}
-        emptyText={onlyShortage ? "Дефицита готовых нет" : "Готовых нет"}
-      />
+      {!hideFinished && (
+        <MatrixCard
+          title="Готовые по размерам"
+          description={`Готовая продукция с принтом или вышивкой (с offer_id на Ozon) · ${filterLabel}`}
+          icon={Package}
+          sizes={sortedSizes}
+          rows={visibleFinishedRows}
+          warehouses={warehouses}
+          showBreakdown={showBreakdownInCells}
+          emptyText={onlyShortage ? "Дефицита готовых нет" : "Готовых нет"}
+        />
+      )}
 
       <PrintsCard prints={prints} warehouses={warehouses} whFilter={whFilter} />
     </div>
@@ -252,10 +260,10 @@ function ShortageCard({
 }: {
   minStock: number;
   blank: { shortage: number; missing: number };
-  finished: { shortage: number; missing: number };
+  finished: { shortage: number; missing: number } | null;
   onShowOnly: () => void;
 }) {
-  const total = blank.shortage + finished.shortage;
+  const total = blank.shortage + (finished?.shortage ?? 0);
   const allGood = total === 0;
 
   if (allGood) {
@@ -284,7 +292,9 @@ function ShortageCard({
               </div>
               <div className="text-xs text-muted-foreground mt-0.5 flex flex-wrap gap-x-4 gap-y-0.5">
                 <span>Пустые: <span className="font-medium text-foreground">{blank.shortage}</span> ниже минимума {blank.missing > 0 && <span className="text-red-700">· из них {blank.missing} = 0</span>}</span>
-                <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-red-700">· из них {finished.missing} = 0</span>}</span>
+                {finished && (
+                  <span>Готовые: <span className="font-medium text-foreground">{finished.shortage}</span> ниже минимума {finished.missing > 0 && <span className="text-red-700">· из них {finished.missing} = 0</span>}</span>
+                )}
               </div>
             </div>
           </div>
