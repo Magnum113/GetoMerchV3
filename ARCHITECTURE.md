@@ -13,7 +13,8 @@
 - Заготовки (пустые футболки/худи) разных цветов и размеров
 - Принты, которые наклеиваются на заготовки → готовое изделие
 - Вышивка, которую делает внешний цех → готовое изделие
-- Заказы с Ozon (FBS) подтягиваются автоматически, отправка одной кнопкой
+- Заказы с Ozon (FBS + FBO) подтягиваются автоматически, FBS-отправка одной
+  кнопкой
   списывает товар со склада
 - Аналитический дашборд на `/` — выручка, расходы (включая комиссии Ozon из
   Finance API, налог УСН 6%, прочие удержания), чистая прибыль с разбивкой
@@ -52,7 +53,7 @@ src/
   app/                      # Next.js App Router
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
       sync-prices/          # POST → /v5/product/info/prices
-      sync-orders/          # POST → /v3/posting/fbs/list (FBS only)
+      sync-orders/          # POST → /v3/posting/fbs/list + /v2/posting/fbo/list
       sync-finance/         # POST → /v3/finance/transaction/list (ВСЕ операции)
     inventory/              # /inventory — остатки по складам (матрицы)
     orders/                 # /orders — заказы Ozon
@@ -107,7 +108,7 @@ supabase/
 | `merch_print_inventory` | Остатки готовых принтов `(design_id, warehouse_id) → quantity` |
 | `merch_transactions` | Журнал любых движений товара или принта. `product_id` и `design_id` оба nullable, но обязательно одно из двух. Поле `type` ∈ {`receive`, `transfer`, `sale`, `production`, `adjustment`, `writeoff`} |
 | `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `sent → ready → received` (плюс терминальный `cancelled`). Колонка `merch_ozon_orders.workshop_order_id` указывает на заказ в цех, созданный из заказа Ozon |
-| `merch_ozon_orders` / `_items` | Зеркало отправлений FBS из Ozon. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) — связь с заказом в цех, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting (FBO) |
+| `merch_ozon_orders` / `_items` | Зеркало отправлений Ozon: FBS из `/v3/posting/fbs/list` и FBO из `/v2/posting/fbo/list`. Поле `raw.source` ∈ {`fbs`, `fbo`} помечает схему. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) используется только для FBS-заказов, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting |
 | `merch_ozon_finance_operations` | Зеркало `/v3/finance/transaction/list`. UNIQUE по `operation_id`. Поля: `operation_type` (например `OperationAgentDeliveredToCustomer`, `ClientReturnAgentOperation`, `DefectFineShipmentDelay`), `operation_type_name`, `operation_date`, `posting_number` (nullable — у штрафов/подписок его нет), `accruals_for_sale` (положительная для продажи, отрицательная для возврата), `sale_commission` (отрицательная для удержания, положительная для возврата комиссии), `amount` (нетто-движение по счёту), `services` (jsonb массив `{name, price}`), `items` (jsonb — только `{sku, name}`, без quantity), `raw` (полный ответ Ozon на всякий случай) |
 | `merch_expense_categories` | Пользовательские категории ручных расходов: `name`, `color` (hex для donut), `sort_order`, `archived` |
 | `merch_expenses` | Ручные расходы вне Ozon. `amount > 0`, `occurred_at date`, `category_id` (`ON DELETE SET NULL`). Используются в дашборде в категории «Прочие расходы» и в собственных категориях donut |
@@ -231,12 +232,13 @@ supabase/
 15d. **COGS на финопе ищется в два шага: posting → SKU-fallback.**
     `lookupCost(op, costIndex)`:
     1. Если `op.posting_number` есть в `merch_ozon_orders` — берём готовый
-       `byPosting` с точным quantity.
-    2. Иначе (FBO, очень старые заказы) — fallback через `costIndex.bySku`
+       `byPosting` с точным quantity. После интеграции FBO это основной путь
+       и для FBS, и для FBO.
+    2. Иначе (очень старые/неподтянутые заказы) — fallback через `costIndex.bySku`
        по `op.items[].sku`. Quantity для одно-товарного финопа выводим как
        `round(accruals_for_sale / sale_price)` (только если отношение
        близко к целому — допуск 15%). Для много-товарных финопов default
-       qty=1 на каждую запись items. Это аппроксимация, см. раздел 11.
+       qty=1 на каждую запись items. Это аварийная аппроксимация, см. раздел 11.
 
 #### Целостность данных
 
@@ -477,16 +479,19 @@ UI — на русском (целевой пользователь говори
   и `Api-Key` (из `OZON_API_KEY`)
 - Используемые методы:
   - `POST /v5/product/info/prices` — синхронизация цен (`/api/ozon/sync-prices`)
-  - `POST /v3/posting/fbs/list` — синхронизация заказов FBS (`/api/ozon/sync-orders`)
+  - `POST /v3/posting/fbs/list` — синхронизация FBS-заказов (`/api/ozon/sync-orders`)
+  - `POST /v2/posting/fbo/list` — синхронизация FBO-заказов для аналитики
+    заказов и точного COGS по FBO-финоперациям (`/api/ozon/sync-orders`,
+    только при `scope=all`)
   - `POST /v3/finance/transaction/list` — синхронизация всех финансовых
     операций для аналитики (`/api/ozon/sync-finance`). Ограничение Ozon:
     максимум 1 месяц на запрос → ходим 28-дневными окнами, идемпотентный
     upsert по `operation_id` после дедупликации внутри партии
 - Матчинг с каталогом:
-  - Заказы FBS: `offer_id ↔ merch_products.sku` (или одному из `legacy_skus`)
+  - Заказы FBS/FBO: `offer_id ↔ merch_products.sku` (или одному из `legacy_skus`)
   - Финопы: сначала `posting_number ↔ merch_ozon_orders.posting_number`,
-    иначе по `items[].sku ↔ merch_ozon_order_items.ozon_sku` (нужно для FBO,
-    которые в `/fbs/list` не возвращаются)
+    иначе по `items[].sku ↔ merch_ozon_order_items.ozon_sku` (fallback для
+    старых/неподтянутых отправлений)
 - Запросы только с сервера. С клиента — через `fetch('/api/ozon/...')`
 - Кнопка «Обновить данные Ozon» в дашборде запускает sync-orders (180 дней,
   `scope=all`) + sync-finance параллельно
@@ -515,12 +520,11 @@ UI — на русском (целевой пользователь говори
   конкурентных вызовах с одинаковым комбо может быть race и UNIQUE violation
   на `sku`. В bulk-форме каждая ячейка уникальна (разный размер), но в общем
   случае стоит вынести в Postgres RPC
-- COGS-фолбэк по Ozon SKU аппроксимирует quantity (см. правило 15d). Для
-  одно-товарных финопов точность ~100% (когда `sale_price` заполнен и без
-  скидок), для много-товарных FBO-заказов недооценивает qty (каждая строка
-  items = 1 шт), а значит и недосчитывает себестоимость. Чтобы убрать
-  погрешность — нужно подтянуть FBO-заказы отдельным синком
-  (`/v2/posting/fbo/list`) и положить их рядом с FBS в `merch_ozon_orders`
+- FBS + FBO заказы уже подтягиваются в `merch_ozon_orders`, поэтому COGS по
+  финоперациям обычно считается через точный `posting_number`. COGS-фолбэк по
+  Ozon SKU остаётся только как страховка для старых/неподтянутых отправлений:
+  он аппроксимирует quantity (см. правило 15d), для много-товарных финопов
+  считает 1 шт на строку `items`.
 - `merch_expenses` без soft-delete. Удаление — навсегда. Если важна
   отчётность за прошлые периоды — лучше архивировать категорию
   (`archived=true`) вместо удаления записей

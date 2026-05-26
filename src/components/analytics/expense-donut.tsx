@@ -56,7 +56,7 @@ export function ExpenseDonut({ entries, height = 340 }: { entries: ExpenseBreakd
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+      <div className="grid grid-cols-1 gap-y-2 text-sm">
         {entries.map((e) => (
           <div key={e.key} className="flex items-center gap-2.5">
             <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: e.color }} />

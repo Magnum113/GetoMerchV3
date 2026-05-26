@@ -166,7 +166,6 @@ export default function AnalyticsDashboardPage() {
     <div>
       <PageHeader
         title="Аналитика"
-        description="Выручка, расходы и чистая прибыль с разбивкой по периоду"
         action={
           <div className="flex flex-col items-end gap-1">
             <Button onClick={sync} disabled={syncing} variant="outline">
@@ -236,7 +235,6 @@ export default function AnalyticsDashboardPage() {
               sparkData={sparkData.revenue}
               sparkColor="hsl(var(--state-info-fg))"
               loading={loading}
-              hint={metrics.returns > 0 ? `Возвраты: −${formatMoney(metrics.returns)}` : `Заказов: ${metrics.ordersCount}`}
             />
             <KpiCard
               label="Заказов"
@@ -245,7 +243,6 @@ export default function AnalyticsDashboardPage() {
               sparkData={sparkData.orders}
               sparkColor="hsl(var(--primary))"
               loading={loading}
-              hint={`Единиц: ${metrics.unitsSold}`}
             />
             <KpiCard
               label="Расходы"
@@ -254,7 +251,6 @@ export default function AnalyticsDashboardPage() {
               sparkData={sparkData.expenses}
               sparkColor="hsl(var(--state-danger-fg))"
               loading={loading}
-              hint={`Себестоимость · Ozon · Налог · Прочее`}
               invertDelta
             />
             <KpiCard
@@ -264,7 +260,7 @@ export default function AnalyticsDashboardPage() {
               sparkData={sparkData.profit}
               sparkColor="hsl(var(--state-success-fg))"
               loading={loading}
-              hint={`Маржа ${(metrics.margin * 100).toFixed(1)}%`}
+              hint={`Маржа ${(metrics.margin * 100).toFixed(0)}%`}
               emphasize
             />
           </div>
@@ -295,34 +291,30 @@ export default function AnalyticsDashboardPage() {
                 <Truck className="h-4 w-4 text-muted-foreground" />
                 Заказы и доставки
               </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                Считаем единицы товара (если в одном отправлении 3 футболки — это 3). Бар = дата создания заказа в Ozon, цвет = его текущий статус. Заказ от 23.05, который позже доставят 28.05, останется в баре 23.05 — просто перекрасится из «В процессе» в «Доставлено», когда статус обновится. Доля доставленных считается только среди финализированных (доставлен + отменён), «В процессе» исключены.
-              </span>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <FunnelTile
                   label="Всего товаров"
                   value={String(ordersStats.total)}
-                  hint={`${ordersStats.orders} отправлений`}
                   accent="default"
                 />
                 <FunnelTile
                   label="Доставлено"
                   value={String(ordersStats.delivered)}
-                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.delivered / ordersStats.total) * 100)}% от всех` : undefined}
+                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.delivered / ordersStats.total) * 100)}%` : undefined}
                   accent="success"
                 />
                 <FunnelTile
                   label="В процессе"
                   value={String(ordersStats.inflight)}
-                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.inflight / ordersStats.total) * 100)}% ещё в пути` : undefined}
+                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.inflight / ordersStats.total) * 100)}%` : undefined}
                   accent="info"
                 />
                 <FunnelTile
                   label="Отменено / невыкуп"
                   value={String(ordersStats.cancelled)}
-                  hint={`Доставлено ${Math.round(ordersStats.fulfillmentRate * 100)}% из завершённых`}
+                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.cancelled / ordersStats.total) * 100)}%` : undefined}
                   accent="danger"
                 />
               </div>
@@ -353,9 +345,6 @@ export default function AnalyticsDashboardPage() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Топ продуктов по чистой прибыли</CardTitle>
-                <span className="text-xs text-muted-foreground">
-                  Чистая = выручка − себестоимость − комиссия/услуги Ozon (прямо) − налог 6% и прочие расходы (пропорция от выручки)
-                </span>
               </CardHeader>
               <CardContent className="p-0">
                 {topProducts.length === 0 ? (
@@ -386,11 +375,18 @@ export default function AnalyticsDashboardPage() {
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{p.unitsSold}</TableCell>
                             <TableCell className="text-right tabular-nums">{formatMoney(p.revenue)}</TableCell>
-                            <TableCell className="text-right tabular-nums font-semibold" title={breakdownTitle}>
-                              <span className={p.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg"}>
+                            <TableCell className="relative w-24 tabular-nums" title={breakdownTitle}>
+                              <span
+                                className={cn(
+                                  "absolute right-2 top-1/2 -translate-y-1/2 font-semibold",
+                                  p.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg",
+                                )}
+                              >
                                 {formatMoney(p.netProfit)}
                               </span>
-                              <div className="text-[10px] text-muted-foreground">{(p.marginPct * 100).toFixed(0)}%</div>
+                              <span className="absolute right-2 top-[calc(50%+0.75rem)] text-[10px] text-muted-foreground">
+                                {(p.marginPct * 100).toFixed(0)}%
+                              </span>
                             </TableCell>
                           </TableRow>
                         );

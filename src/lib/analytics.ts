@@ -197,7 +197,7 @@ export function computePeriodMetrics(
   // них считать заказы неправильно.
   let ordersCount = 0;
   for (const o of orders) {
-    const dStr = o.in_process_at ?? o.created_at;
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
@@ -312,7 +312,7 @@ export function bucketize(
     expensesByKey.get(k)!.push(e);
   }
   for (const o of orders) {
-    const dStr = o.in_process_at ?? o.created_at;
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
@@ -378,7 +378,7 @@ export function bucketizeOrders(
     byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0, orders: 0 });
   }
   for (const o of orders) {
-    const dStr = o.in_process_at ?? o.created_at;
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
@@ -407,7 +407,7 @@ export interface OrdersSummary {
 export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): OrdersSummary {
   let total = 0, delivered = 0, cancelled = 0, inflight = 0, ordersCount = 0;
   for (const o of orders) {
-    const dStr = o.in_process_at ?? o.created_at;
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;

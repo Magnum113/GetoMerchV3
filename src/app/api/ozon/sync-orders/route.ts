@@ -34,20 +34,26 @@ interface OzonPosting {
   order_number?: string;
   status: string;
   substatus?: string;
+  created_at?: string;
   in_process_at?: string;
   shipment_date?: string;
   delivery_method?: { name?: string; warehouse?: string };
-  analytics_data?: { warehouse_name?: string; city?: string };
+  analytics_data?: { warehouse_name?: string; city?: string; delivery_type?: string };
   customer?: { name?: string };
   products: OzonProduct[];
+  source?: "fbs" | "fbo";
 }
 
 interface FbsListResponse {
   result?: { postings?: OzonPosting[]; has_next?: boolean };
 }
 
-// Полная история — /v3/posting/fbs/list. Тянет ВСЁ за период.
-async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
+interface FboListResponse {
+  result?: OzonPosting[];
+}
+
+// Полная история FBS — /v3/posting/fbs/list. Тянет ВСЁ за период.
+async function fetchAllFbsPostings(sinceDays: number): Promise<OzonPosting[]> {
   const since = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
@@ -63,8 +69,36 @@ async function fetchAllPostings(sinceDays: number): Promise<OzonPosting[]> {
       with: { analytics_data: true, financial_data: false },
     });
     const items = r.result?.postings ?? [];
-    all.push(...items);
+    all.push(...items.map((p) => ({ ...p, source: "fbs" as const })));
     if (!r.result?.has_next || items.length < limit) break;
+    offset += limit;
+    if (offset > 10000) break;
+  }
+  return all;
+}
+
+// Полная история FBO — /v2/posting/fbo/list. Нужна для общей воронки заказов:
+// финансы Ozon включают FBS + FBO, поэтому блок "Заказы и доставки" должен
+// считать обе схемы.
+async function fetchAllFboPostings(sinceDays: number): Promise<OzonPosting[]> {
+  const since = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
+  const to = new Date(Date.now() + 86400 * 1000).toISOString();
+  const all: OzonPosting[] = [];
+  let offset = 0;
+  const limit = 1000;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const r: FboListResponse = await ozonPost("/v2/posting/fbo/list", {
+      dir: "DESC",
+      filter: { since, to, status: "" },
+      limit,
+      offset,
+      translit: false,
+      with: { analytics_data: true, financial_data: false },
+    });
+    const items = r.result ?? [];
+    all.push(...items.map((p) => ({ ...p, source: "fbo" as const })));
+    if (items.length < limit) break;
     offset += limit;
     if (offset > 10000) break;
   }
@@ -95,7 +129,7 @@ async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
       },
     );
     const items = r.result?.postings ?? [];
-    all.push(...items);
+    all.push(...items.map((p) => ({ ...p, source: "fbs" as const })));
     if (items.length < limit) break;
     offset += limit;
     if (offset > 10000) break;
@@ -125,7 +159,9 @@ export async function POST(req: Request) {
     );
 
     // 1) Параллельно тянем Ozon + каталог
-    const fetcher = scope === "all" ? fetchAllPostings(days) : fetchUnfulfilledPostings();
+    const fetcher = scope === "all"
+      ? Promise.all([fetchAllFbsPostings(days), fetchAllFboPostings(days)]).then(([fbs, fbo]) => [...fbs, ...fbo])
+      : fetchUnfulfilledPostings();
     const [postings, { data: products }] = await Promise.all([
       fetcher,
       supabase.from("merch_products").select("id, sku, legacy_skus").not("sku", "is", null),
@@ -168,9 +204,10 @@ export async function POST(req: Request) {
         order_number: p.order_number ?? null,
         status: p.status,
         substatus: p.substatus ?? null,
+        ozon_created_at: p.created_at ?? null,
         in_process_at: p.in_process_at ?? null,
         shipment_date: p.shipment_date ?? null,
-        delivery_method: p.delivery_method?.name ?? null,
+        delivery_method: p.delivery_method?.name ?? p.analytics_data?.delivery_type ?? (p.source === "fbo" ? "FBO" : null),
         warehouse_name: p.analytics_data?.warehouse_name ?? p.delivery_method?.warehouse ?? null,
         customer_name: p.customer?.name ?? null,
         total_price: total || null,
