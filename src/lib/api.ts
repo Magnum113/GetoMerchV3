@@ -150,7 +150,7 @@ export const api = {
     if (error) throw toError(error);
   },
 
-  async updateProduct(id: string, patch: { sku?: string | null; cost_price?: number | null; sale_price?: number | null }) {
+  async updateProduct(id: string, patch: { sku?: string | null; cost_price?: number | null; sale_price?: number | null; design_id?: string | null }) {
     const sb = createClient();
     const { error } = await sb.from("merch_products").update(patch).eq("id", id);
     if (error) throw toError(error);

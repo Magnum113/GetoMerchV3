@@ -236,15 +236,43 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
   const [sku, setSku] = useState("");
   const [cost, setCost] = useState("");
   const [sale, setSale] = useState("");
+  const [designId, setDesignId] = useState<string>("");
+  const [designs, setDesigns] = useState<Design[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // Готовые SKU имеют дизайн — даём возможность поменять его на другой
+  // того же типа украшения (print → print, embroidery → embroidery).
+  const canChangeDesign = !!product && !product.is_blank && !!product.decoration_type;
+  const decorationSlug = product?.decoration_type?.slug;
+  const designType: DesignType | null =
+    decorationSlug === "print" ? "print" : decorationSlug === "embroidery" ? "embroidery" : null;
+  const filteredDesigns = useMemo(() => {
+    if (!designType) return designs;
+    return designs.filter((d) => d.type === designType);
+  }, [designs, designType]);
 
   useEffect(() => {
     if (product) {
       setSku(product.sku ?? "");
       setCost(product.cost_price?.toString() ?? "");
       setSale(product.sale_price?.toString() ?? "");
+      setDesignId(product.design_id ?? "");
     }
   }, [product]);
+
+  useEffect(() => {
+    if (!canChangeDesign || !designType) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.listDesigns({ type: designType });
+        if (!cancelled) setDesigns(d);
+      } catch (e) {
+        if (!cancelled) toast.error(errorMessage(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [canChangeDesign, designType]);
 
   if (!product) return null;
 
@@ -252,15 +280,27 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
     if (!product) return;
     setBusy(true);
     try {
-      await api.updateProduct(product.id, {
+      const patch: { sku: string | null; cost_price: number | null; sale_price: number | null; design_id?: string | null } = {
         sku: sku.trim() || null,
         cost_price: cost === "" ? null : parseFloat(cost),
         sale_price: sale === "" ? null : parseFloat(sale),
-      });
+      };
+      if (canChangeDesign && designId !== (product.design_id ?? "")) {
+        patch.design_id = designId || null;
+      }
+      await api.updateProduct(product.id, patch);
       toast.success("Сохранено");
       onDone();
       onClose();
-    } catch (e) { toast.error(errorMessage(e)); }
+    } catch (e) {
+      const msg = errorMessage(e);
+      // Дружелюбное сообщение, если уже есть SKU с такой же комбинацией
+      if (/duplicate|unique/i.test(msg)) {
+        toast.error("Такой SKU уже существует (та же комбинация цвет/размер/дизайн/тип украшения). Удалите дубликат или поменяйте другие поля.");
+      } else {
+        toast.error(msg);
+      }
+    }
     finally { setBusy(false); }
   }
 
@@ -280,6 +320,27 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
             <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="var2-Hoodie-Black-L" className="font-mono" />
             <div className="text-[11px] text-muted-foreground">Артикул должен быть уникальным. Можно использовать offer_id из Ozon.</div>
           </div>
+
+          {canChangeDesign && (
+            <div className="space-y-1.5">
+              <Label>Дизайн ({product.decoration_type?.name?.toLowerCase()})</Label>
+              <Select value={designId} onValueChange={setDesignId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выбрать дизайн" />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredDesigns.length === 0 ? (
+                    <div className="text-xs text-muted-foreground p-2">Нет дизайнов</div>
+                  ) : filteredDesigns.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-[11px] text-muted-foreground">
+                Показываются только дизайны с типом «{designType === "print" ? "принт" : "вышивка"}». Историю продаж и транзакций смена дизайна не затронет — изменится только описание SKU и автомэтчинг с Ozon.
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
