@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BarChart3, LineChart, PieChart, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, PieChart, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,7 +13,6 @@ import { ProductDisplay } from "@/components/product-display";
 import { ExpenseDonut } from "@/components/analytics/expense-donut";
 import { PeriodChart } from "@/components/analytics/period-chart";
 import { Sparkline } from "@/components/analytics/sparkline";
-import { WaterfallChart } from "@/components/analytics/waterfall-chart";
 import { api } from "@/lib/api";
 import {
   bucketize,
@@ -26,7 +25,6 @@ import {
   previousPeriod,
   suggestGranularity,
   topProductsByProfit,
-  waterfallSteps,
   type Granularity,
   type PeriodFilter,
 } from "@/lib/analytics";
@@ -128,7 +126,6 @@ export default function AnalyticsDashboardPage() {
     () => expenseBreakdown(metrics, expenses, categories, filter),
     [metrics, expenses, categories, filter],
   );
-  const steps = useMemo(() => waterfallSteps(metrics, breakdown), [metrics, breakdown]);
   const topProducts = useMemo(
     () => topProductsByProfit(ops, costIndex, filter, 8),
     [ops, costIndex, filter],
@@ -254,14 +251,11 @@ export default function AnalyticsDashboardPage() {
 
           {/* Динамика */}
           <Card className="mb-5">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
                 Динамика по {granularity === "day" ? "дням" : granularity === "week" ? "неделям" : "месяцам"}
               </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                Стек: расходы · Линия: чистая прибыль
-              </span>
             </CardHeader>
             <CardContent className="pt-1">
               {buckets.length > 0 ? (
@@ -269,28 +263,6 @@ export default function AnalyticsDashboardPage() {
               ) : (
                 <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
                   За период данных нет
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Waterfall */}
-          <Card className="mb-5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <LineChart className="h-4 w-4 text-muted-foreground" />
-                От выручки к чистой прибыли
-              </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                Каждый шаг — это вычет из выручки. Итоговая чистая прибыль справа.
-              </span>
-            </CardHeader>
-            <CardContent>
-              {metrics.revenue > 0 ? (
-                <WaterfallChart steps={steps} />
-              ) : (
-                <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
-                  Нет выручки за период
                 </div>
               )}
             </CardContent>

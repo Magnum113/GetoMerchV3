@@ -82,8 +82,10 @@ export function buildCostIndex(orders: OzonOrder[], skuMap?: Array<{ ozon_sku: s
 }
 
 // Resolve cost for a finance operation. Priority: exact posting match in our
-// orders → fallback to Ozon SKU lookup from items (qty assumed 1 since the
-// /v3/finance/transaction/list items lack quantity).
+// orders → fallback to Ozon SKU lookup from items. Ozon's
+// /v3/finance/transaction/list items only carry {sku, name} — no quantity —
+// so for a single-item op we infer qty from accruals_for_sale / sale_price
+// when possible (otherwise default to 1).
 function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | null {
   if (op.posting_number) {
     const c = cost.byPosting.get(op.posting_number);
@@ -91,9 +93,34 @@ function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | nu
   }
   const items = op.items ?? [];
   if (items.length === 0) return null;
+  const acc = Math.abs(Number(op.accruals_for_sale ?? 0));
   let totalCost = 0;
   let units = 0;
   const productUnits = new Map<string, number>();
+
+  // Single-item fallback: try to infer quantity from price.
+  if (items.length === 1 && items[0].sku != null) {
+    const product = cost.bySku.get(String(items[0].sku));
+    if (product) {
+      const sale = Number(product.sale_price ?? 0);
+      let qty = 1;
+      if (sale > 0 && acc > 0) {
+        const ratio = acc / sale;
+        // accept inference only when accruals are a near-integer multiple of sale_price
+        if (ratio >= 0.5 && Math.abs(ratio - Math.round(ratio)) < 0.15) {
+          qty = Math.max(1, Math.round(ratio));
+        }
+      }
+      const unitCost = Number(product.cost_price ?? 0);
+      return {
+        totalCost: unitCost * qty,
+        units: qty,
+        productUnits: new Map([[product.id, qty]]),
+      };
+    }
+  }
+
+  // Multi-item op: assume 1 per item entry (best we can do without qty data).
   for (const it of items) {
     if (it.sku == null) continue;
     const product = cost.bySku.get(String(it.sku));
@@ -442,25 +469,6 @@ export function topProductsByProfit(
   }
   out.sort((a, b) => b.profit - a.profit);
   return out.slice(0, limit);
-}
-
-export interface WaterfallStep {
-  key: string;
-  label: string;
-  amount: number;
-  kind: "start" | "subtract" | "end";
-  color: string;
-}
-
-export function waterfallSteps(metrics: PeriodMetrics, breakdown: ExpenseBreakdownEntry[]): WaterfallStep[] {
-  const steps: WaterfallStep[] = [];
-  steps.push({ key: "revenue", label: "Выручка", amount: metrics.revenue, kind: "start", color: "hsl(var(--state-success-fg))" });
-  // breakdown already includes "Возвраты", "Себестоимость", Ozon-* и категории прочих расходов
-  for (const b of breakdown) {
-    steps.push({ key: b.key, label: b.label, amount: -b.amount, kind: "subtract", color: b.color });
-  }
-  steps.push({ key: "net", label: "Чистая прибыль", amount: metrics.netProfit, kind: "end", color: metrics.netProfit >= 0 ? "hsl(var(--state-success-fg))" : "hsl(var(--state-danger-fg))" });
-  return steps;
 }
 
 // Build [from, to) given a preset key, with `to` being start of tomorrow (exclusive).
