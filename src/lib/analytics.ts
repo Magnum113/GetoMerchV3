@@ -139,6 +139,7 @@ export function computePeriodMetrics(
   expenses: Expense[],
   cost: CostIndex,
   filter: PeriodFilter,
+  orders: OzonOrder[] = [],
 ): PeriodMetrics {
   let revenue = 0;
   let returns = 0;
@@ -147,7 +148,6 @@ export function computePeriodMetrics(
   let cashFromOzon = 0;
   let cogs = 0;
   let unitsSold = 0;
-  const orderNumbers = new Set<string>();
 
   for (const op of ops) {
     const d = new Date(op.operation_date);
@@ -158,7 +158,6 @@ export function computePeriodMetrics(
     const acc = Number(op.accruals_for_sale ?? 0);
     if (acc > 0) {
       revenue += acc;
-      if (op.posting_number) orderNumbers.add(op.posting_number);
       const c = lookupCost(op, cost);
       if (c) {
         cogs += c.totalCost;
@@ -191,6 +190,18 @@ export function computePeriodMetrics(
     otherExpenses += Number(e.amount);
   }
 
+  // Заказы — по дате создания в Ozon (in_process_at). Это то, что пользователь
+  // видит в Ozon как «8 заказов за день». Финопы с продажами падают позже
+  // (когда заказ доставлен), поэтому через них считать заказы неправильно.
+  let ordersCount = 0;
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    ordersCount += 1;
+  }
+
   // Residual: everything Ozon withheld that's NOT explicit commission/services
   // (fines, return-handling fees, acquiring, subscriptions, packaging, etc.).
   // Derived so the waterfall balances cashFromOzon perfectly.
@@ -217,7 +228,7 @@ export function computePeriodMetrics(
     totalExpenses,
     netProfit,
     margin,
-    ordersCount: orderNumbers.size,
+    ordersCount,
     unitsSold: Math.max(0, unitsSold),
   };
 }
@@ -274,13 +285,15 @@ export function bucketize(
   cost: CostIndex,
   filter: PeriodFilter,
   gran: Granularity,
+  orders: OzonOrder[] = [],
 ): TimeBucket[] {
-  const keys = enumerateBuckets(filter, gran);
   const opsByKey = new Map<string, OzonFinanceOperation[]>();
   const expensesByKey = new Map<string, Expense[]>();
-  for (const k of keys) {
+  const ordersByKey = new Map<string, OzonOrder[]>();
+  for (const k of enumerateBuckets(filter, gran)) {
     opsByKey.set(k, []);
     expensesByKey.set(k, []);
+    ordersByKey.set(k, []);
   }
   for (const op of ops) {
     const d = new Date(op.operation_date);
@@ -296,6 +309,15 @@ export function bucketize(
     if (!expensesByKey.has(k)) expensesByKey.set(k, []);
     expensesByKey.get(k)!.push(e);
   }
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    const k = bucketKey(d, gran);
+    if (!ordersByKey.has(k)) ordersByKey.set(k, []);
+    ordersByKey.get(k)!.push(o);
+  }
   const out: TimeBucket[] = [];
   for (const k of Array.from(opsByKey.keys()).sort()) {
     const parts = k.split("-").map(Number);
@@ -309,6 +331,7 @@ export function bucketize(
       expensesByKey.get(k) ?? [],
       cost,
       { from: bucketStart, to: bucketEnd },
+      ordersByKey.get(k) ?? [],
     );
     out.push({ key: k, label: bucketLabel(k, gran), metrics: m });
   }
@@ -420,17 +443,26 @@ export interface ProductProfitEntry {
   unitsSold: number;
   revenue: number;
   cogs: number;
-  profit: number;
+  ozonFees: number;       // commission + services, прямая атрибуция по op
+  allocatedOverhead: number; // налог + «прочие удержания Ozon» + ручные расходы, пропорция от выручки
+  netProfit: number;      // revenue - cogs - ozonFees - allocatedOverhead
   marginPct: number;
 }
 
+// Per-SKU чистая прибыль с аллокацией всех расходов:
+// - Себестоимость — прямая (per unit × unit cost)
+// - Комиссия Ozon + услуги Ozon — прямая по каждой операции, распределяется
+//   между товарами заказа пропорционально количеству
+// - Налог УСН 6%, «Прочие удержания Ozon», ручные расходы — общие, поэтому
+//   распределяются пропорционально доле товара в общей выручке периода
 export function topProductsByProfit(
   ops: OzonFinanceOperation[],
   cost: CostIndex,
   filter: PeriodFilter,
+  overhead: { tax: number; ozonOther: number; otherExpenses: number; totalRevenue: number },
   limit = 10,
 ): ProductProfitEntry[] {
-  const stats = new Map<string, { units: number; revenue: number; cogs: number }>();
+  const stats = new Map<string, { units: number; revenue: number; cogs: number; ozonFees: number }>();
   for (const op of ops) {
     const d = new Date(op.operation_date);
     if (d < filter.from || d >= filter.to) continue;
@@ -443,31 +475,47 @@ export function topProductsByProfit(
     const totalUnits = c.units;
     if (totalUnits === 0) continue;
     const sign = acc > 0 ? 1 : -1;
+
+    // Расходы Ozon для этой операции (положительное число = вычет).
+    // При возврате (acc < 0) комиссия часто возвращается с положительным sale_commission —
+    // тогда opCommission < 0 (вычитаемое уменьшается). Это правильно: возврат
+    // отдаёт комиссию обратно.
+    const opCommission = -Number(op.sale_commission ?? 0);
+    let opServices = 0;
+    for (const s of op.services ?? []) opServices += -Number(s.price ?? 0);
+    const opFees = opCommission + opServices;
+
     for (const [pid, units] of c.productUnits) {
       const share = units / totalUnits;
-      const entry = stats.get(pid) ?? { units: 0, revenue: 0, cogs: 0 };
+      const entry = stats.get(pid) ?? { units: 0, revenue: 0, cogs: 0, ozonFees: 0 };
       entry.units += sign * units;
       entry.revenue += acc * share;
       const product = cost.productById.get(pid);
       const unitCost = Number(product?.cost_price ?? 0);
       entry.cogs += sign * unitCost * units;
+      entry.ozonFees += opFees * share;
       stats.set(pid, entry);
     }
   }
   const out: ProductProfitEntry[] = [];
+  const allOverhead = overhead.tax + overhead.ozonOther + overhead.otherExpenses;
   for (const [pid, s] of stats) {
-    const profit = s.revenue - s.cogs;
+    const revenueShare = overhead.totalRevenue > 0 ? s.revenue / overhead.totalRevenue : 0;
+    const allocatedOverhead = allOverhead * revenueShare;
+    const netProfit = s.revenue - s.cogs - s.ozonFees - allocatedOverhead;
     out.push({
       productId: pid,
       product: cost.productById.get(pid),
       unitsSold: s.units,
       revenue: s.revenue,
       cogs: s.cogs,
-      profit,
-      marginPct: s.revenue > 0 ? profit / s.revenue : 0,
+      ozonFees: s.ozonFees,
+      allocatedOverhead,
+      netProfit,
+      marginPct: s.revenue > 0 ? netProfit / s.revenue : 0,
     });
   }
-  out.sort((a, b) => b.profit - a.profit);
+  out.sort((a, b) => b.netProfit - a.netProfit);
   return out.slice(0, limit);
 }
 

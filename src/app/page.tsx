@@ -108,18 +108,18 @@ export default function AnalyticsDashboardPage() {
   const costIndex = useMemo(() => buildCostIndex(orders, skuMap), [orders, skuMap]);
 
   const metrics = useMemo(
-    () => computePeriodMetrics(ops, expenses, costIndex, filter),
-    [ops, expenses, costIndex, filter],
+    () => computePeriodMetrics(ops, expenses, costIndex, filter, orders),
+    [ops, expenses, costIndex, filter, orders],
   );
   const prevMetrics = useMemo(
-    () => computePeriodMetrics(ops, expenses, costIndex, prevFilter),
-    [ops, expenses, costIndex, prevFilter],
+    () => computePeriodMetrics(ops, expenses, costIndex, prevFilter, orders),
+    [ops, expenses, costIndex, prevFilter, orders],
   );
 
   const granularity: Granularity = gran === "auto" ? suggestGranularity(filter) : gran;
   const buckets = useMemo(
-    () => bucketize(ops, expenses, costIndex, filter, granularity),
-    [ops, expenses, costIndex, filter, granularity],
+    () => bucketize(ops, expenses, costIndex, filter, granularity, orders),
+    [ops, expenses, costIndex, filter, granularity, orders],
   );
 
   const breakdown = useMemo(
@@ -127,8 +127,20 @@ export default function AnalyticsDashboardPage() {
     [metrics, expenses, categories, filter],
   );
   const topProducts = useMemo(
-    () => topProductsByProfit(ops, costIndex, filter, 8),
-    [ops, costIndex, filter],
+    () =>
+      topProductsByProfit(
+        ops,
+        costIndex,
+        filter,
+        {
+          tax: metrics.tax,
+          ozonOther: metrics.ozonOther,
+          otherExpenses: metrics.otherExpenses,
+          totalRevenue: metrics.revenue,
+        },
+        8,
+      ),
+    [ops, costIndex, filter, metrics.tax, metrics.ozonOther, metrics.otherExpenses, metrics.revenue],
   );
 
   const sparkData = useMemo(() => {
@@ -284,9 +296,9 @@ export default function AnalyticsDashboardPage() {
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Топ продуктов по прибыли</CardTitle>
+                <CardTitle className="text-base">Топ продуктов по чистой прибыли</CardTitle>
                 <span className="text-xs text-muted-foreground">
-                  Прибыль = выручка − себестоимость (без аллокации комиссий и налога на SKU)
+                  Чистая = выручка − себестоимость − комиссия/услуги Ozon (прямо) − налог 6% и прочие расходы (пропорция от выручки)
                 </span>
               </CardHeader>
               <CardContent className="p-0">
@@ -297,27 +309,36 @@ export default function AnalyticsDashboardPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Товар</TableHead>
-                        <TableHead className="text-right w-16">Шт</TableHead>
-                        <TableHead className="text-right w-28">Выручка</TableHead>
-                        <TableHead className="text-right w-28">Прибыль</TableHead>
+                        <TableHead className="text-right w-12">Шт</TableHead>
+                        <TableHead className="text-right w-24">Выручка</TableHead>
+                        <TableHead className="text-right w-24">Чистая</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {topProducts.map((p) => (
-                        <TableRow key={p.productId}>
-                          <TableCell>
-                            <ProductDisplay p={p.product} compact />
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{p.unitsSold}</TableCell>
-                          <TableCell className="text-right tabular-nums">{formatMoney(p.revenue)}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">
-                            <span className={p.profit >= 0 ? "text-state-success-fg" : "text-state-danger-fg"}>
-                              {formatMoney(p.profit)}
-                            </span>
-                            <div className="text-[10px] text-muted-foreground">{(p.marginPct * 100).toFixed(0)}%</div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {topProducts.map((p) => {
+                        const totalDeductions = p.cogs + p.ozonFees + p.allocatedOverhead;
+                        const breakdownTitle =
+                          `Выручка ${formatMoney(p.revenue)}\n` +
+                          `− Себестоимость ${formatMoney(p.cogs)}\n` +
+                          `− Расходы Ozon ${formatMoney(p.ozonFees)}\n` +
+                          `− Налог + прочее ${formatMoney(p.allocatedOverhead)}\n` +
+                          `= Чистая ${formatMoney(p.netProfit)} (всего вычетов ${formatMoney(totalDeductions)})`;
+                        return (
+                          <TableRow key={p.productId}>
+                            <TableCell>
+                              <ProductDisplay p={p.product} compact />
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{p.unitsSold}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatMoney(p.revenue)}</TableCell>
+                            <TableCell className="text-right tabular-nums font-semibold" title={breakdownTitle}>
+                              <span className={p.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg"}>
+                                {formatMoney(p.netProfit)}
+                              </span>
+                              <div className="text-[10px] text-muted-foreground">{(p.marginPct * 100).toFixed(0)}%</div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
