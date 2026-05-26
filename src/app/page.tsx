@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BarChart3, PieChart, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, PieChart, RefreshCw, Sparkles, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -11,16 +11,19 @@ import { Pill } from "@/components/ui/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ProductDisplay } from "@/components/product-display";
 import { ExpenseDonut } from "@/components/analytics/expense-donut";
+import { OrdersChart } from "@/components/analytics/orders-chart";
 import { PeriodChart } from "@/components/analytics/period-chart";
 import { Sparkline } from "@/components/analytics/sparkline";
 import { api } from "@/lib/api";
 import {
   bucketize,
+  bucketizeOrders,
   buildCostIndex,
   computePeriodMetrics,
   delta,
   expenseBreakdown,
   formatDateRange,
+  ordersSummary,
   presetRange,
   previousPeriod,
   suggestGranularity,
@@ -126,6 +129,11 @@ export default function AnalyticsDashboardPage() {
     () => expenseBreakdown(metrics, expenses, categories, filter),
     [metrics, expenses, categories, filter],
   );
+  const ordersBuckets = useMemo(
+    () => bucketizeOrders(orders, filter, granularity),
+    [orders, filter, granularity],
+  );
+  const ordersStats = useMemo(() => ordersSummary(orders, filter), [orders, filter]);
   const topProducts = useMemo(
     () =>
       topProductsByProfit(
@@ -275,6 +283,49 @@ export default function AnalyticsDashboardPage() {
               ) : (
                 <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
                   За период данных нет
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Заказы: воронка доставки + динамика по дням */}
+          <Card className="mb-5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Truck className="h-4 w-4 text-muted-foreground" />
+                Заказы и доставки
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                Группируем по дате создания заказа в Ozon. Доля доставленных считается только среди финализированных (доставлен + отменён), «В процессе» исключены.
+              </span>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <FunnelTile label="Всего заказов" value={String(ordersStats.total)} accent="default" />
+                <FunnelTile
+                  label="Доставлено"
+                  value={String(ordersStats.delivered)}
+                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.delivered / ordersStats.total) * 100)}% от всех` : undefined}
+                  accent="success"
+                />
+                <FunnelTile
+                  label="В процессе"
+                  value={String(ordersStats.inflight)}
+                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.inflight / ordersStats.total) * 100)}% ещё в пути` : undefined}
+                  accent="info"
+                />
+                <FunnelTile
+                  label="Отменено / невыкуп"
+                  value={String(ordersStats.cancelled)}
+                  hint={`Доставлено ${Math.round(ordersStats.fulfillmentRate * 100)}% из завершённых`}
+                  accent="danger"
+                />
+              </div>
+              {ordersBuckets.length > 0 ? (
+                <OrdersChart buckets={ordersBuckets} />
+              ) : (
+                <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
+                  За период заказов нет
                 </div>
               )}
             </CardContent>
@@ -446,5 +497,40 @@ function KpiCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function FunnelTile({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent: "default" | "success" | "info" | "danger";
+}) {
+  const accentClass = {
+    default: "border-border",
+    success: "border-state-success-fg/40 bg-state-success/20",
+    info: "border-state-info-fg/40 bg-state-info/20",
+    danger: "border-state-danger-fg/40 bg-state-danger/20",
+  }[accent];
+  const dotClass = {
+    default: "bg-muted-foreground",
+    success: "bg-state-success-fg",
+    info: "bg-state-info-fg",
+    danger: "bg-state-danger-fg",
+  }[accent];
+  return (
+    <div className={cn("rounded-md border p-3", accentClass)}>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+        <span className={cn("h-1.5 w-1.5 rounded-full", dotClass)} />
+        {label}
+      </div>
+      <div className="text-2xl font-bold tabular-nums">{value}</div>
+      {hint && <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>}
+    </div>
   );
 }

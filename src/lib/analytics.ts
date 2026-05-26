@@ -338,6 +338,83 @@ export function bucketize(
   return out;
 }
 
+// Классификация статуса Ozon-заказа для воронки доставки.
+//  - delivered:   доставлен
+//  - cancelled:   отменён / не принят (выкуп не состоится)
+//  - inflight:    всё остальное — в работе у нас или в логистике
+export type OrderFunnelStage = "delivered" | "cancelled" | "inflight";
+
+export function classifyOrderStatus(status: string): OrderFunnelStage {
+  if (status === "delivered") return "delivered";
+  if (status === "cancelled" || status === "not_accepted") return "cancelled";
+  return "inflight";
+}
+
+export interface OrdersBucket {
+  key: string;
+  label: string;
+  total: number;
+  delivered: number;
+  cancelled: number;
+  inflight: number;
+}
+
+export function bucketizeOrders(
+  orders: OzonOrder[],
+  filter: PeriodFilter,
+  gran: Granularity,
+): OrdersBucket[] {
+  const byKey = new Map<string, OrdersBucket>();
+  for (const k of enumerateBuckets(filter, gran)) {
+    byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0 });
+  }
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    const k = bucketKey(d, gran);
+    if (!byKey.has(k)) byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0 });
+    const b = byKey.get(k)!;
+    b.total += 1;
+    b[classifyOrderStatus(o.status)] += 1;
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export interface OrdersSummary {
+  total: number;
+  delivered: number;
+  cancelled: number;
+  inflight: number;
+  // Доля доставленных среди финализированных заказов (доставлен + отменён).
+  // «В процессе» исключаем — про них пока ничего не известно.
+  fulfillmentRate: number;
+}
+
+export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): OrdersSummary {
+  let total = 0, delivered = 0, cancelled = 0, inflight = 0;
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    total += 1;
+    const cat = classifyOrderStatus(o.status);
+    if (cat === "delivered") delivered += 1;
+    else if (cat === "cancelled") cancelled += 1;
+    else inflight += 1;
+  }
+  const terminal = delivered + cancelled;
+  return {
+    total,
+    delivered,
+    cancelled,
+    inflight,
+    fulfillmentRate: terminal > 0 ? delivered / terminal : 0,
+  };
+}
+
 export interface PeriodDelta {
   abs: number;
   pct: number | null;

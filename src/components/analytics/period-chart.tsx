@@ -17,7 +17,6 @@ interface Row {
   other: number;
   returns: number;
   profit: number;
-  orders: number;
 }
 
 type SeriesKind = "bar" | "line";
@@ -27,22 +26,19 @@ interface SeriesDef {
   label: string;
   color: string;
   kind: SeriesKind;
-  axis: "left" | "right";
 }
 
 const SERIES: SeriesDef[] = [
-  { key: "cogs", label: "Себестоимость", color: BUILTIN_EXPENSE_COLORS.cogs, kind: "bar", axis: "left" },
-  { key: "ozonFees", label: "Расходы Ozon", color: BUILTIN_EXPENSE_COLORS.commission, kind: "bar", axis: "left" },
-  { key: "tax", label: "Налог 6%", color: BUILTIN_EXPENSE_COLORS.tax, kind: "bar", axis: "left" },
-  { key: "returns", label: "Возвраты", color: BUILTIN_EXPENSE_COLORS.returns, kind: "bar", axis: "left" },
-  { key: "other", label: "Прочие", color: "hsl(160 60% 45%)", kind: "bar", axis: "left" },
-  { key: "profit", label: "Чистая прибыль", color: "hsl(var(--foreground))", kind: "line", axis: "left" },
-  { key: "orders", label: "Заказы", color: "hsl(var(--state-info-fg))", kind: "line", axis: "right" },
+  { key: "cogs", label: "Себестоимость", color: BUILTIN_EXPENSE_COLORS.cogs, kind: "bar" },
+  { key: "ozonFees", label: "Расходы Ozon", color: BUILTIN_EXPENSE_COLORS.commission, kind: "bar" },
+  { key: "tax", label: "Налог 6%", color: BUILTIN_EXPENSE_COLORS.tax, kind: "bar" },
+  { key: "returns", label: "Возвраты", color: BUILTIN_EXPENSE_COLORS.returns, kind: "bar" },
+  { key: "other", label: "Прочие", color: "hsl(160 60% 45%)", kind: "bar" },
+  { key: "profit", label: "Чистая прибыль", color: "hsl(var(--foreground))", kind: "line" },
 ];
 
 export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; height?: number }) {
-  // По умолчанию "Заказы" выключены чтобы не загромождать; пользователь включит кликом.
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set(["orders"]));
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
 
   const rows: Row[] = buckets.map((b) => ({
     label: b.label,
@@ -53,7 +49,6 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
     other: round(b.metrics.otherExpenses),
     returns: round(b.metrics.returns),
     profit: round(b.metrics.netProfit),
-    orders: b.metrics.ordersCount,
   }));
 
   function toggle(key: string) {
@@ -64,30 +59,13 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
     });
   }
 
-  const visibleHasRight = SERIES.some((s) => s.axis === "right" && !hidden.has(s.key));
-
   return (
     <div className="space-y-3">
       <ChartContainer style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={rows} margin={{ top: 8, right: visibleHasRight ? 12 : 8, left: 8, bottom: 4 }}>
+          <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 4 }}>
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis
-              yAxisId="left"
-              tickFormatter={(v) => formatTick(v)}
-              tickLine={false}
-              axisLine={false}
-              width={64}
-            />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tickLine={false}
-              axisLine={false}
-              width={visibleHasRight ? 36 : 0}
-              allowDecimals={false}
-              hide={!visibleHasRight}
-            />
+            <YAxis tickFormatter={(v) => formatTick(v)} tickLine={false} axisLine={false} width={64} />
             <Tooltip
               cursor={{ fill: "hsl(var(--muted) / 0.4)" }}
               content={({ active, payload, label }) => {
@@ -98,15 +76,12 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
                     title={label}
                     rows={[
                       { key: "revenue", label: "Выручка", value: formatMoney(r.revenue) },
-                      ...SERIES.filter((s) => !hidden.has(s.key) && s.key !== "profit" && s.key !== "orders").map((s) => ({
+                      ...SERIES.filter((s) => !hidden.has(s.key) && s.key !== "profit").map((s) => ({
                         key: s.key,
                         label: s.label,
                         value: formatMoney(r[s.key] as number),
                         color: s.color,
                       })),
-                      ...(!hidden.has("orders")
-                        ? [{ key: "orders", label: "Заказов", value: String(r.orders), color: "hsl(var(--state-info-fg))" }]
-                        : []),
                       { key: "profit", label: "Чистая прибыль", value: formatMoney(r.profit), emphasized: true, color: "hsl(var(--state-success-fg))" },
                     ]}
                   />
@@ -116,7 +91,6 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
             {SERIES.filter((s) => s.kind === "bar").map((s) => (
               <Bar
                 key={s.key}
-                yAxisId={s.axis}
                 dataKey={s.key}
                 stackId="exp"
                 name={s.label}
@@ -128,13 +102,11 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
             {SERIES.filter((s) => s.kind === "line").map((s) => (
               <Line
                 key={s.key}
-                yAxisId={s.axis}
                 type="monotone"
                 dataKey={s.key}
                 name={s.label}
                 stroke={s.color}
                 strokeWidth={2}
-                strokeDasharray={s.key === "orders" ? "4 3" : undefined}
                 dot={{ r: 3, fill: "hsl(var(--background))", stroke: s.color, strokeWidth: 2 }}
                 hide={hidden.has(s.key)}
                 isAnimationActive={false}
@@ -160,14 +132,7 @@ export function PeriodChart({ buckets, height = 340 }: { buckets: TimeBucket[]; 
               title={off ? "Показать" : "Скрыть"}
             >
               {s.kind === "line" ? (
-                <span
-                  className="h-0.5 w-3.5 rounded-sm shrink-0"
-                  style={{
-                    background: s.color,
-                    borderTop: s.key === "orders" ? `2px dashed ${s.color}` : undefined,
-                    height: s.key === "orders" ? 0 : 2,
-                  }}
-                />
+                <span className="h-0.5 w-3.5 rounded-sm shrink-0" style={{ background: s.color, height: 2 }} />
               ) : (
                 <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: s.color }} />
               )}
