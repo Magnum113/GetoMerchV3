@@ -15,6 +15,11 @@
 - Вышивка, которую делает внешний цех → готовое изделие
 - Заказы с Ozon (FBS) подтягиваются автоматически, отправка одной кнопкой
   списывает товар со склада
+- Аналитический дашборд на `/` — выручка, расходы (включая комиссии Ozon из
+  Finance API, налог УСН 6%, прочие удержания), чистая прибыль с разбивкой
+  по периоду и топ продуктов
+- Раздел `/expenses` для ручных расходов вне Ozon (аренда, зарплаты,
+  маркетинг и т.п.) с пользовательскими категориями
 
 Пользователь — один (владелец бизнеса). Многопользовательской системы и ролей нет.
 
@@ -29,6 +34,7 @@
 | Стили | **Tailwind CSS** | 3.4 | Никакого CSS-in-JS, никаких отдельных `.css` файлов кроме `globals.css` |
 | Компоненты | **shadcn/ui** (Radix Primitives + CVA) | — | Лежат в `src/components/ui/*`, не из npm — модифицируем напрямую |
 | Иконки | **lucide-react** | — | Других иконок не добавлять |
+| Графики | **recharts** | 2.x | Для аналитики (`PeriodChart`, `ExpenseDonut`, `Sparkline`). Обёрнуты тонким `ChartContainer`/`ChartTooltipCard` в `components/ui/chart.tsx` для подхвата CSS-переменных темы |
 | Тосты | **sonner** | — | Везде `toast.success/error(...)`, не `alert()` |
 | Формы | **react-hook-form** + **zod** | — | Установлены, но в текущих диалогах не используются — для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией) — берём RHF + Zod |
 | БД | **Supabase Postgres** | — | RLS включён везде, политика `for all using (true)` (одно-пользовательский режим) |
@@ -45,26 +51,35 @@
 src/
   app/                      # Next.js App Router
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
-    inventory/              # /inventory — главная страница
+      sync-prices/          # POST → /v5/product/info/prices
+      sync-orders/          # POST → /v3/posting/fbs/list (FBS only)
+      sync-finance/         # POST → /v3/finance/transaction/list (ВСЕ операции)
+    inventory/              # /inventory — остатки по складам (матрицы)
     orders/                 # /orders — заказы Ozon
     products/               # /products — каталог SKU
     workshop/               # /workshop — заказы в цех вышивки
     transactions/           # /transactions — журнал движений
     designs/                # /designs — каталог дизайнов
+    expenses/               # /expenses — ручные расходы и их категории
     settings/               # /settings — справочники (склады, цвета, размеры)
-    page.tsx                # / — дашборд (KPI и сводка)
+    page.tsx                # / — аналитический дашборд (KPI, динамика, donut, топ)
     layout.tsx              # общий layout с Sidebar
   components/
-    ui/                     # shadcn-компоненты (Button, Card, Dialog, ...)
+    ui/                     # shadcn-компоненты (Button, Card, Dialog, ..., chart)
+    analytics/              # компоненты дашборда (period-chart, expense-donut,
+                            #   sparkline, expense-dialog, categories-dialog)
     sidebar.tsx             # навигация
     inventory-actions.tsx   # диалоги Приёмка/Перемещение/Производство/Продажа
-    inventory-dashboard.tsx # дашборд остатков (матрицы, дефицит, KPI)
+    inventory-dashboard.tsx # дашборд остатков (матрицы, дефицит, KPI) — на /inventory
     print-inventory-actions.tsx  # диалоги для принтов
     product-display.tsx     # унифицированный вывод названия SKU
     product-picker.tsx      # выбор SKU через каскад селектов
     warehouse-select.tsx    # селект склада (с filterType="own"|"workshop")
   lib/
     api.ts                  # ВСЕ обращения к БД из клиента — здесь
+    analytics.ts            # чистые функции расчёта метрик дашборда
+                            #   (computePeriodMetrics, bucketize,
+                            #   expenseBreakdown, topProductsByProfit, lookupCost)
     types.ts                # типы доменных сущностей и константы лейблов
     utils.ts                # cn, formatDate, formatMoney, toError
     supabase/{client,server}.ts
@@ -92,7 +107,10 @@ supabase/
 | `merch_print_inventory` | Остатки готовых принтов `(design_id, warehouse_id) → quantity` |
 | `merch_transactions` | Журнал любых движений товара или принта. `product_id` и `design_id` оба nullable, но обязательно одно из двух. Поле `type` ∈ {`receive`, `transfer`, `sale`, `production`, `adjustment`, `writeoff`} |
 | `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `sent → ready → received` (плюс терминальный `cancelled`). Колонка `merch_ozon_orders.workshop_order_id` указывает на заказ в цех, созданный из заказа Ozon |
-| `merch_ozon_orders` / `_items` | Зеркало отправлений FBS из Ozon. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) — связь с заказом в цех, если для отгрузки требуется производство вышивки |
+| `merch_ozon_orders` / `_items` | Зеркало отправлений FBS из Ozon. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) — связь с заказом в цех, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting (FBO) |
+| `merch_ozon_finance_operations` | Зеркало `/v3/finance/transaction/list`. UNIQUE по `operation_id`. Поля: `operation_type` (например `OperationAgentDeliveredToCustomer`, `ClientReturnAgentOperation`, `DefectFineShipmentDelay`), `operation_type_name`, `operation_date`, `posting_number` (nullable — у штрафов/подписок его нет), `accruals_for_sale` (положительная для продажи, отрицательная для возврата), `sale_commission` (отрицательная для удержания, положительная для возврата комиссии), `amount` (нетто-движение по счёту), `services` (jsonb массив `{name, price}`), `items` (jsonb — только `{sku, name}`, без quantity), `raw` (полный ответ Ozon на всякий случай) |
+| `merch_expense_categories` | Пользовательские категории ручных расходов: `name`, `color` (hex для donut), `sort_order`, `archived` |
+| `merch_expenses` | Ручные расходы вне Ozon. `amount > 0`, `occurred_at date`, `category_id` (`ON DELETE SET NULL`). Используются в дашборде в категории «Прочие расходы» и в собственных категориях donut |
 
 ### 4.2. Бизнес-правила (НЕ нарушать)
 
@@ -185,23 +203,70 @@ supabase/
     цехе), затем вызывает `shipOzonOrder` (отгрузка готового из цеха через
     штатный приоритет складов).
 
+#### Аналитика и финансы
+
+15a. **Чистая прибыль = `cashFromOzon − COGS − налог − прочие_расходы`.**
+    `cashFromOzon` = сумма `amount` всех финопов за период (уже с учётом
+    удержанных комиссий, штрафов, возвратов). COGS считаем по проданным
+    позициям. Налог = 6% от `max(0, cashFromOzon)`. Прочие расходы =
+    `merch_expenses` за период. Формула живёт в `computePeriodMetrics`
+    (`lib/analytics.ts`) — менять только там.
+
+15b. **Все расходы для разбивки (донат, KPI «Расходы») = `revenue −
+    netProfit`, чтобы «Выручка − Расходы = Прибыль» сходилось.**
+    Сумма всех записей `expenseBreakdown` (включая `Возвраты покупателей`,
+    `Себестоимость`, `Комиссия Ozon`, `Логистика и услуги Ozon`,
+    `Прочие удержания Ozon` (residual), `Налог УСН 6%` и пользовательские
+    категории) обязана быть равна `metrics.totalExpenses`. Если добавляете
+    новую линию расхода — добавляйте её и в `totalExpenses`, и в
+    `expenseBreakdown` синхронно, иначе KPI разойдутся.
+
+15c. **«Прочие удержания Ozon» — это residual, не сумма штрафов руками.**
+    Считается как `revenue − returns − cashFromOzon − ozonCommission −
+    ozonServices`. Туда попадают `OperationReturnGoodsFBSofRMS`,
+    `DefectFineShipmentDelay`, `MarketplaceRedistributionOfAcquiringOperation`,
+    `OperationSubscriptionPremium`, упаковка и т.п. Не пытайтесь перечислить
+    их явно — Ozon регулярно добавляет новые `operation_type`.
+
+15d. **COGS на финопе ищется в два шага: posting → SKU-fallback.**
+    `lookupCost(op, costIndex)`:
+    1. Если `op.posting_number` есть в `merch_ozon_orders` — берём готовый
+       `byPosting` с точным quantity.
+    2. Иначе (FBO, очень старые заказы) — fallback через `costIndex.bySku`
+       по `op.items[].sku`. Quantity для одно-товарного финопа выводим как
+       `round(accruals_for_sale / sale_price)` (только если отношение
+       близко к целому — допуск 15%). Для много-товарных финопов default
+       qty=1 на каждую запись items. Это аппроксимация, см. раздел 11.
+
 #### Целостность данных
 
-15. **FK при удалении товара (`merch_products`):**
+16. **FK при удалении товара (`merch_products`):**
     - `merch_transactions.product_id` / `source_product_id` → `ON DELETE SET NULL` (сохраняем историю)
     - `merch_inventory.product_id` → `ON DELETE CASCADE` (без товара нет складской карточки)
     - `merch_workshop_order_items.blank_product_id` / `result_product_id` → `ON DELETE SET NULL`
     - `merch_ozon_order_items.product_id` → `ON DELETE SET NULL`
 
-16. **Транзакции не редактируются и не удаляются вручную.** Хочешь откатить —
+17. **FK при удалении дизайна (`merch_designs`):**
+    - `merch_products.design_id` → `ON DELETE CASCADE` (готовый SKU без дизайна не имеет смысла — каскадно убьёт `merch_inventory`, история транзакций сохранится через `SET NULL` на `product_id`)
+    - `merch_workshop_order_items.design_id` → `ON DELETE SET NULL` (заказ в цех остаётся как историческая запись)
+    - `merch_print_inventory.design_id` → `ON DELETE CASCADE` (без дизайна нет принт-стока)
+    - `merch_transactions.design_id` / `source_design_id` → `ON DELETE SET NULL`
+
+18. **Транзакции не редактируются и не удаляются вручную.** Хочешь откатить —
     создавай корректирующую транзакцию (`adjustment`).
 
-17. **В `merch_transactions` `product_id` и `design_id` оба nullable, без check
+19. **В `merch_transactions` `product_id` и `design_id` оба nullable, без check
     `OR NOT NULL`.** На INSERT прикладной код гарантирует, что одно из двух
     заполнено. CHECK-констрейнт был раньше, но конфликтовал с `ON DELETE SET NULL`
     при удалении товара (см. миграцию `202605241500_drop_tx_subject_check.sql`).
     Не возвращайте его обратно — выберите триггер `BEFORE INSERT` или валидацию
     в коде, если хотите формальную гарантию.
+
+20. **`merch_ozon_finance_operations` — append-only, дедуп по `operation_id`.**
+    Перед upsert обязательно дедуплицировать партию (Ozon на границах
+    месячных окон возвращает одну и ту же операцию дважды, иначе словите
+    `21000 ON CONFLICT DO UPDATE command cannot affect row a second time`).
+    См. `/api/ozon/sync-finance/route.ts`.
 
 ---
 
@@ -247,9 +312,14 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к O
 дорабатываем напрямую. Если нужного компонента нет — добавляем через CLI
 `npx shadcn add <name>` (он положит файл в ту же папку).
 
-Текущий набор: `badge`, `button`, `card`, `dialog`, `empty-state`, `input`,
-`label`, `page-header`, `pill`, `select`, `separator`, `sonner`, `table`, `tabs`,
-`textarea`.
+Текущий набор: `badge`, `button`, `card`, `chart`, `dialog`, `empty-state`,
+`input`, `label`, `page-header`, `pill`, `select`, `separator`, `sonner`,
+`table`, `tabs`, `textarea`.
+
+`chart.tsx` — тонкая собственная обёртка над Recharts (`ChartContainer`,
+`ChartTooltipCard`). НЕ из шадcn-каталога — добавляли вручную, чтобы
+ось/легенда/тултип брали цвета из наших CSS-переменных и хорошо
+выглядели в тёмной теме. Не перезаписывайте через `npx shadcn add chart`.
 
 Особо отметить:
 - **`Pill`** — компактная toggle-кнопка для inline-фильтров и сегмент-контролов.
@@ -408,14 +478,24 @@ UI — на русском (целевой пользователь говори
 - Используемые методы:
   - `POST /v5/product/info/prices` — синхронизация цен (`/api/ozon/sync-prices`)
   - `POST /v3/posting/fbs/list` — синхронизация заказов FBS (`/api/ozon/sync-orders`)
-- Матчинг с каталогом: по `offer_id ↔ merch_products.sku` (или одному из `legacy_skus`)
+  - `POST /v3/finance/transaction/list` — синхронизация всех финансовых
+    операций для аналитики (`/api/ozon/sync-finance`). Ограничение Ozon:
+    максимум 1 месяц на запрос → ходим 28-дневными окнами, идемпотентный
+    upsert по `operation_id` после дедупликации внутри партии
+- Матчинг с каталогом:
+  - Заказы FBS: `offer_id ↔ merch_products.sku` (или одному из `legacy_skus`)
+  - Финопы: сначала `posting_number ↔ merch_ozon_orders.posting_number`,
+    иначе по `items[].sku ↔ merch_ozon_order_items.ozon_sku` (нужно для FBO,
+    которые в `/fbs/list` не возвращаются)
 - Запросы только с сервера. С клиента — через `fetch('/api/ozon/...')`
+- Кнопка «Обновить данные Ozon» в дашборде запускает sync-orders (180 дней,
+  `scope=all`) + sync-finance параллельно
 
 ### 10.2. Что НЕ интегрировано (на будущее)
 
 - Push/email-уведомления о новых заказах
 - Двусторонняя синхронизация остатков (мы только тянем, не отдаём)
-- Аналитика, WB, Yandex.Market
+- WB, Yandex.Market
 
 ---
 
@@ -435,6 +515,15 @@ UI — на русском (целевой пользователь говори
   конкурентных вызовах с одинаковым комбо может быть race и UNIQUE violation
   на `sku`. В bulk-форме каждая ячейка уникальна (разный размер), но в общем
   случае стоит вынести в Postgres RPC
+- COGS-фолбэк по Ozon SKU аппроксимирует quantity (см. правило 15d). Для
+  одно-товарных финопов точность ~100% (когда `sale_price` заполнен и без
+  скидок), для много-товарных FBO-заказов недооценивает qty (каждая строка
+  items = 1 шт), а значит и недосчитывает себестоимость. Чтобы убрать
+  погрешность — нужно подтянуть FBO-заказы отдельным синком
+  (`/v2/posting/fbo/list`) и положить их рядом с FBS в `merch_ozon_orders`
+- `merch_expenses` без soft-delete. Удаление — навсегда. Если важна
+  отчётность за прошлые периоды — лучше архивировать категорию
+  (`archived=true`) вместо удаления записей
 
 ---
 
@@ -451,3 +540,6 @@ UI — на русском (целевой пользователь говори
 - [ ] Дефолты формы выставлены под самый частый случай
 - [ ] Тёмная тема: каждый цветной бейдж имеет `dark:` версию
 - [ ] В журнал транзакций пишется запись на любое движение остатков
+- [ ] Если добавил расходную линию в `computePeriodMetrics` —
+      синхронно отразил её в `expenseBreakdown` и `totalExpenses`
+      (иначе KPI «Расходы» разойдётся с суммой donut)
