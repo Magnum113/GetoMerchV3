@@ -21,6 +21,7 @@ export interface PeriodMetrics {
   netRevenue: number;
   ozonCommission: number;
   ozonServices: number;
+  ozonOther: number;
   ozonFeesTotal: number;
   cashFromOzon: number;
   cogs: number;
@@ -41,12 +42,14 @@ export interface PostingCost {
 
 export interface CostIndex {
   byPosting: Map<string, PostingCost>;
+  bySku: Map<string, Product>;
   productById: Map<string, Product>;
 }
 
-export function buildCostIndex(orders: OzonOrder[]): CostIndex {
+export function buildCostIndex(orders: OzonOrder[], skuMap?: Array<{ ozon_sku: string; product: Product }>): CostIndex {
   const byPosting = new Map<string, PostingCost>();
   const productById = new Map<string, Product>();
+  const bySku = new Map<string, Product>();
   for (const o of orders) {
     if (!o.posting_number) continue;
     let totalCost = 0;
@@ -60,10 +63,48 @@ export function buildCostIndex(orders: OzonOrder[]): CostIndex {
         productUnits.set(it.product_id, (productUnits.get(it.product_id) ?? 0) + it.quantity);
         if (it.product) productById.set(it.product_id, it.product);
       }
+      // Build SKU map from order items as we go — covers most of catalog cheaply.
+      if (it.ozon_sku && it.product) {
+        bySku.set(String(it.ozon_sku), it.product);
+        productById.set(it.product.id, it.product);
+      }
     }
     byPosting.set(o.posting_number, { totalCost, units, productUnits });
   }
-  return { byPosting, productById };
+  // Allow explicit override / addition (e.g. snapshot directly queried)
+  for (const entry of skuMap ?? []) {
+    if (entry.ozon_sku && entry.product) {
+      bySku.set(String(entry.ozon_sku), entry.product);
+      productById.set(entry.product.id, entry.product);
+    }
+  }
+  return { byPosting, bySku, productById };
+}
+
+// Resolve cost for a finance operation. Priority: exact posting match in our
+// orders → fallback to Ozon SKU lookup from items (qty assumed 1 since the
+// /v3/finance/transaction/list items lack quantity).
+function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | null {
+  if (op.posting_number) {
+    const c = cost.byPosting.get(op.posting_number);
+    if (c) return c;
+  }
+  const items = op.items ?? [];
+  if (items.length === 0) return null;
+  let totalCost = 0;
+  let units = 0;
+  const productUnits = new Map<string, number>();
+  for (const it of items) {
+    if (it.sku == null) continue;
+    const product = cost.bySku.get(String(it.sku));
+    if (!product) continue;
+    const c = Number(product.cost_price ?? 0);
+    totalCost += c;
+    units += 1;
+    productUnits.set(product.id, (productUnits.get(product.id) ?? 0) + 1);
+  }
+  if (units === 0) return null;
+  return { totalCost, units, productUnits };
 }
 
 export function computePeriodMetrics(
@@ -90,22 +131,18 @@ export function computePeriodMetrics(
     const acc = Number(op.accruals_for_sale ?? 0);
     if (acc > 0) {
       revenue += acc;
-      if (op.posting_number) {
-        orderNumbers.add(op.posting_number);
-        const c = cost.byPosting.get(op.posting_number);
-        if (c) {
-          cogs += c.totalCost;
-          unitsSold += c.units;
-        }
+      if (op.posting_number) orderNumbers.add(op.posting_number);
+      const c = lookupCost(op, cost);
+      if (c) {
+        cogs += c.totalCost;
+        unitsSold += c.units;
       }
     } else if (acc < 0) {
       returns += -acc;
-      if (op.posting_number) {
-        const c = cost.byPosting.get(op.posting_number);
-        if (c) {
-          cogs -= c.totalCost;
-          unitsSold -= c.units;
-        }
+      const c = lookupCost(op, cost);
+      if (c) {
+        cogs -= c.totalCost;
+        unitsSold -= c.units;
       }
     }
 
@@ -127,8 +164,14 @@ export function computePeriodMetrics(
     otherExpenses += Number(e.amount);
   }
 
+  // Residual: everything Ozon withheld that's NOT explicit commission/services
+  // (fines, return-handling fees, acquiring, subscriptions, packaging, etc.).
+  // Derived so the waterfall balances cashFromOzon perfectly.
+  const ozonOther = Math.max(0, revenue - returns - cashFromOzon - ozonCommission - ozonServices);
   const tax = Math.max(0, cashFromOzon) * TAX_RATE;
-  const totalExpenses = cogs + ozonCommission + ozonServices + tax + otherExpenses;
+  // Returns reduce profit just like an expense → include them in totalExpenses
+  // so the "Выручка − Расходы = Прибыль" mental model holds in KPIs and donut.
+  const totalExpenses = returns + cogs + ozonCommission + ozonServices + ozonOther + tax + otherExpenses;
   const netProfit = cashFromOzon - cogs - tax - otherExpenses;
   const margin = revenue > 0 ? netProfit / revenue : 0;
 
@@ -138,7 +181,8 @@ export function computePeriodMetrics(
     netRevenue: revenue - returns,
     ozonCommission,
     ozonServices,
-    ozonFeesTotal: ozonCommission + ozonServices,
+    ozonOther,
+    ozonFeesTotal: ozonCommission + ozonServices + ozonOther,
     cashFromOzon,
     cogs,
     tax,
@@ -276,6 +320,8 @@ export const BUILTIN_EXPENSE_COLORS = {
   cogs: "hsl(220 70% 50%)",
   commission: "hsl(340 75% 55%)",
   services: "hsl(280 65% 60%)",
+  ozonOther: "hsl(200 50% 45%)",
+  returns: "hsl(0 65% 50%)",
   tax: "hsl(30 90% 55%)",
 } as const;
 
@@ -297,6 +343,9 @@ export function expenseBreakdown(
   filter: PeriodFilter,
 ): ExpenseBreakdownEntry[] {
   const entries: ExpenseBreakdownEntry[] = [];
+  if (metrics.returns > 0) {
+    entries.push({ key: "returns", label: "Возвраты покупателей", color: BUILTIN_EXPENSE_COLORS.returns, amount: metrics.returns, pct: 0 });
+  }
   if (metrics.cogs > 0) {
     entries.push({ key: "cogs", label: "Себестоимость", color: BUILTIN_EXPENSE_COLORS.cogs, amount: metrics.cogs, pct: 0 });
   }
@@ -305,6 +354,9 @@ export function expenseBreakdown(
   }
   if (metrics.ozonServices > 0) {
     entries.push({ key: "services", label: "Логистика и услуги Ozon", color: BUILTIN_EXPENSE_COLORS.services, amount: metrics.ozonServices, pct: 0 });
+  }
+  if (metrics.ozonOther > 0) {
+    entries.push({ key: "ozonOther", label: "Прочие удержания Ozon (штрафы, возвраты, эквайринг)", color: BUILTIN_EXPENSE_COLORS.ozonOther, amount: metrics.ozonOther, pct: 0 });
   }
   if (metrics.tax > 0) {
     entries.push({ key: "tax", label: "Налог УСН 6%", color: BUILTIN_EXPENSE_COLORS.tax, amount: metrics.tax, pct: 0 });
@@ -359,8 +411,7 @@ export function topProductsByProfit(
     // Only "sale" or "return" operations represent product flow.
     // Fees/fines/acquiring with the same posting_number must not move COGS.
     if (acc === 0) continue;
-    if (!op.posting_number) continue;
-    const c = cost.byPosting.get(op.posting_number);
+    const c = lookupCost(op, cost);
     if (!c) continue;
     const totalUnits = c.units;
     if (totalUnits === 0) continue;
@@ -404,9 +455,7 @@ export interface WaterfallStep {
 export function waterfallSteps(metrics: PeriodMetrics, breakdown: ExpenseBreakdownEntry[]): WaterfallStep[] {
   const steps: WaterfallStep[] = [];
   steps.push({ key: "revenue", label: "Выручка", amount: metrics.revenue, kind: "start", color: "hsl(var(--state-success-fg))" });
-  if (metrics.returns > 0) {
-    steps.push({ key: "returns", label: "Возвраты", amount: -metrics.returns, kind: "subtract", color: "hsl(var(--state-danger-fg))" });
-  }
+  // breakdown already includes "Возвраты", "Себестоимость", Ozon-* и категории прочих расходов
   for (const b of breakdown) {
     steps.push({ key: b.key, label: b.label, amount: -b.amount, kind: "subtract", color: b.color });
   }

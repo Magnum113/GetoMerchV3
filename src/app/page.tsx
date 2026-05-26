@@ -30,7 +30,7 @@ import {
   type Granularity,
   type PeriodFilter,
 } from "@/lib/analytics";
-import type { Expense, ExpenseCategory, OzonFinanceOperation, OzonOrder } from "@/lib/types";
+import type { Expense, ExpenseCategory, OzonFinanceOperation, OzonOrder, Product } from "@/lib/types";
 import { cn, errorMessage, formatMoney } from "@/lib/utils";
 
 type PresetKey = "7d" | "30d" | "90d" | "mtd" | "ytd";
@@ -49,6 +49,7 @@ export default function AnalyticsDashboardPage() {
   const [ops, setOps] = useState<OzonFinanceOperation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [skuMap, setSkuMap] = useState<Array<{ ozon_sku: string; product: Product }>>([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -60,18 +61,20 @@ export default function AnalyticsDashboardPage() {
   async function reload() {
     setLoading(true);
     try {
-      const [ord, opsAll, exp, cats, sync] = await Promise.all([
+      const [ord, opsAll, exp, cats, sync, sku] = await Promise.all([
         api.listOzonOrders(),
         api.listFinanceOperations(),
         api.listExpenses(),
         api.listExpenseCategories(),
         api.lastFinanceSyncAt(),
+        api.listOzonSkuProductMap(),
       ]);
       setOrders(ord);
       setOps(opsAll);
       setExpenses(exp);
       setCategories(cats);
       setLastSync(sync);
+      setSkuMap(sku);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -86,8 +89,16 @@ export default function AnalyticsDashboardPage() {
   async function sync() {
     setSyncing(true);
     try {
-      const r = await api.syncOzonFinance();
-      toast.success(`Получено операций: ${r.fetched} (новых ${r.created}, обновлено ${r.updated})`);
+      // 1) Дотягиваем заказы за 180 дней, чтобы COGS считалась по максимуму свежей карточки заказа
+      // 2) Тянем все финансовые операции за год
+      const [ordRes, finRes] = await Promise.all([
+        api.syncOzonOrders({ scope: "all", days: 180 }).catch((e) => ({ error: errorMessage(e) })),
+        api.syncOzonFinance(),
+      ]);
+      const ordMsg = "error" in ordRes
+        ? `Заказы: ошибка (${ordRes.error})`
+        : `Заказы: +${ordRes.created} / обн. ${ordRes.updated}`;
+      toast.success(`Финансы: +${finRes.created} / обн. ${finRes.updated}. ${ordMsg}`);
       await reload();
     } catch (e) {
       toast.error(errorMessage(e));
@@ -96,7 +107,7 @@ export default function AnalyticsDashboardPage() {
     }
   }
 
-  const costIndex = useMemo(() => buildCostIndex(orders), [orders]);
+  const costIndex = useMemo(() => buildCostIndex(orders, skuMap), [orders, skuMap]);
 
   const metrics = useMemo(
     () => computePeriodMetrics(ops, expenses, costIndex, filter),

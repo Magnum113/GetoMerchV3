@@ -938,6 +938,27 @@ export const api = {
     return ((data ?? []) as unknown) as OzonFinanceOperation[];
   },
 
+  // Все пары (ozon_sku, product) для COGS-фолбэка по items финопов,
+  // когда posting_number не сматчился с merch_ozon_orders (FBO, старые заказы и т.п.).
+  async listOzonSkuProductMap(): Promise<Array<{ ozon_sku: string; product: Product }>> {
+    const sb = createClient();
+    const { data, error } = await sb
+      .from("merch_ozon_order_items")
+      .select(`ozon_sku, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")})`)
+      .not("ozon_sku", "is", null)
+      .not("product_id", "is", null);
+    if (error) throw toError(error);
+    const seen = new Set<string>();
+    const out: Array<{ ozon_sku: string; product: Product }> = [];
+    for (const row of (data ?? []) as unknown as Array<{ ozon_sku: string; product: Product | null }>) {
+      const sku = row.ozon_sku;
+      if (!sku || seen.has(sku) || !row.product) continue;
+      seen.add(sku);
+      out.push({ ozon_sku: sku, product: row.product });
+    }
+    return out;
+  },
+
   async lastFinanceSyncAt(): Promise<string | null> {
     const sb = createClient();
     const { data } = await sb
