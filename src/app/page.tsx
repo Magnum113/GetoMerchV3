@@ -296,12 +296,17 @@ export default function AnalyticsDashboardPage() {
                 Заказы и доставки
               </CardTitle>
               <span className="text-xs text-muted-foreground">
-                Бар = дата создания заказа в Ozon, цвет = его текущий статус. Заказ от 23.05, который позже доставят 28.05, останется в баре 23.05 — просто перекрасится из «В процессе» в «Доставлено», когда статус обновится. Доля доставленных считается только среди финализированных (доставлен + отменён), «В процессе» исключены.
+                Считаем единицы товара (если в одном отправлении 3 футболки — это 3). Бар = дата создания заказа в Ozon, цвет = его текущий статус. Заказ от 23.05, который позже доставят 28.05, останется в баре 23.05 — просто перекрасится из «В процессе» в «Доставлено», когда статус обновится. Доля доставленных считается только среди финализированных (доставлен + отменён), «В процессе» исключены.
               </span>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <FunnelTile label="Всего заказов" value={String(ordersStats.total)} accent="default" />
+                <FunnelTile
+                  label="Всего товаров"
+                  value={String(ordersStats.total)}
+                  hint={`${ordersStats.orders} отправлений`}
+                  accent="default"
+                />
                 <FunnelTile
                   label="Доставлено"
                   value={String(ordersStats.delivered)}

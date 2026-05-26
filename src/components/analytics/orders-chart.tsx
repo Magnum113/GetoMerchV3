@@ -46,8 +46,9 @@ export function OrdersChart({ buckets, height = 280 }: { buckets: OrdersBucket[]
                   <ChartTooltipCard
                     title={label}
                     rows={[
-                      { key: "total", label: "Всего заказов", value: String(r.total), emphasized: true },
+                      { key: "total", label: "Всего товаров", value: String(r.total), emphasized: true },
                       ...visible.map((s) => ({ key: s.key, label: s.label, value: String(r[s.key]), color: s.color })),
+                      { key: "orders", label: "Отправлений", value: String(r.orders) },
                     ]}
                   />
                 );

@@ -190,16 +190,18 @@ export function computePeriodMetrics(
     otherExpenses += Number(e.amount);
   }
 
-  // Заказы — по дате создания в Ozon (in_process_at). Это то, что пользователь
-  // видит в Ozon как «8 заказов за день». Финопы с продажами падают позже
-  // (когда заказ доставлен), поэтому через них считать заказы неправильно.
+  // Заказы — суммируем КОЛИЧЕСТВО единиц товара в заказах за период (по дате
+  // создания в Ozon, in_process_at). Это то, что владельцу важно: сколько
+  // штук людям продали. Если в одном отправлении 3 футболки — это 3, а не 1.
+  // Финопы с продажами падают позже (когда заказ доставлен), поэтому через
+  // них считать заказы неправильно.
   let ordersCount = 0;
   for (const o of orders) {
     const dStr = o.in_process_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
-    ordersCount += 1;
+    ordersCount += orderItemsUnits(o);
   }
 
   // Residual: everything Ozon withheld that's NOT explicit commission/services
@@ -350,13 +352,20 @@ export function classifyOrderStatus(status: string): OrderFunnelStage {
   return "inflight";
 }
 
+function orderItemsUnits(o: OzonOrder): number {
+  let n = 0;
+  for (const it of o.items ?? []) n += Number(it.quantity ?? 0);
+  return n || 1; // если позиции не подгружены — считаем минимум 1
+}
+
 export interface OrdersBucket {
   key: string;
   label: string;
-  total: number;
+  total: number;        // единицы товара
   delivered: number;
   cancelled: number;
   inflight: number;
+  orders: number;       // сколько отправлений за этот день (для тултипа)
 }
 
 export function bucketizeOrders(
@@ -366,7 +375,7 @@ export function bucketizeOrders(
 ): OrdersBucket[] {
   const byKey = new Map<string, OrdersBucket>();
   for (const k of enumerateBuckets(filter, gran)) {
-    byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0 });
+    byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0, orders: 0 });
   }
   for (const o of orders) {
     const dStr = o.in_process_at ?? o.created_at;
@@ -374,36 +383,41 @@ export function bucketizeOrders(
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
     const k = bucketKey(d, gran);
-    if (!byKey.has(k)) byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0 });
+    if (!byKey.has(k)) byKey.set(k, { key: k, label: bucketLabel(k, gran), total: 0, delivered: 0, cancelled: 0, inflight: 0, orders: 0 });
     const b = byKey.get(k)!;
-    b.total += 1;
-    b[classifyOrderStatus(o.status)] += 1;
+    const units = orderItemsUnits(o);
+    b.total += units;
+    b[classifyOrderStatus(o.status)] += units;
+    b.orders += 1;
   }
   return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
 
 export interface OrdersSummary {
-  total: number;
+  total: number;        // единицы товара
   delivered: number;
   cancelled: number;
   inflight: number;
-  // Доля доставленных среди финализированных заказов (доставлен + отменён).
+  orders: number;       // отправлений
+  // Доля доставленных единиц среди финализированных (доставлено + отменено).
   // «В процессе» исключаем — про них пока ничего не известно.
   fulfillmentRate: number;
 }
 
 export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): OrdersSummary {
-  let total = 0, delivered = 0, cancelled = 0, inflight = 0;
+  let total = 0, delivered = 0, cancelled = 0, inflight = 0, ordersCount = 0;
   for (const o of orders) {
     const dStr = o.in_process_at ?? o.created_at;
     if (!dStr) continue;
     const d = new Date(dStr);
     if (d < filter.from || d >= filter.to) continue;
-    total += 1;
+    const units = orderItemsUnits(o);
+    total += units;
+    ordersCount += 1;
     const cat = classifyOrderStatus(o.status);
-    if (cat === "delivered") delivered += 1;
-    else if (cat === "cancelled") cancelled += 1;
-    else inflight += 1;
+    if (cat === "delivered") delivered += units;
+    else if (cat === "cancelled") cancelled += units;
+    else inflight += units;
   }
   const terminal = delivered + cancelled;
   return {
@@ -411,6 +425,7 @@ export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): Orders
     delivered,
     cancelled,
     inflight,
+    orders: ordersCount,
     fulfillmentRate: terminal > 0 ? delivered / terminal : 0,
   };
 }
