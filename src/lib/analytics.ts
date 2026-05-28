@@ -404,6 +404,84 @@ export interface OrdersSummary {
   fulfillmentRate: number;
 }
 
+// «Выручка как в Ozon» — сумма цен заказов по ДАТЕ СОЗДАНИЯ. Это не кассовая
+// выручка (см. computePeriodMetrics, где revenue берётся по operation_date
+// финопов), а оперативный взгляд: сколько люди заказали в этот день.
+// Расходится с финансовой выручкой потому, что финопа доставки приходит
+// через 1-3 недели после заказа.
+export interface OrdersRevenueBucket {
+  key: string;
+  label: string;
+  revenue: number;     // сумма items.price × quantity (или total_price, если items пусты)
+  orders: number;      // отправлений
+  units: number;       // единиц товара
+}
+
+function orderRevenueValue(o: OzonOrder): number {
+  const items = o.items ?? [];
+  if (items.length > 0) {
+    let s = 0;
+    for (const it of items) s += Number(it.price ?? 0) * Number(it.quantity ?? 0);
+    if (s > 0) return s;
+  }
+  return Number(o.total_price ?? 0);
+}
+
+export function bucketizeOrdersRevenue(
+  orders: OzonOrder[],
+  filter: PeriodFilter,
+  gran: Granularity,
+): OrdersRevenueBucket[] {
+  const byKey = new Map<string, OrdersRevenueBucket>();
+  for (const k of enumerateBuckets(filter, gran)) {
+    byKey.set(k, { key: k, label: bucketLabel(k, gran), revenue: 0, orders: 0, units: 0 });
+  }
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    const k = bucketKey(d, gran);
+    if (!byKey.has(k)) byKey.set(k, { key: k, label: bucketLabel(k, gran), revenue: 0, orders: 0, units: 0 });
+    const b = byKey.get(k)!;
+    b.revenue += orderRevenueValue(o);
+    b.orders += 1;
+    b.units += orderItemsUnits(o);
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export interface OrdersRevenueSummary {
+  revenue: number;
+  orders: number;
+  units: number;
+  avgCheck: number;
+}
+
+export function ordersRevenueSummary(
+  orders: OzonOrder[],
+  filter: PeriodFilter,
+): OrdersRevenueSummary {
+  let revenue = 0;
+  let ordersCount = 0;
+  let units = 0;
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    revenue += orderRevenueValue(o);
+    ordersCount += 1;
+    units += orderItemsUnits(o);
+  }
+  return {
+    revenue,
+    orders: ordersCount,
+    units,
+    avgCheck: ordersCount > 0 ? revenue / ordersCount : 0,
+  };
+}
+
 export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): OrdersSummary {
   let total = 0, delivered = 0, cancelled = 0, inflight = 0, ordersCount = 0;
   for (const o of orders) {

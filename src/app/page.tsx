@@ -13,16 +13,19 @@ import { ProductDisplay } from "@/components/product-display";
 import { ExpenseDonut } from "@/components/analytics/expense-donut";
 import { OrdersChart } from "@/components/analytics/orders-chart";
 import { PeriodChart } from "@/components/analytics/period-chart";
+import { RevenueChart } from "@/components/analytics/revenue-chart";
 import { Sparkline } from "@/components/analytics/sparkline";
 import { api } from "@/lib/api";
 import {
   bucketize,
   bucketizeOrders,
+  bucketizeOrdersRevenue,
   buildCostIndex,
   computePeriodMetrics,
   delta,
   expenseBreakdown,
   formatDateRange,
+  ordersRevenueSummary,
   ordersSummary,
   presetRange,
   previousPeriod,
@@ -55,6 +58,7 @@ export default function AnalyticsDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [gran, setGran] = useState<Granularity | "auto">("auto");
+  const [ordersMode, setOrdersMode] = useState<"orders" | "revenue">("orders");
 
   const filter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
   const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
@@ -133,7 +137,22 @@ export default function AnalyticsDashboardPage() {
     () => bucketizeOrders(orders, filter, granularity),
     [orders, filter, granularity],
   );
+  const prevOrdersBuckets = useMemo(
+    () => bucketizeOrders(orders, prevFilter, granularity),
+    [orders, prevFilter, granularity],
+  );
   const ordersStats = useMemo(() => ordersSummary(orders, filter), [orders, filter]);
+  const prevOrdersStats = useMemo(() => ordersSummary(orders, prevFilter), [orders, prevFilter]);
+  const revenueBuckets = useMemo(
+    () => bucketizeOrdersRevenue(orders, filter, granularity),
+    [orders, filter, granularity],
+  );
+  const prevRevenueBuckets = useMemo(
+    () => bucketizeOrdersRevenue(orders, prevFilter, granularity),
+    [orders, prevFilter, granularity],
+  );
+  const revenueStats = useMemo(() => ordersRevenueSummary(orders, filter), [orders, filter]);
+  const prevRevenueStats = useMemo(() => ordersRevenueSummary(orders, prevFilter), [orders, prevFilter]);
   const topProducts = useMemo(
     () =>
       topProductsByProfit(
@@ -284,46 +303,92 @@ export default function AnalyticsDashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Заказы: воронка доставки + динамика по дням */}
+          {/* Заказы и выручка — переключатель режимов */}
           <Card className="mb-5">
-            <CardHeader className="pb-2">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <Truck className="h-4 w-4 text-muted-foreground" />
-                Заказы и доставки
+                Заказы и выручка
               </CardTitle>
+              <div className="flex items-center gap-1.5">
+                <Pill active={ordersMode === "orders"} onClick={() => setOrdersMode("orders")}>Заказы</Pill>
+                <Pill active={ordersMode === "revenue"} onClick={() => setOrdersMode("revenue")}>Выручка</Pill>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <FunnelTile
-                  label="Всего товаров"
-                  value={String(ordersStats.total)}
-                  accent="default"
-                />
-                <FunnelTile
-                  label="Доставлено"
-                  value={String(ordersStats.delivered)}
-                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.delivered / ordersStats.total) * 100)}%` : undefined}
-                  accent="success"
-                />
-                <FunnelTile
-                  label="В процессе"
-                  value={String(ordersStats.inflight)}
-                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.inflight / ordersStats.total) * 100)}%` : undefined}
-                  accent="info"
-                />
-                <FunnelTile
-                  label="Отменено / невыкуп"
-                  value={String(ordersStats.cancelled)}
-                  hint={ordersStats.total > 0 ? `${Math.round((ordersStats.cancelled / ordersStats.total) * 100)}%` : undefined}
-                  accent="danger"
-                />
-              </div>
-              {ordersBuckets.length > 0 ? (
-                <OrdersChart buckets={ordersBuckets} />
+              {ordersMode === "orders" ? (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <FunnelTile
+                      label="Всего товаров"
+                      value={String(ordersStats.total)}
+                      delta={delta(ordersStats.total, prevOrdersStats.total)}
+                      accent="default"
+                    />
+                    <FunnelTile
+                      label="Доставлено"
+                      value={String(ordersStats.delivered)}
+                      hint={ordersStats.total > 0 ? `${Math.round((ordersStats.delivered / ordersStats.total) * 100)}%` : undefined}
+                      delta={delta(ordersStats.delivered, prevOrdersStats.delivered)}
+                      accent="success"
+                    />
+                    <FunnelTile
+                      label="В процессе"
+                      value={String(ordersStats.inflight)}
+                      hint={ordersStats.total > 0 ? `${Math.round((ordersStats.inflight / ordersStats.total) * 100)}%` : undefined}
+                      delta={delta(ordersStats.inflight, prevOrdersStats.inflight)}
+                      accent="info"
+                    />
+                    <FunnelTile
+                      label="Отменено / невыкуп"
+                      value={String(ordersStats.cancelled)}
+                      hint={ordersStats.total > 0 ? `${Math.round((ordersStats.cancelled / ordersStats.total) * 100)}%` : undefined}
+                      delta={delta(ordersStats.cancelled, prevOrdersStats.cancelled)}
+                      accent="danger"
+                      invertDelta
+                    />
+                  </div>
+                  {ordersBuckets.length > 0 ? (
+                    <OrdersChart buckets={ordersBuckets} prevBuckets={prevOrdersBuckets} />
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
+                      За период заказов нет
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
-                  За период заказов нет
-                </div>
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <FunnelTile
+                      label="Выручка по заказам"
+                      value={formatMoney(revenueStats.revenue)}
+                      delta={delta(revenueStats.revenue, prevRevenueStats.revenue)}
+                      accent="info"
+                    />
+                    <FunnelTile
+                      label="Заказов"
+                      value={String(revenueStats.orders)}
+                      delta={delta(revenueStats.orders, prevRevenueStats.orders)}
+                      accent="default"
+                    />
+                    <FunnelTile
+                      label="Средний чек"
+                      value={formatMoney(revenueStats.avgCheck)}
+                      delta={delta(revenueStats.avgCheck, prevRevenueStats.avgCheck)}
+                      accent="default"
+                    />
+                  </div>
+                  {revenueBuckets.length > 0 ? (
+                    <RevenueChart buckets={revenueBuckets} prevBuckets={prevRevenueBuckets} />
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
+                      За период заказов нет
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    Выручка по дате создания заказа в Ozon — оперативная метрика, совпадает с цифрами в кабинете Ozon. Не путать с KPI «Выручка» сверху (по дате финансовой проводки — кассовый метод).
+                  </p>
+                </>
               )}
             </CardContent>
           </Card>
@@ -506,11 +571,15 @@ function FunnelTile({
   value,
   hint,
   accent,
+  delta: d,
+  invertDelta,
 }: {
   label: string;
   value: string;
   hint?: string;
   accent: "default" | "success" | "info" | "danger";
+  delta?: { abs: number; pct: number | null };
+  invertDelta?: boolean;
 }) {
   const accentClass = {
     default: "border-border",
@@ -524,11 +593,27 @@ function FunnelTile({
     info: "bg-state-info-fg",
     danger: "bg-state-danger-fg",
   }[accent];
+  const positiveIsGood = !invertDelta;
+  const good = d == null || d.abs === 0 ? null : positiveIsGood ? d.abs > 0 : d.abs < 0;
   return (
     <div className={cn("rounded-md border p-3", accentClass)}>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-        <span className={cn("h-1.5 w-1.5 rounded-full", dotClass)} />
-        {label}
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className={cn("h-1.5 w-1.5 rounded-full", dotClass)} />
+          {label}
+        </div>
+        {d?.pct != null && (
+          <span
+            className={cn(
+              "text-[11px] font-medium inline-flex items-center gap-0.5 shrink-0",
+              good == null ? "text-muted-foreground" : good ? "text-state-success-fg" : "text-state-danger-fg",
+            )}
+            title={`Δ ${d.abs} vs пред. период`}
+          >
+            {good == null ? null : d.abs > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+            {(d.pct * 100).toFixed(0)}%
+          </span>
+        )}
       </div>
       <div className="text-2xl font-bold tabular-nums">{value}</div>
       {hint && <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>}
