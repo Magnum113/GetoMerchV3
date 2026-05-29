@@ -211,6 +211,7 @@ export async function POST(req: Request) {
         warehouse_name: p.analytics_data?.warehouse_name ?? p.delivery_method?.warehouse ?? null,
         customer_name: p.customer?.name ?? null,
         total_price: total || null,
+        source: p.source ?? "fbs",
         raw: p as unknown as Record<string, unknown>,
         synced_at: now,
       };

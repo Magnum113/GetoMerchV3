@@ -163,6 +163,8 @@ export interface PrintInventory {
   warehouse?: Warehouse;
 }
 
+export type OzonPostingSource = "fbs" | "fbo";
+
 export interface OzonOrder {
   id: string;
   posting_number: string;
@@ -177,6 +179,7 @@ export interface OzonOrder {
   warehouse_name: string | null;
   customer_name: string | null;
   total_price: number | null;
+  source: OzonPostingSource | null;
   synced_at: string;
   shipped_at: string | null;
   shipped_from_warehouse_id: string | null;

@@ -207,6 +207,8 @@ export default function OrdersPage() {
 
   const filtered = useMemo(() => {
     return orders.filter((o) => {
+      // FBO-отправления отгружает сам Ozon — здесь они не нужны
+      if (o.source === "fbo") return false;
       if (tab === "shipped" && !o.shipped_at && !POST_SHIPMENT_STATUSES.has(o.status)) return false;
       if (tab === "active" && (o.shipped_at || TERMINAL_STATUSES.has(o.status))) return false;
       if (search) {
@@ -351,7 +353,11 @@ function OrderCard({ order, ready, availability, canSendToWorkshop, onShip, onUn
               <Badge variant="outline" className="gap-1"><Truck className="h-3 w-3" /> На стороне Ozon</Badge>
             )}
             <Button size="sm" variant="ghost" asChild>
-              <a href={`https://seller.ozon.ru/app/orders/fbs/${order.posting_number}`} target="_blank" rel="noopener noreferrer">
+              <a
+                href={`https://seller.ozon.ru/app/postings/${order.source === "fbo" ? "fbo" : "fbs"}?postingDetails=${order.posting_number}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
             </Button>
