@@ -13,12 +13,14 @@
 - Заготовки (пустые футболки/худи) разных цветов и размеров
 - Принты, которые наклеиваются на заготовки → готовое изделие
 - Вышивка, которую делает внешний цех → готовое изделие
-- Заказы с Ozon (FBS + FBO) подтягиваются автоматически, FBS-отправка одной
-  кнопкой
-  списывает товар со склада
+- Заказы с Ozon (FBS + FBO) подтягиваются автоматически. На странице
+  `/orders` показываем только FBS (их мы отправляем сами); FBO живут в БД
+  только ради аналитики (воронка заказов, COGS по `posting_number`). FBS-отправка
+  одной кнопкой списывает товар со склада
 - Аналитический дашборд на `/` — выручка, расходы (включая комиссии Ozon из
   Finance API, налог УСН 6%, прочие удержания), чистая прибыль с разбивкой
-  по периоду и топ продуктов
+  по периоду, топ продуктов, и **стоимость остатков** по складам (заготовки
+  + готовые в закупочных ценах)
 - Раздел `/expenses` для ручных расходов вне Ozon (аренда, зарплаты,
   маркетинг и т.п.) с пользовательскими категориями
 
@@ -108,7 +110,7 @@ supabase/
 | `merch_print_inventory` | Остатки готовых принтов `(design_id, warehouse_id) → quantity` |
 | `merch_transactions` | Журнал любых движений товара или принта. `product_id` и `design_id` оба nullable, но обязательно одно из двух. Поле `type` ∈ {`receive`, `transfer`, `sale`, `production`, `adjustment`, `writeoff`} |
 | `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `sent → ready → received` (плюс терминальный `cancelled`). Колонка `merch_ozon_orders.workshop_order_id` указывает на заказ в цех, созданный из заказа Ozon |
-| `merch_ozon_orders` / `_items` | Зеркало отправлений Ozon: FBS из `/v3/posting/fbs/list` и FBO из `/v2/posting/fbo/list`. Поле `raw.source` ∈ {`fbs`, `fbo`} помечает схему. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) используется только для FBS-заказов, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting |
+| `merch_ozon_orders` / `_items` | Зеркало отправлений Ozon: FBS из `/v3/posting/fbs/list` и FBO из `/v2/posting/fbo/list`. Колонка `source text` ∈ {`fbs`, `fbo`} (с индексом `merch_ozon_orders_source_idx`) — основной фильтр на странице `/orders` и в логике приоритета складов. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) используется только для FBS-заказов, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting |
 | `merch_ozon_finance_operations` | Зеркало `/v3/finance/transaction/list`. UNIQUE по `operation_id`. Поля: `operation_type` (например `OperationAgentDeliveredToCustomer`, `ClientReturnAgentOperation`, `DefectFineShipmentDelay`), `operation_type_name`, `operation_date`, `posting_number` (nullable — у штрафов/подписок его нет), `accruals_for_sale` (положительная для продажи, отрицательная для возврата), `sale_commission` (отрицательная для удержания, положительная для возврата комиссии), `amount` (нетто-движение по счёту), `services` (jsonb массив `{name, price}`), `items` (jsonb — только `{sku, name}`, без quantity), `raw` (полный ответ Ozon на всякий случай) |
 | `merch_expense_categories` | Пользовательские категории ручных расходов: `name`, `color` (hex для donut), `sort_order`, `archived` |
 | `merch_expenses` | Ручные расходы вне Ozon. `amount > 0`, `occurred_at date`, `category_id` (`ON DELETE SET NULL`). Используются в дашборде в категории «Прочие расходы» и в собственных категориях donut |
@@ -177,6 +179,17 @@ supabase/
     Ozon** — не показываем индикатор наличия и кнопку «Отправил». Они находятся
     в табе «Отправленные» или «Все».
 
+10a. **FBO-заказы скрыты на странице `/orders`.** Их отгружает сам Ozon со
+    своего склада, никаких действий от нас не требуется. Фильтр живёт в
+    `orders/page.tsx` (`if (o.source === "fbo") return false`). В аналитике
+    (воронка `ordersSummary`, `bucketizeOrdersRevenue`) и в COGS-проводках
+    они по-прежнему учитываются — поэтому сами записи из БД не выкидываем.
+
+10b. **Внешняя ссылка на отправление Ozon.** Кнопка-стрелка в карточке
+    заказа ведёт на `https://seller.ozon.ru/app/postings/{fbs|fbo}?postingDetails={posting_number}`.
+    Сегмент `fbs`/`fbo` выбирается по `order.source`. Старый формат
+    `/app/orders/fbs/{number}` не работает — не возвращать.
+
 #### Цех вышивки
 
 11. **Заказ в цех создаётся сразу в статусе `sent`.** Статусы `pending`
@@ -239,6 +252,17 @@ supabase/
        `round(accruals_for_sale / sale_price)` (только если отношение
        близко к целому — допуск 15%). Для много-товарных финопов default
        qty=1 на каждую запись items. Это аварийная аппроксимация, см. раздел 11.
+
+15e. **Стоимость остатков (карточка «Стоимость остатков» на дашборде).**
+    Считается как `Σ(inventory.quantity × product.cost_price)` с разбивкой
+    по складу × (пустые / готовые). Компонент —
+    `src/components/analytics/stock-value-card.tsx`, данные тянутся через
+    `api.listInventory()` (продукт уже джойнится вместе с `cost_price`).
+    Базовые `cost_price` для заготовок: футболка обычная 650 ₽, футболка
+    варёнка 780 ₽, худи/свитшот 1200 ₽ — значения залиты в БД одноразовым
+    UPDATE по `category.slug` + `fabric.slug`. Для новых заготовок цену
+    выставлять руками через `/products` или редактор. Если у продукта
+    `cost_price IS NULL` — он попадёт в карточку с 0 ₽, без ошибки.
 
 #### Целостность данных
 
@@ -402,6 +426,10 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к O
 - На каждый цвет ткани — кружок-индикатор `h-3 w-3 rounded-full border` с `backgroundColor: hex`
 - При наличии разбивки по складам — мелкая подпись `м5·ц2` под ячейкой (первая
   буква имени склада + qty)
+- В матрицах остатков на `/inventory` есть тоггл **«Скрыть пустые»**
+  (`inventory-dashboard.tsx`, по умолчанию `true`). Прячет строки, где
+  `total = 0` по всем размерам — чтобы зачищенные модели не засоряли
+  список. Состояние локальное (`useState`), не персистится
 
 ---
 
@@ -492,6 +520,13 @@ UI — на русском (целевой пользователь говори
   - Финопы: сначала `posting_number ↔ merch_ozon_orders.posting_number`,
     иначе по `items[].sku ↔ merch_ozon_order_items.ozon_sku` (fallback для
     старых/неподтянутых отправлений)
+- При синхронизации в `merch_ozon_orders.source` записывается `'fbs'` или
+  `'fbo'` (взято из `posting.source`, который sync-route стампит на каждом
+  объекте до апсерта). Используется в UI для скрытия FBO со страницы заказов
+  и для построения корректной внешней ссылки на seller.ozon.ru
+- Глубокая ссылка на отправление в кабинете Ozon:
+  `https://seller.ozon.ru/app/postings/{fbs|fbo}?postingDetails={posting_number}`.
+  Сегмент выбирается по `merch_ozon_orders.source`
 - Запросы только с сервера. С клиента — через `fetch('/api/ozon/...')`
 - Кнопка «Обновить данные Ozon» в дашборде запускает sync-orders (180 дней,
   `scope=all`) + sync-finance параллельно
