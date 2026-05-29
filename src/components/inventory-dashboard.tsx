@@ -33,6 +33,7 @@ export function InventoryDashboard({
   loading: boolean;
 }) {
   const [whFilter, setWhFilter] = useState<WarehouseFilter>("all");
+  const [hideEmpty, setHideEmpty] = useState(true);
 
   // ---- Сток по продукту с учётом фильтра склада
   const stockByProduct = useMemo(() => {
@@ -114,8 +115,14 @@ export function InventoryDashboard({
       `${b.label} ${b.designLabel ?? ""} ${b.subLabel}`, "ru"
     );
   };
-  const sortedBlankRows = useMemo(() => [...blankRows].sort(bySeverity), [blankRows]);
-  const sortedFinishedRows = useMemo(() => [...finishedRows].sort(bySeverity), [finishedRows]);
+  const sortedBlankRows = useMemo(
+    () => [...blankRows].filter((r) => !hideEmpty || r.total > 0).sort(bySeverity),
+    [blankRows, hideEmpty]
+  );
+  const sortedFinishedRows = useMemo(
+    () => [...finishedRows].filter((r) => !hideEmpty || r.total > 0).sort(bySeverity),
+    [finishedRows, hideEmpty]
+  );
 
   if (loading) return <div className="p-10 text-center text-muted-foreground">Загрузка…</div>;
 
@@ -132,6 +139,11 @@ export function InventoryDashboard({
             {w.name}
           </Pill>
         ))}
+        <div className="ml-auto">
+          <Pill active={hideEmpty} onClick={() => setHideEmpty((v) => !v)}>
+            Скрыть пустые
+          </Pill>
+        </div>
       </div>
 
       <MatrixCard
@@ -156,6 +168,7 @@ export function InventoryDashboard({
           emptyText="Готовых нет"
         />
       )}
+
 
       {!hideFinished && (
         <PrintsCard prints={prints} warehouses={warehouses} whFilter={whFilter} />
