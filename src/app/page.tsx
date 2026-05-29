@@ -15,6 +15,7 @@ import { OrdersChart } from "@/components/analytics/orders-chart";
 import { PeriodChart } from "@/components/analytics/period-chart";
 import { RevenueChart } from "@/components/analytics/revenue-chart";
 import { Sparkline } from "@/components/analytics/sparkline";
+import { StockValueCard } from "@/components/analytics/stock-value-card";
 import { api } from "@/lib/api";
 import {
   bucketize,
@@ -34,7 +35,7 @@ import {
   type Granularity,
   type PeriodFilter,
 } from "@/lib/analytics";
-import type { Expense, ExpenseCategory, OzonFinanceOperation, OzonOrder, Product } from "@/lib/types";
+import type { Expense, ExpenseCategory, Inventory, OzonFinanceOperation, OzonOrder, Product, Warehouse } from "@/lib/types";
 import { cn, errorMessage, formatMoney } from "@/lib/utils";
 
 type PresetKey = "7d" | "30d" | "90d" | "mtd" | "ytd";
@@ -54,6 +55,8 @@ export default function AnalyticsDashboardPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [skuMap, setSkuMap] = useState<Array<{ ozon_sku: string; product: Product }>>([]);
+  const [inventory, setInventory] = useState<Inventory[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -66,13 +69,15 @@ export default function AnalyticsDashboardPage() {
   async function reload() {
     setLoading(true);
     try {
-      const [ord, opsAll, exp, cats, sync, sku] = await Promise.all([
+      const [ord, opsAll, exp, cats, sync, sku, invRows, whRows] = await Promise.all([
         api.listOzonOrders(),
         api.listFinanceOperations(),
         api.listExpenses(),
         api.listExpenseCategories(),
         api.lastFinanceSyncAt(),
         api.listOzonSkuProductMap(),
+        api.listInventory(),
+        api.listWarehouses(),
       ]);
       setOrders(ord);
       setOps(opsAll);
@@ -80,6 +85,8 @@ export default function AnalyticsDashboardPage() {
       setCategories(cats);
       setLastSync(sync);
       setSkuMap(sku);
+      setInventory(invRows);
+      setWarehouses(whRows);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -461,6 +468,11 @@ export default function AnalyticsDashboardPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          {/* Стоимость остатков */}
+          <div className="mb-5">
+            <StockValueCard inv={inventory} warehouses={warehouses} loading={loading} />
           </div>
 
           {/* Period table */}
