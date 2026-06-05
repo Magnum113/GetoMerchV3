@@ -775,6 +775,50 @@ export const api = {
     await api.shipOzonOrder(args.ozonOrderId, args.ownWarehouseId ?? undefined);
   },
 
+  // «Произвёл и отправил»: производит недостающие изделия на своём складе
+  // (списывает пустые + принт через api.produce), затем отгружает заказ Ozon.
+  // Для печатных позиций, когда готового нет, но есть пустые и принты.
+  async fulfillOzonViaProduction(args: { ozonOrderId: string; ownWarehouseId: string }) {
+    const sb = createClient();
+    if (!args.ownWarehouseId) throw new Error("Не настроен свой склад");
+    const { data: ozonRaw, error } = await sb
+      .from("merch_ozon_orders")
+      .select(`*, items:merch_ozon_order_items(*, product:merch_products(${PRODUCT_SELECT.replace(/\n/g, " ")}))`)
+      .eq("id", args.ozonOrderId)
+      .single();
+    if (error) throw toError(error);
+    const ozon = (ozonRaw as unknown) as OzonOrder | null;
+    if (!ozon) throw new Error("Заказ Ozon не найден");
+    if (ozon.shipped_at) throw new Error("Заказ уже отправлен");
+    if (ozon.workshop_order_id) throw new Error("Заказ привязан к цеху");
+
+    for (const it of (ozon.items ?? [])) {
+      const p = it.product;
+      if (!p) throw new Error(`Не сопоставлен товар: ${it.offer_id}`);
+      // Производим только нехватку относительно ВСЕХ складов: если готовое уже
+      // есть где-то ещё, его отгрузит shipOzonOrder, лишнего не печатаем.
+      const { data: invRows } = await sb
+        .from("merch_inventory")
+        .select("quantity")
+        .eq("product_id", p.id)
+        .gt("quantity", 0);
+      const totalFinished = (invRows ?? []).reduce((s, r) => s + (r.quantity ?? 0), 0);
+      const short = Math.max(0, it.quantity - totalFinished);
+      if (short <= 0) continue;
+      const blank = await api.findBlankFor(p);
+      if (!blank) throw new Error(`Нет пустого SKU для ${it.offer_id}`);
+      await api.produce({
+        blankProductId: blank.id,
+        finishedProductId: p.id,
+        warehouseId: args.ownWarehouseId,
+        quantity: short,
+        notes: `Производство для Ozon ${ozon.posting_number} · ${it.offer_id}`,
+      });
+    }
+
+    await api.shipOzonOrder(args.ozonOrderId, args.ownWarehouseId);
+  },
+
   async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[] }> {
     const params = new URLSearchParams();
     if (opts.scope) params.set("scope", opts.scope);

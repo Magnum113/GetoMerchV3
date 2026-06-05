@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse } from "@/lib/types";
+import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse, PrintInventory } from "@/lib/types";
 import { OZON_STATUS_LABELS, OZON_STATUS_COLORS, WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
 import { ShoppingBag, RefreshCw, CheckCircle2, AlertTriangle, PackageCheck, Hammer, X, Search, Undo2, ExternalLink, Truck, Send } from "lucide-react";
 
@@ -29,17 +29,29 @@ import { formatDate, formatDateShort, formatMoney, errorMessage } from "@/lib/ut
 
 type StockStatus = "ready" | "partial" | "needs_production" | "missing" | "unmatched";
 
+interface WhQty { warehouseId: string; warehouseName: string; qty: number }
+
 interface ItemAvailability {
   status: StockStatus;
+  /** Готовых, выделенных этому заказу (с учётом уже занятых более ранними заказами), не больше need. */
   finished: number;
+  /** Пустых, доступных этому заказу (после вычета занятых ранее). */
   blank: number;
+  /** Принтов нужного дизайна, доступных этому заказу (только для печатных позиций). */
+  print: number;
   blankProduct: Product | null;
   need: number;
-  finishedByWh: { warehouseId: string; warehouseName: string; qty: number }[];
-  blankByWh: { warehouseId: string; warehouseName: string; qty: number }[];
+  finishedByWh: WhQty[];
+  blankByWh: WhQty[];
   /** true для изделий с принтом (made_at === "own" или не задано) — пустые из цеха
    *  вышивки игнорируются, т.к. оттуда заготовки на мой склад для печати не возят. */
   isPrint: boolean;
+  /** Показывать ли строку про принты (печатная позиция с заданным дизайном). */
+  hasPrintInfo: boolean;
+  /** Пустых хватает, но принтов на складе не хватает для производства. */
+  printShort: boolean;
+  /** Можно произвести недостающее у себя (готовые + пустые + принты покрывают заказ). */
+  canOwnProduce: boolean;
 }
 
 export default function OrdersPage() {
@@ -47,6 +59,7 @@ export default function OrdersPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [inv, setInv] = useState<Inventory[]>([]);
   const [blanks, setBlanks] = useState<Product[]>([]);
+  const [prints, setPrints] = useState<PrintInventory[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
@@ -54,16 +67,18 @@ export default function OrdersPage() {
 
   async function reload() {
     setLoading(true);
-    const [o, w, i, b] = await Promise.all([
+    const [o, w, i, b, pr] = await Promise.all([
       api.listOzonOrders(),
       api.listWarehouses(),
       api.listInventory(),
       api.listProducts({ is_blank: true }),
+      api.listPrintInventory(),
     ]);
     setOrders(o);
     setWarehouses(w);
     setInv(i);
     setBlanks(b);
+    setPrints(pr);
     setLoading(false);
   }
   useEffect(() => { reload(); }, []);
@@ -101,40 +116,156 @@ export default function OrdersPage() {
     return m;
   }, [blanks]);
 
-  function breakdown(productId: string, opts?: { excludeWorkshop?: boolean }) {
-    const e = stockByProduct.get(productId);
-    if (!e) return { total: 0, list: [] as { warehouseId: string; warehouseName: string; qty: number }[] };
-    const entries = Array.from(e.byWh.entries()).filter(([wid, q]) => {
-      if (q <= 0) return false;
-      if (opts?.excludeWorkshop && warehouseTypeById.get(wid) === "workshop") return false;
-      return true;
-    });
-    const list = entries.map(([warehouseId, qty]) => ({ warehouseId, warehouseName: warehouseNameById.get(warehouseId) ?? "—", qty }));
-    const total = entries.reduce((s, [, q]) => s + q, 0);
-    return { total, list };
-  }
-
-  function availability(item: OzonOrderItem): ItemAvailability {
-    const need = item.quantity;
-    if (!item.product) {
-      return { status: "unmatched", finished: 0, blank: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false };
+  // Принты на своём складе: design_id -> warehouse_id -> qty
+  const printByDesign = useMemo(() => {
+    const m = new Map<string, Map<string, number>>();
+    for (const row of prints) {
+      const e = m.get(row.design_id) ?? new Map<string, number>();
+      e.set(row.warehouse_id, (e.get(row.warehouse_id) ?? 0) + row.quantity);
+      m.set(row.design_id, e);
     }
-    // Принт делается у меня на складе (или decoration_type не указан) — пустые из
-    // цеха вышивки не учитываем, т.к. оттуда заготовки на мой склад для печати не возят.
-    const isPrint = item.product.decoration_type?.made_at !== "workshop";
-    const fin = breakdown(item.product.id);
-    const blankProd = blankByKey.get(blankKey(item.product.category_id, item.product.fabric_id, item.product.color_id, item.product.size_id)) ?? null;
-    const blk = blankProd ? breakdown(blankProd.id, { excludeWorkshop: isPrint }) : { total: 0, list: [] };
-    const base = { finished: fin.total, blank: blk.total, blankProduct: blankProd, need, finishedByWh: fin.list, blankByWh: blk.list, isPrint };
-    if (fin.total >= need) return { status: "ready", ...base };
-    if (fin.total > 0) return { status: "partial", ...base };
-    if (blk.total >= need) return { status: "needs_production", ...base };
-    return { status: "missing", ...base };
-  }
+    return m;
+  }, [prints]);
+
+  // Распределение остатков по заказам: один и тот же товар не может быть «доступен»
+  // сразу двум заказам. Идём по активным заказам в порядке срочности (дата отгрузки,
+  // затем дата создания) и вычитаем занятое из общего пула остатков — готовых,
+  // пустых и принтов. Результат — карта itemId -> доступность с учётом резерва.
+  const availabilityByItem = useMemo(() => {
+    const rankWh = (wid: string) => {
+      const t = warehouseTypeById.get(wid);
+      return t === "own" ? 0 : t === "workshop" ? 2 : 1;
+    };
+    // мутируемые копии пулов
+    const prodRem = new Map<string, Map<string, number>>();
+    for (const [pid, e] of stockByProduct) prodRem.set(pid, new Map(e.byWh));
+    const printRem = new Map<string, Map<string, number>>();
+    for (const [did, e] of printByDesign) printRem.set(did, new Map(e));
+
+    function peek(rem: Map<string, Map<string, number>>, key: string, excludeWorkshop: boolean) {
+      const byWh = rem.get(key);
+      const list: WhQty[] = [];
+      let total = 0;
+      if (byWh) {
+        for (const [wid, q] of byWh) {
+          if (q <= 0) continue;
+          if (excludeWorkshop && warehouseTypeById.get(wid) === "workshop") continue;
+          total += q;
+          list.push({ warehouseId: wid, warehouseName: warehouseNameById.get(wid) ?? "—", qty: q });
+        }
+      }
+      return { total, list };
+    }
+    // Списывает up to `want` из пула (свой склад первым). Возвращает разбивку по складам.
+    function take(rem: Map<string, Map<string, number>>, key: string, want: number, excludeWorkshop: boolean): WhQty[] {
+      const taken: WhQty[] = [];
+      const byWh = rem.get(key);
+      if (!byWh || want <= 0) return taken;
+      const wids = Array.from(byWh.keys()).sort((a, b) => rankWh(a) - rankWh(b));
+      let left = want;
+      for (const wid of wids) {
+        if (left <= 0) break;
+        if (excludeWorkshop && warehouseTypeById.get(wid) === "workshop") continue;
+        const avail = byWh.get(wid) ?? 0;
+        if (avail <= 0) continue;
+        const t = Math.min(avail, left);
+        byWh.set(wid, avail - t);
+        left -= t;
+        taken.push({ warehouseId: wid, warehouseName: warehouseNameById.get(wid) ?? "—", qty: t });
+      }
+      return taken;
+    }
+
+    function allocItem(item: OzonOrderItem): ItemAvailability {
+      const need = item.quantity;
+      const p = item.product;
+      if (!p) {
+        return { status: "unmatched", finished: 0, blank: 0, print: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false, hasPrintInfo: false, printShort: false, canOwnProduce: false };
+      }
+      // Принт делается у меня на складе (или decoration_type не указан) — пустые из
+      // цеха вышивки не учитываем, т.к. оттуда заготовки на мой склад не возят.
+      const isPrint = p.decoration_type?.made_at !== "workshop";
+      // 1. Готовые — резервируем под этот заказ.
+      const finPeek = peek(prodRem, p.id, false);
+      const finished = Math.min(need, finPeek.total);
+      const finishedByWh = take(prodRem, p.id, finished, false);
+      const remainingNeed = need - finished;
+
+      // 2. Пустые и принты для производства недостающего.
+      const blankProd = blankByKey.get(blankKey(p.category_id, p.fabric_id, p.color_id, p.size_id)) ?? null;
+      let blank = 0;
+      let blankByWh: WhQty[] = [];
+      let print = 0;
+      const hasPrintInfo = isPrint && !!p.design_id;
+      if (blankProd) {
+        const blkPeek = peek(prodRem, blankProd.id, isPrint);
+        blank = blkPeek.total;
+        blankByWh = blkPeek.list;
+      }
+      if (hasPrintInfo) {
+        print = peek(printRem, p.design_id!, true).total;
+      }
+      // Резервируем пустые/принты, которые этот заказ пустит в производство,
+      // чтобы их не «увидел» доступными следующий заказ.
+      if (remainingNeed > 0 && blankProd) {
+        take(prodRem, blankProd.id, Math.min(remainingNeed, blank), isPrint);
+        if (hasPrintInfo) take(printRem, p.design_id!, Math.min(remainingNeed, print), true);
+      }
+
+      let status: StockStatus;
+      if (finished >= need) status = "ready";
+      else if (finished > 0) status = "partial";
+      else if (blankProd && blank >= remainingNeed) status = "needs_production";
+      else status = "missing";
+
+      const printShort = isPrint && status === "needs_production" && print < remainingNeed;
+      // Можно произвести у себя: печатная позиция, недостающее покрывается пустыми + принтами.
+      const canOwnProduce =
+        isPrint && finished < need && !!blankProd &&
+        finished + Math.min(blank, print) >= need;
+
+      return { status, finished, blank, print, blankProduct: blankProd, need, finishedByWh, blankByWh, isPrint, hasPrintInfo, printShort, canOwnProduce };
+    }
+
+    const competing = orders
+      .filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status))
+      .sort((a, b) => {
+        const da = a.shipment_date ? Date.parse(a.shipment_date) : Infinity;
+        const db = b.shipment_date ? Date.parse(b.shipment_date) : Infinity;
+        if (da !== db) return da - db;
+        const ia = a.in_process_at ? Date.parse(a.in_process_at) : Infinity;
+        const ib = b.in_process_at ? Date.parse(b.in_process_at) : Infinity;
+        if (ia !== ib) return ia - ib;
+        return a.created_at.localeCompare(b.created_at);
+      });
+
+    const map = new Map<string, ItemAvailability>();
+    for (const o of competing) {
+      for (const it of o.items ?? []) map.set(it.id, allocItem(it));
+    }
+    return map;
+  }, [orders, stockByProduct, printByDesign, blankByKey, warehouseTypeById, warehouseNameById]);
 
   function orderReady(order: OzonOrder): boolean {
     if (!order.items || order.items.length === 0) return false;
-    return order.items.every((it) => it.product && (stockByProduct.get(it.product.id)?.total ?? 0) >= it.quantity);
+    return order.items.every((it) => availabilityByItem.get(it.id)?.status === "ready");
+  }
+
+  // Заказ можно «произвести и отправить» у себя: каждая позиция либо уже готова,
+  // либо это печатная позиция, которую можно изготовить из своих пустых + принтов.
+  function canProduceAndShip(order: OzonOrder): boolean {
+    if (order.workshop_order_id) return false;
+    if (!order.items || order.items.length === 0) return false;
+    if (!ownWarehouse) return false;
+    let needsProduction = false;
+    for (const it of order.items) {
+      const a = availabilityByItem.get(it.id);
+      if (!a) return false;
+      if (a.status === "ready") continue;
+      if (a.isPrint && a.canOwnProduce) { needsProduction = true; continue; }
+      return false;
+    }
+    return needsProduction;
   }
 
   async function doSync(scope: "active" | "all" = "active") {
@@ -162,15 +293,22 @@ export default function OrdersPage() {
     if (!order.items || order.items.length === 0) return false;
     if (!defaultWorkshop) return false;
     return order.items.every((it) => {
-      if (!it.product) return false;
-      const a = availability(it);
-      if (a.status === "ready") return false;
-      const dec = it.product.decoration_type;
-      if (!dec || dec.made_at !== "workshop") return false;
+      const a = availabilityByItem.get(it.id);
+      if (!a || a.status === "ready" || a.status === "unmatched") return false;
+      if (a.isPrint) return false; // у цеха только вышивка
       if (!a.blankProduct) return false;
-      if (a.blank < a.need) return false;
-      return true;
+      return a.finished + a.blank >= a.need;
     });
+  }
+
+  async function produceAndShip(order: OzonOrder) {
+    if (!ownWarehouse) return toast.error("Не настроен свой склад");
+    if (!confirm("Произвести недостающие изделия и отправить заказ? Спишутся пустые и принты со склада.")) return;
+    try {
+      await api.fulfillOzonViaProduction({ ozonOrderId: order.id, ownWarehouseId: ownWarehouse.id });
+      toast.success("Произведено и отправлено, материалы списаны");
+      await reload();
+    } catch (e) { toast.error(errorMessage(e)); }
   }
 
   async function sendToWorkshop(order: OzonOrder) {
@@ -272,12 +410,14 @@ export default function OrdersPage() {
               key={o.id}
               order={o}
               ready={orderReady(o)}
-              availability={availability}
+              availabilityByItem={availabilityByItem}
               canSendToWorkshop={workshopEligible(o)}
+              canProduceAndShip={canProduceAndShip(o)}
               onShip={() => ship(o)}
               onUnship={() => unship(o)}
               onSendToWorkshop={() => sendToWorkshop(o)}
               onFulfillViaWorkshop={() => fulfillViaWorkshop(o)}
+              onProduceAndShip={() => produceAndShip(o)}
             />
           ))}
         </div>
@@ -286,15 +426,17 @@ export default function OrdersPage() {
   );
 }
 
-function OrderCard({ order, ready, availability, canSendToWorkshop, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop }: {
+function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip }: {
   order: OzonOrder;
   ready: boolean;
-  availability: (it: OzonOrderItem) => ItemAvailability;
+  availabilityByItem: Map<string, ItemAvailability>;
   canSendToWorkshop: boolean;
+  canProduceAndShip: boolean;
   onShip: () => void;
   onUnship: () => void;
   onSendToWorkshop: () => void;
   onFulfillViaWorkshop: () => void;
+  onProduceAndShip: () => void;
 }) {
   const statusLabel = OZON_STATUS_LABELS[order.status] ?? order.status;
   const statusColor = OZON_STATUS_COLORS[order.status] ?? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
@@ -334,14 +476,19 @@ function OrderCard({ order, ready, availability, canSendToWorkshop, onShip, onUn
                 <CheckCircle2 className="h-3.5 w-3.5" /> Произвели и отправили
               </Button>
             )}
-            {showActions && !shipped && !wsLinked && canSendToWorkshop && !ready && (
-              <Button size="sm" onClick={onSendToWorkshop}>
-                <Send className="h-3.5 w-3.5" /> Отправить в цех
-              </Button>
-            )}
             {showActions && !shipped && !wsLinked && ready && (
               <Button size="sm" onClick={onShip}>
                 <CheckCircle2 className="h-3.5 w-3.5" /> Отправил заказ
+              </Button>
+            )}
+            {showActions && !shipped && !wsLinked && !ready && canProduceAndShip && (
+              <Button size="sm" onClick={onProduceAndShip}>
+                <Hammer className="h-3.5 w-3.5" /> Произвёл и отправил
+              </Button>
+            )}
+            {showActions && !shipped && !wsLinked && !ready && !canProduceAndShip && canSendToWorkshop && (
+              <Button size="sm" onClick={onSendToWorkshop}>
+                <Send className="h-3.5 w-3.5" /> Отправить в цех
               </Button>
             )}
             {showActions && shipped && (
@@ -370,7 +517,7 @@ function OrderCard({ order, ready, availability, canSendToWorkshop, onShip, onUn
             <ItemRow
               key={it.id}
               item={it}
-              availability={showAvailability ? availability(it) : null}
+              availability={showAvailability ? availabilityByItem.get(it.id) ?? null : null}
               top={idx === 0}
               showPrice={(order.items?.length ?? 0) > 1}
             />
@@ -434,6 +581,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
     );
   }
   const blanksLabel = a.isPrint ? "Пустых на моём складе" : "Пустых";
+  const needForProduction = a.need - a.finished;
   if (a.status === "partial") {
     return (
       <div className="flex flex-wrap gap-1.5">
@@ -445,24 +593,47 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
             <Hammer className="h-3 w-3" /> {blanksLabel} для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
           </Badge>
         )}
+        <PrintBadge a={a} need={needForProduction} />
       </div>
     );
   }
   if (a.status === "needs_production") {
     return (
-      <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 gap-1">
-        <Hammer className="h-3 w-3" />{" "}
-        {a.isPrint
-          ? `Готовых нет, есть пустые на моём складе: ${a.blank}`
-          : `Готовых нет, есть пустые: ${a.blank}`}
-        {whDetail(a.blankByWh, a.blank)}
-      </Badge>
+      <div className="flex flex-wrap gap-1.5">
+        <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 gap-1">
+          <Hammer className="h-3 w-3" />{" "}
+          {a.isPrint
+            ? `Готовых нет, есть пустые на моём складе: ${a.blank}`
+            : `Готовых нет, есть пустые: ${a.blank}`}
+          {whDetail(a.blankByWh, a.blank)}
+        </Badge>
+        <PrintBadge a={a} need={needForProduction} />
+      </div>
     );
   }
   return (
-    <Badge className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 gap-1">
-      <X className="h-3 w-3" />{" "}
-      {a.isPrint ? "Готовых нет · пустых нет на моём складе" : "Нет ни готовых, ни пустых"}
+    <div className="flex flex-wrap gap-1.5">
+      <Badge className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 gap-1">
+        <X className="h-3 w-3" />{" "}
+        {a.isPrint ? "Готовых нет · пустых нет на моём складе" : "Нет ни готовых, ни пустых"}
+      </Badge>
+      <PrintBadge a={a} need={needForProduction} />
+    </div>
+  );
+}
+
+// Наличие принтов на складе для производства печатной позиции.
+function PrintBadge({ a, need }: { a: ItemAvailability; need: number }) {
+  if (!a.hasPrintInfo) return null;
+  const enough = a.print >= need;
+  return (
+    <Badge
+      className={`gap-1 ${enough
+        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+        : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"}`}
+    >
+      {enough ? <CheckCircle2 className="h-3 w-3" /> : <X className="h-3 w-3" />}{" "}
+      {enough ? `Принты на складе: ${a.print}` : `Принтов не хватает: ${a.print} / ${need}`}
     </Badge>
   );
 }
