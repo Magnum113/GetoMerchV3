@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { api } from "@/lib/api";
@@ -54,6 +55,19 @@ interface ItemAvailability {
   canOwnProduce: boolean;
 }
 
+// Срочность заказа: дата отгрузки ↑ → дата создания на Ozon ↑ → дата записи.
+// Тот же порядок используется и при распределении остатков (availabilityByItem),
+// и при массовой отгрузке — чтобы списание шло в одинаковой последовательности.
+function urgencyCompare(a: OzonOrder, b: OzonOrder) {
+  const da = a.shipment_date ? Date.parse(a.shipment_date) : Infinity;
+  const db = b.shipment_date ? Date.parse(b.shipment_date) : Infinity;
+  if (da !== db) return da - db;
+  const ia = a.in_process_at ? Date.parse(a.in_process_at) : Infinity;
+  const ib = b.in_process_at ? Date.parse(b.in_process_at) : Infinity;
+  if (ia !== ib) return ia - ib;
+  return a.created_at.localeCompare(b.created_at);
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<OzonOrder[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -64,6 +78,8 @@ export default function OrdersPage() {
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"active" | "shipped" | "all">("active");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -229,15 +245,7 @@ export default function OrdersPage() {
 
     const competing = orders
       .filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status))
-      .sort((a, b) => {
-        const da = a.shipment_date ? Date.parse(a.shipment_date) : Infinity;
-        const db = b.shipment_date ? Date.parse(b.shipment_date) : Infinity;
-        if (da !== db) return da - db;
-        const ia = a.in_process_at ? Date.parse(a.in_process_at) : Infinity;
-        const ib = b.in_process_at ? Date.parse(b.in_process_at) : Infinity;
-        if (ia !== ib) return ia - ib;
-        return a.created_at.localeCompare(b.created_at);
-      });
+      .sort(urgencyCompare);
 
     const map = new Map<string, ItemAvailability>();
     for (const o of competing) {
@@ -266,6 +274,17 @@ export default function OrdersPage() {
       return false;
     }
     return needsProduction;
+  }
+
+  // Каким способом заказ можно «произвести и отправить» одним действием.
+  // Приоритет совпадает с кнопками в карточке: цех → готово к отгрузке → производство у себя.
+  // null — заказ нельзя закрыть без дополнительных шагов (нет остатков, нужен цех и т.п.).
+  function fulfillKind(order: OzonOrder): "workshop" | "ship" | "produce" | null {
+    if (order.source === "fbo" || order.shipped_at || TERMINAL_STATUSES.has(order.status)) return null;
+    if (order.workshop_order_id) return "workshop";
+    if (orderReady(order)) return "ship";
+    if (canProduceAndShip(order)) return "produce";
+    return null;
   }
 
   async function doSync(scope: "active" | "all" = "active") {
@@ -334,6 +353,38 @@ export default function OrdersPage() {
     } catch (e) { toast.error(errorMessage(e)); }
   }
 
+  // Массовая отгрузка: каждый заказ закрывается своим способом (цех / отгрузка /
+  // производство у себя). Идём строго по срочности — тем же порядком, по которому
+  // распределялись остатки, чтобы списание не разъехалось с индикаторами наличия.
+  async function bulkFulfill(targets: OzonOrder[]) {
+    const list = targets.filter((o) => fulfillKind(o) !== null).sort(urgencyCompare);
+    if (list.length === 0) return toast.error("Нет заказов, готовых к отправке");
+    if (!confirm(`Произвести и отправить ${list.length} заказ(ов)? Спишутся готовые изделия, а где нужно — пустые и принты со склада.`)) return;
+    setBulkBusy(true);
+    const ok: string[] = [];
+    const failed: { posting: string; msg: string }[] = [];
+    try {
+      for (const o of list) {
+        const kind = fulfillKind(o);
+        if (!kind) continue;
+        try {
+          if (kind === "workshop") await api.fulfillOzonViaWorkshop({ ozonOrderId: o.id, ownWarehouseId: ownWarehouse?.id ?? null });
+          else if (kind === "ship") await api.shipOzonOrder(o.id, ownWarehouse?.id);
+          else await api.fulfillOzonViaProduction({ ozonOrderId: o.id, ownWarehouseId: ownWarehouse!.id });
+          ok.push(o.posting_number);
+        } catch (e) {
+          failed.push({ posting: o.posting_number, msg: errorMessage(e) });
+        }
+      }
+      if (ok.length) toast.success(`Произведено и отправлено: ${ok.length}${failed.length ? `, с ошибками: ${failed.length}` : ""}`);
+      if (failed.length) toast.error(`Не удалось: ${failed.slice(0, 3).map((f) => `${f.posting} — ${f.msg}`).join("; ")}${failed.length > 3 ? ` и ещё ${failed.length - 3}` : ""}`);
+      setSelected(new Set());
+      await reload();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function unship(order: OzonOrder) {
     if (!confirm("Вернуть товар на склад?")) return;
     try {
@@ -357,6 +408,28 @@ export default function OrdersPage() {
     });
   }, [orders, tab, search]);
 
+  // Заказы, которые реально можно закрыть одним действием (для чекбоксов и кнопок).
+  const fulfillable = filtered.filter((o) => fulfillKind(o) !== null);
+  const selectedOrders = fulfillable.filter((o) => selected.has(o.id));
+  const allFulfillableSelected = fulfillable.length > 0 && selectedOrders.length === fulfillable.length;
+  const showBulkBar = tab === "active" && fulfillable.length > 0;
+  const selectable = tab === "active" && !bulkBusy;
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleSelectAll() {
+    setSelected((prev) =>
+      fulfillable.length > 0 && prev.size >= fulfillable.length && fulfillable.every((o) => prev.has(o.id))
+        ? new Set()
+        : new Set(fulfillable.map((o) => o.id)),
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -375,7 +448,7 @@ export default function OrdersPage() {
       />
 
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        <Tabs value={tab} onValueChange={(v) => { setTab(v as typeof tab); setSelected(new Set()); }}>
           <TabsList>
             <TabsTrigger value="active">Активные</TabsTrigger>
             <TabsTrigger value="shipped">Отправленные</TabsTrigger>
@@ -387,6 +460,41 @@ export default function OrdersPage() {
           <Input className="pl-8" placeholder="Поиск по номеру отправления, артикулу, имени…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
+
+      {showBulkBar && (
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3 rounded-md border bg-muted/30 px-3 py-2">
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <Checkbox
+              checked={allFulfillableSelected ? true : selectedOrders.length > 0 ? "indeterminate" : false}
+              onCheckedChange={toggleSelectAll}
+              disabled={bulkBusy}
+              aria-label="Выбрать все заказы"
+            />
+            {selectedOrders.length > 0
+              ? `Выбрано: ${selectedOrders.length} из ${fulfillable.length}`
+              : `Выбрать все (${fulfillable.length})`}
+          </label>
+          <div className="flex items-center gap-2">
+            {selectedOrders.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkBusy}>
+                Снять выделение
+              </Button>
+            )}
+            <Button
+              size="sm"
+              onClick={() => bulkFulfill(selectedOrders.length > 0 ? selectedOrders : fulfillable)}
+              disabled={bulkBusy}
+            >
+              <Hammer className="h-3.5 w-3.5" />
+              {bulkBusy
+                ? "Отправка…"
+                : selectedOrders.length > 0
+                  ? `Произвести и отправить выбранные (${selectedOrders.length})`
+                  : `Произвести и отправить все заказы (${fulfillable.length})`}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="p-10 text-center text-muted-foreground">Загрузка…</div>
@@ -413,6 +521,9 @@ export default function OrdersPage() {
               availabilityByItem={availabilityByItem}
               canSendToWorkshop={workshopEligible(o)}
               canProduceAndShip={canProduceAndShip(o)}
+              selectable={selectable && fulfillKind(o) !== null}
+              selected={selected.has(o.id)}
+              onToggleSelect={() => toggleOne(o.id)}
               onShip={() => ship(o)}
               onUnship={() => unship(o)}
               onSendToWorkshop={() => sendToWorkshop(o)}
@@ -426,12 +537,15 @@ export default function OrdersPage() {
   );
 }
 
-function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip }: {
+function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, selectable, selected, onToggleSelect, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip }: {
   order: OzonOrder;
   ready: boolean;
   availabilityByItem: Map<string, ItemAvailability>;
   canSendToWorkshop: boolean;
   canProduceAndShip: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
   onShip: () => void;
   onUnship: () => void;
   onSendToWorkshop: () => void;
@@ -452,7 +566,16 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
     <Card>
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="flex items-start gap-3 min-w-0">
+            {selectable && (
+              <Checkbox
+                className="mt-1 shrink-0"
+                checked={selected}
+                onCheckedChange={onToggleSelect}
+                aria-label={`Выбрать заказ ${order.posting_number}`}
+              />
+            )}
+            <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <CardTitle className="text-base font-mono">{order.posting_number}</CardTitle>
               <Badge className={statusColor}>{statusLabel}</Badge>
@@ -468,6 +591,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
               {order.shipment_date && <span>Отгрузка до: {formatDateShort(order.shipment_date)}</span>}
               {order.customer_name && <span>{order.customer_name}</span>}
               {order.total_price != null && <span className="font-medium text-foreground">{formatMoney(order.total_price)}</span>}
+            </div>
             </div>
           </div>
           <div className="flex gap-2">
