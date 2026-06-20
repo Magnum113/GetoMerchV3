@@ -451,13 +451,54 @@ function SaleDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChang
 }
 
 function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; onDone?: () => void }) {
+  // Заготовка задаёт тип/ткань/цвет/размер. Готовое изделие — та же комбинация
+  // плюс украшение, поэтому эти атрибуты выбираем один раз (у заготовки), а
+  // финальный SKU выводим автоматически из заготовки + выбранного украшения.
   const [blank, setBlank] = useState<Product | null>(null);
+  const [decorationTypeId, setDecorationTypeId] = useState("");
+  const [designId, setDesignId] = useState("");
   const [finished, setFinished] = useState<Product | null>(null);
   const [warehouseId, setWarehouseId] = useState("");
   const [qty, setQty] = useState("1");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [printStock, setPrintStock] = useState<number | null>(null);
+
+  const [decorationTypes, setDecorationTypes] = useState<DecorationType[]>([]);
+  const [designs, setDesigns] = useState<Design[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      const [dt, d, w] = await Promise.all([api.listDecorationTypes(), api.listDesigns(), api.listWarehouses()]);
+      setDecorationTypes(dt); setDesigns(d);
+      setWarehouseId((prev) => prev || w.find((x) => x.type === "own")?.id || w[0]?.id || "");
+    })();
+  }, [open]);
+
+  // Готовое = заготовка (тип/ткань/цвет/размер) + украшение. Берём атрибуты из
+  // выбранной заготовки, второй раз вводить их не нужно.
+  useEffect(() => {
+    if (!blank || !decorationTypeId || !designId) { setFinished(null); return; }
+    let cancelled = false;
+    api.findOrCreateProduct({
+      category_id: blank.category_id,
+      fabric_id: blank.fabric_id,
+      color_id: blank.color_id,
+      size_id: blank.size_id,
+      design_id: designId,
+      decoration_type_id: decorationTypeId,
+    })
+      .then((p) => { if (!cancelled) setFinished(p); })
+      .catch((e) => { if (!cancelled) { setFinished(null); toast.error(errorMessage(e)); } });
+    return () => { cancelled = true; };
+  }, [blank, decorationTypeId, designId]);
+
+  const selectedDecoration = decorationTypes.find((d) => d.id === decorationTypeId);
+  const designType: DesignType | null =
+    selectedDecoration?.slug === "embroidery" ? "embroidery" :
+    selectedDecoration?.slug === "print" ? "print" : null;
+  const filteredDesigns = designType ? designs.filter((d) => d.type === designType) : designs;
 
   const isPrint = finished?.decoration_type?.slug === "print" && !!finished?.design_id;
 
@@ -472,8 +513,13 @@ function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
   const need = parseInt(qty || "0", 10);
   const printShortfall = isPrint && printStock != null && need > 0 && printStock < need;
 
+  function reset() {
+    setBlank(null); setDecorationTypeId(""); setDesignId(""); setFinished(null);
+    setWarehouseId(""); setQty("1"); setNotes("");
+  }
+
   async function submit() {
-    if (!blank || !finished || !warehouseId || +qty <= 0) return toast.error("Заполните все поля");
+    if (!blank || !finished || !warehouseId || +qty <= 0) return toast.error("Выберите заготовку, украшение, склад и количество");
     setBusy(true);
     try {
       await api.produce({
@@ -484,7 +530,7 @@ function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
         notes,
       });
       toast.success(`Произведено ${qty} шт`);
-      setBlank(null); setFinished(null); setQty("1"); setNotes("");
+      reset();
       onOpenChange(false);
       onDone?.();
     } catch (e) {
@@ -493,48 +539,78 @@ function ProduceDialog({ open, onOpenChange, onDone }: { open: boolean; onOpenCh
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Производство (нанесение принта)</DialogTitle>
-          <DialogDescription>Превратить пустой товар в готовый. Используется для принтов, которые делаешь сам.</DialogDescription>
+          <DialogDescription>Превратить пустой товар в готовый. Тип, ткань, цвет и размер берутся у заготовки — выбираешь их один раз и добавляешь украшение.</DialogDescription>
         </DialogHeader>
-        <div className="grid md:grid-cols-2 gap-6">
+
+        <div className="space-y-4">
           <div className="space-y-2">
-            <div className="text-sm font-semibold">Из чего (пустой)</div>
-            <ProductPicker blankOnly onChange={setBlank} />
+            <div className="text-sm font-semibold">Заготовка (из чего)</div>
+            <ProductPicker blankOnly withDefaults onChange={setBlank} />
           </div>
+
           <div className="space-y-2">
-            <div className="text-sm font-semibold">Что получится (готовый)</div>
-            <ProductPicker finishedOnly onChange={setFinished} />
-          </div>
-        </div>
-        <div className="space-y-4 pt-4 border-t">
-          <div className="space-y-1.5">
-            <Label>Склад производства</Label>
-            <WarehouseSelect value={warehouseId} onChange={setWarehouseId} filterType="own" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Количество</Label>
-              <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+            <div className="text-sm font-semibold">Нанести украшение</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Тип украшения</Label>
+                <Select value={decorationTypeId} onValueChange={(v) => { setDecorationTypeId(v); setDesignId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>{decorationTypes.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Дизайн</Label>
+                <Select value={designId} onValueChange={setDesignId}>
+                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>
+                    {filteredDesigns.length === 0 ? (
+                      <div className="text-xs text-muted-foreground p-2">Добавьте дизайн в разделе «Дизайны»</div>
+                    ) : filteredDesigns.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Комментарий</Label>
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
-            </div>
           </div>
-          {isPrint && printStock != null && (
-            <div className={`text-sm rounded-md border p-2.5 ${printShortfall ? "border-red-300 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200"}`}>
-              Принт <span className="font-medium">{finished?.design?.name}</span> на этом складе: <span className="font-semibold tabular-nums">{printStock} шт</span>
-              {printShortfall && <> · не хватает {need - printStock} шт для производства</>}
-              {!printShortfall && need > 0 && <> · останется {printStock - need} после производства</>}
+
+          {finished && (
+            <div className="rounded-md border bg-muted/30 p-2.5 text-sm flex items-center gap-2 flex-wrap">
+              <span className="text-muted-foreground shrink-0">Получится:</span>
+              <ProductDisplay p={finished} compact />
             </div>
           )}
+
+          <div className="space-y-4 pt-4 border-t">
+            <div className="space-y-1.5">
+              <Label>Склад производства</Label>
+              <WarehouseSelect value={warehouseId} onChange={setWarehouseId} filterType="own" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Количество</Label>
+                <Input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Комментарий</Label>
+                <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+              </div>
+            </div>
+            {isPrint && printStock != null && (
+              <div className={`text-sm rounded-md border p-2.5 ${printShortfall ? "border-red-300 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200"}`}>
+                Принт <span className="font-medium">{finished?.design?.name}</span> на этом складе: <span className="font-semibold tabular-nums">{printStock} шт</span>
+                {printShortfall && <> · не хватает {need - printStock} шт для производства</>}
+                {!printShortfall && need > 0 && <> · останется {printStock - need} после производства</>}
+              </div>
+            )}
+          </div>
         </div>
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
-          <Button onClick={submit} disabled={busy || printShortfall}>{busy ? "..." : "Произвести"}</Button>
+          <Button onClick={submit} disabled={busy || !finished || printShortfall}>{busy ? "..." : "Произвести"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

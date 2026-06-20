@@ -15,11 +15,13 @@ interface ProductPickerProps {
   blankOnly?: boolean;
   /** Если true, разрешает только готовые товары (с дизайном) */
   finishedOnly?: boolean;
+  /** Предвыбрать самый частый тип/ткань (Футболка / Обычная), как в приёмке */
+  withDefaults?: boolean;
   onChange: (product: Product | null) => void;
   className?: string;
 }
 
-export function ProductPicker({ blankOnly = false, finishedOnly = false, onChange, className }: ProductPickerProps) {
+export function ProductPicker({ blankOnly = false, finishedOnly = false, withDefaults = false, onChange, className }: ProductPickerProps) {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [fabrics, setFabrics] = useState<FabricType[]>([]);
   const [colors, setColors] = useState<Color[]>([]);
@@ -45,7 +47,12 @@ export function ProductPicker({ blankOnly = false, finishedOnly = false, onChang
         api.listDecorationTypes(),
       ]);
       setCategories(c); setFabrics(f); setColors(col); setSizes(s); setDesigns(d); setDecorationTypes(dt);
+      if (withDefaults) {
+        setCategoryId((prev) => prev || c.find((x) => x.slug === "tshirt" || /^футболк/i.test(x.name))?.id || c[0]?.id || "");
+        setFabricId((prev) => prev || f.find((x) => x.slug === "regular" || /^обычн/i.test(x.name))?.id || f[0]?.id || "");
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
