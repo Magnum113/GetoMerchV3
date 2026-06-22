@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">komui glitch logo concept</title>
+  <desc id="desc">A pixel-cut glitch typography logo for komui.</desc>
+  <rect width="1200" height="800" fill="#ffffff"/>
+  <g transform="translate(126 376)">
+    <text x="7" y="7" fill="#ff3edb" font-family="Arial Black, Arial, sans-serif" font-size="178" font-weight="900" letter-spacing="-10">komui</text>
+    <text x="-7" y="-8" fill="#145cff" font-family="Arial Black, Arial, sans-serif" font-size="178" font-weight="900" letter-spacing="-10">komui</text>
+    <text x="0" y="0" fill="#101010" font-family="Arial Black, Arial, sans-serif" font-size="178" font-weight="900" letter-spacing="-10">komui</text>
+    <rect x="18" y="-135" width="118" height="20" fill="#fff"/>
+    <rect x="375" y="-60" width="166" height="18" fill="#fff"/>
+    <rect x="690" y="-18" width="150" height="20" fill="#fff"/>
+    <rect x="118" y="28" width="245" height="16" fill="#145cff"/>
+    <rect x="590" y="-117" width="122" height="14" fill="#ff3edb"/>
+    <path d="M802-155h68v68h-68zM836-87h68v68h-68zM768-19h68v68h-68z" fill="#101010"/>
+  </g>
+  <g transform="translate(600 580)" fill="#101010">
+    <path d="M-66-66h40v48h22v-48h40v56h22v-56h40v132h-40V10H36v56H-4V10h-22v56h-40z"/>
+    <rect x="-98" y="-18" width="36" height="36" fill="#145cff"/>
+    <rect x="78" y="-18" width="36" height="36" fill="#ff3edb"/>
+  </g>
+</svg>

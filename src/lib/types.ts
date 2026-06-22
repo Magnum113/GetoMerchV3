@@ -58,6 +58,7 @@ export interface Design {
   id: string;
   name: string;
   type: DesignType;
+  code: string | null;
   description: string | null;
   image_url: string | null;
   created_at: string;
@@ -80,6 +81,10 @@ export interface Product {
   design_id: string | null;
   decoration_type_id: string | null;
   sku: string | null;
+  ozon_sku: number | null;
+  design_version: string | null;
+  hoodie_fit: string | null;
+  hoodie_fabric: string | null;
   is_blank: boolean;
   cost_price: number | null;
   sale_price: number | null;
@@ -147,6 +152,9 @@ export interface WorkshopOrderItem {
   result_product_id: string | null;
   quantity: number;
   notes: string | null;
+  design_version: string | null;
+  hoodie_fit: string | null;
+  hoodie_fabric: string | null;
   blank_product?: Product;
   design?: Design;
   decoration_type?: DecorationType;

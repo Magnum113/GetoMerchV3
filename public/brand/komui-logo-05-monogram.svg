@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">komui premium monogram logo concept</title>
+  <desc id="desc">A premium interlocking k monogram and lowercase komui wordmark.</desc>
+  <rect width="1200" height="800" fill="#fffdf8"/>
+  <g transform="translate(600 275)" fill="none" stroke="#111" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M-88 112V-112"/>
+    <path d="M-86 12 76-112"/>
+    <path d="M-36 14 90 112"/>
+    <path d="M-5-26c42 0 74 28 74 65 0 25-14 48-36 59" stroke="#a7a7a7" stroke-width="18"/>
+    <path d="M-132-138h264v264" stroke="#111" stroke-width="16"/>
+  </g>
+  <text x="600" y="560" text-anchor="middle" fill="#111" font-family="Arial, Helvetica, sans-serif" font-size="150" font-weight="800" letter-spacing="-4">komui</text>
+  <path d="M452 606h296" stroke="#a7a7a7" stroke-width="6" stroke-linecap="round"/>
+  <text x="600" y="660" text-anchor="middle" fill="#666" font-family="Arial, sans-serif" font-size="25" letter-spacing="6">MONOGRAM / LABEL MARK</text>
+</svg>

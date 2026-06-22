@@ -32,3 +32,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# scratch / working assets (product photos, generated)
+/tmp/
+
+# generated sku_mapping outputs (regenerable)
+/sku_mapping/ozon-sku-map.json
+/sku_mapping/reconcile-report.json

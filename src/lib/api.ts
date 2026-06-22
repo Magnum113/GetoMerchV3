@@ -104,9 +104,15 @@ export const api = {
     size_id: string;
     design_id?: string | null;
     decoration_type_id?: string | null;
+    design_version?: string | null;
+    hoodie_fit?: string | null;
+    hoodie_fabric?: string | null;
   }): Promise<Product> {
     const sb = createClient();
     const isBlank = !input.design_id && !input.decoration_type_id;
+    const fit = input.hoodie_fit ?? null;
+    const fabric = input.hoodie_fabric ?? null;
+
     let query = sb
       .from("merch_products")
       .select(PRODUCT_SELECT)
@@ -120,12 +126,23 @@ export const api = {
     } else {
       query = query.eq("design_id", input.design_id!).eq("decoration_type_id", input.decoration_type_id!);
     }
+    // Сужаем по измерениям варианта ТОЛЬКО когда они заданы — для дизайнов с
+    // единственным вариантом поведение не меняется. Для дизайна с несколькими
+    // вариантами (V01/V02, REG/CRP, FLC/NF) вызывающий обязан их передать.
+    if (input.design_version != null) query = query.eq("design_version", input.design_version);
+    if (fit != null) query = query.eq("hoodie_fit", fit);
+    if (fabric != null) query = query.eq("hoodie_fabric", fabric);
 
-    const { data: existing, error: lookupErr } = await query.maybeSingle();
+    const { data: matches, error: lookupErr } = await query;
     if (lookupErr) throw toError(lookupErr);
-    if (existing) return existing as Product;
+    if ((matches?.length ?? 0) > 1) {
+      throw new Error("Несколько вариантов SKU для этой комбинации — уточните версию/посадку/ткань.");
+    }
+    if (matches && matches.length === 1) return matches[0] as Product;
 
-    const sku = await buildSku(input, isBlank);
+    // Новый готовый SKU по умолчанию V01 (совпадает с бэкфиллом каталога).
+    const version = isBlank ? null : (input.design_version ?? "V01");
+    const sku = await buildSku({ ...input, design_version: version, hoodie_fit: fit, hoodie_fabric: fabric }, isBlank);
     const { data, error } = await sb
       .from("merch_products")
       .insert({
@@ -136,6 +153,9 @@ export const api = {
         design_id: input.design_id ?? null,
         decoration_type_id: input.decoration_type_id ?? null,
         is_blank: isBlank,
+        design_version: version,
+        hoodie_fit: fit,
+        hoodie_fabric: fabric,
         sku,
       })
       .select(PRODUCT_SELECT)
@@ -488,6 +508,9 @@ export const api = {
       decorationTypeId: string;
       quantity: number;
       notes?: string;
+      designVersion?: string | null;
+      hoodieFit?: string | null;
+      hoodieFabric?: string | null;
     }[];
   }): Promise<string> {
     const sb = createClient();
@@ -512,6 +535,9 @@ export const api = {
       decoration_type_id: it.decorationTypeId,
       quantity: it.quantity,
       notes: it.notes ?? null,
+      design_version: it.designVersion ?? null,
+      hoodie_fit: it.hoodieFit ?? null,
+      hoodie_fabric: it.hoodieFabric ?? null,
     }));
     const { error: itemsErr } = await sb.from("merch_workshop_order_items").insert(itemsPayload);
     if (itemsErr) throw toError(itemsErr);
@@ -561,6 +587,9 @@ export const api = {
           size_id: it.blank_product.size_id,
           design_id: it.design_id,
           decoration_type_id: it.decoration_type_id,
+          design_version: it.design_version ?? null,
+          hoodie_fit: it.hoodie_fit ?? null,
+          hoodie_fabric: it.hoodie_fabric ?? null,
         });
 
         // Update item with result_product_id
@@ -1033,6 +1062,9 @@ async function buildSku(
     size_id: string;
     design_id?: string | null;
     decoration_type_id?: string | null;
+    design_version?: string | null;
+    hoodie_fit?: string | null;
+    hoodie_fabric?: string | null;
   },
   isBlank: boolean,
 ): Promise<string> {
@@ -1050,6 +1082,11 @@ async function buildSku(
       sb.from("merch_decoration_types").select("slug").eq("id", input.decoration_type_id).single(),
     ]);
     sku += `-${slugify(des?.name ?? "x")}-${dt?.slug ?? "x"}`;
+    // Посадка/ткань худи — чтобы авто-генерируемый артикул оставался
+    // уникальным, когда у комбо есть варианты посадки/ткани.
+    // (Версия из схемы убрана — разные версии макета = разные дизайн-коды.)
+    if (input.hoodie_fit) sku += `-${input.hoodie_fit}`;
+    if (input.hoodie_fabric) sku += `-${input.hoodie_fabric}`;
   } else {
     sku += "-blank";
   }

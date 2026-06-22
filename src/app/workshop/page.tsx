@@ -158,12 +158,14 @@ interface ItemDraft {
   decorationTypeId: string;
   quantity: string;
   notes: string;
+  hoodieFit: string;
+  hoodieFabric: string;
 }
 
 function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId, ownWarehouseId }: { open: boolean; onOpenChange: (v: boolean) => void; onDone: () => void; defaultWorkshopId: string; ownWarehouseId: string | null }) {
   const [workshopId, setWorkshopId] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<ItemDraft[]>([{ blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "" }]);
+  const [items, setItems] = useState<ItemDraft[]>([{ blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "", hoodieFit: "REG", hoodieFabric: "NF" }]);
   const [busy, setBusy] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [decorationTypes, setDecorationTypes] = useState<DecorationType[]>([]);
@@ -180,7 +182,7 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId, ownW
     setItems((xs) => xs.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   }
   function addItem() {
-    setItems((xs) => [...xs, { blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "" }]);
+    setItems((xs) => [...xs, { blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "", hoodieFit: "REG", hoodieFabric: "NF" }]);
   }
   function removeItem(i: number) {
     setItems((xs) => xs.filter((_, idx) => idx !== i));
@@ -196,16 +198,21 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId, ownW
         workshopId,
         notes,
         ownWarehouseId,
-        items: valid.map((it) => ({
-          blankProductId: it.blank!.id,
-          designId: it.designId,
-          decorationTypeId: it.decorationTypeId,
-          quantity: +it.quantity,
-          notes: it.notes,
-        })),
+        items: valid.map((it) => {
+          const isHoodie = it.blank!.category?.slug === "hoodie";
+          return {
+            blankProductId: it.blank!.id,
+            designId: it.designId,
+            decorationTypeId: it.decorationTypeId,
+            quantity: +it.quantity,
+            notes: it.notes,
+            hoodieFit: isHoodie ? it.hoodieFit : null,
+            hoodieFabric: isHoodie ? it.hoodieFabric : null,
+          };
+        }),
       });
       toast.success("Заказ создан");
-      setItems([{ blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "" }]);
+      setItems([{ blank: null, designId: "", decorationTypeId: "", quantity: "1", notes: "", hoodieFit: "REG", hoodieFabric: "NF" }]);
       setNotes("");
       onOpenChange(false);
       onDone();
@@ -277,6 +284,31 @@ function CreateOrderDialog({ open, onOpenChange, onDone, defaultWorkshopId, ownW
                     <Input type="number" min="1" value={it.quantity} onChange={(e) => update(idx, { quantity: e.target.value })} />
                   </div>
                 </div>
+
+                {it.blank?.category?.slug === "hoodie" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs mb-1.5 block">Посадка</Label>
+                      <Select value={it.hoodieFit} onValueChange={(v) => update(idx, { hoodieFit: v })}>
+                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="REG">REG · обычная</SelectItem>
+                          <SelectItem value="CRP">CRP · укороченная</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs mb-1.5 block">Ткань</Label>
+                      <Select value={it.hoodieFabric} onValueChange={(v) => update(idx, { hoodieFabric: v })}>
+                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="FLC">FLC · с начёсом</SelectItem>
+                          <SelectItem value="NF">NF · без начёса</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             <Button variant="outline" onClick={addItem}><Plus className="h-4 w-4" /> Ещё позиция</Button>

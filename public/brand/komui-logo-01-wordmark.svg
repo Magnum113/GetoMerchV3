@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">komui wordmark logo concept</title>
+  <desc id="desc">A bold lowercase komui wordmark with an abstract eye mark inside the o.</desc>
+  <rect width="1200" height="800" fill="#fffdf7"/>
+  <g transform="translate(138 315)">
+    <text x="0" y="0" fill="#101010" font-family="Arial Black, Arial, sans-serif" font-size="185" font-weight="900" letter-spacing="-14">k</text>
+    <text x="150" y="0" fill="#101010" font-family="Arial Black, Arial, sans-serif" font-size="185" font-weight="900" letter-spacing="-14">o</text>
+    <text x="310" y="0" fill="#101010" font-family="Arial Black, Arial, sans-serif" font-size="185" font-weight="900" letter-spacing="-14">mui</text>
+    <ellipse cx="223" cy="-58" rx="48" ry="30" fill="none" stroke="#00b7ff" stroke-width="14"/>
+    <circle cx="223" cy="-58" r="13" fill="#101010"/>
+    <path d="M188-108 258-8" stroke="#00b7ff" stroke-width="10" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(500 500)">
+    <circle cx="0" cy="0" r="74" fill="#101010"/>
+    <ellipse cx="0" cy="0" rx="45" ry="28" fill="none" stroke="#00b7ff" stroke-width="12"/>
+    <circle cx="0" cy="0" r="12" fill="#fffdf7"/>
+    <path d="M-32-48 34 50" stroke="#00b7ff" stroke-width="9" stroke-linecap="round"/>
+  </g>
+  <text x="600" y="640" text-anchor="middle" fill="#6d6d6d" font-family="Arial, sans-serif" font-size="28" letter-spacing="5">WORDMARK / ICON SYSTEM</text>
+</svg>

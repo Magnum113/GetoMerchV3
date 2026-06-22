@@ -61,7 +61,7 @@ export async function POST() {
     );
 
     const [{ data: products, error }, priceMap] = await Promise.all([
-      supabase.from("merch_products").select("id, sku, sale_price").not("sku", "is", null),
+      supabase.from("merch_products").select("id, sku, legacy_skus, sale_price").not("sku", "is", null),
       fetchAllOzonPrices(),
     ]);
     if (error) throw error;
@@ -73,7 +73,14 @@ export async function POST() {
 
     for (const p of products ?? []) {
       if (!p.sku) continue;
-      const price = priceMap[p.sku];
+      // Цену ищем по текущему offer_id (sku) И по legacy_skus — это держит
+      // синхронизацию цен живой в окне переименования: пока Ozon отдаёт старый
+      // offer_id, а в БД уже стоит новый артикул (или наоборот).
+      const candidates = [p.sku, ...((p.legacy_skus as string[] | null) ?? [])];
+      let price: OzonPriceItem["price"] | undefined;
+      for (const c of candidates) {
+        if (priceMap[c]) { price = priceMap[c]; break; }
+      }
       if (!price) {
         notFound++;
         if (notFoundList.length < 10) notFoundList.push(p.sku);

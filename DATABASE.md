@@ -178,6 +178,7 @@ ID — `uuid` с дефолтом `gen_random_uuid()`. Временные мет
 |---|---|---|---|---|
 | `id` | uuid | NO | `gen_random_uuid()` | PK |
 | `name` | text | NO | — | «Сатору Годжо (ЧБ)», «Itachi Swoosh» |
+| `code` | text | YES | — | Код дизайна `D#` (без ведущих нулей: `D1`, `D2`, … `D20`). Неуникальный (один код может быть на print- и embroidery-строке, напр. `D8` = Gravity принт+вышивка). NULL у дизайнов без листинга. Разные версии макета = разные коды (`D16` vs `D20`) |
 | `type` | text | NO | `'print'` | `print` / `embroidery`. CHECK |
 | `description` | text | YES | — | Свободный текст |
 | `image_url` | text | YES | — | URL картинки для превью в каталоге и в принт-карточке |
@@ -246,7 +247,11 @@ ID — `uuid` с дефолтом `gen_random_uuid()`. Временные мет
 | `size_id` | uuid | NO | — | FK → `merch_sizes` (NO ACTION) |
 | `design_id` | uuid | YES | — | FK → `merch_designs` (CASCADE). NULL для заготовок |
 | `decoration_type_id` | uuid | YES | — | FK → `merch_decoration_types` (NO ACTION). NULL для заготовок |
-| `sku` | text | YES | — | UNIQUE. Совпадает с `offer_id` в Ozon |
+| `sku` | text | YES | — | **UNIQUE — первичная идентичность.** Совпадает с `offer_id` в Ozon. Меняется при переименовании |
+| `ozon_sku` | bigint | YES | — | Числовой Ozon SKU. **UNIQUE (`merch_products_ozon_sku_key`) — вторая идентичность по маркетплейсу.** Стабилен при переименовании `offer_id`. Бэкфилл из Ozon API (`sku_mapping/backfill-ozon-sku.mjs`) |
+| `design_version` | text | YES | — | **Устарело.** Версия макета убрана из схемы артикулов: разные версии = разные дизайн-коды (напр. серый Сатору v1=`D16`, v2=`D20`). Колонка оставлена как историческое поле, в новых артикулах не используется |
+| `hoodie_fit` | text | YES | — | Посадка худи: `REG`/`CRP`. NULL для не-худи. CHECK `hoodie_fit IN ('REG','CRP')`. Описательное |
+| `hoodie_fabric` | text | YES | — | Ткань худи: `FLC` (с начёсом) / `NF` (без). NULL для не-худи. CHECK `hoodie_fabric IN ('FLC','NF')`. Описательное |
 | `is_blank` | boolean | NO | `false` | `true` ⇒ design_id и decoration_type_id обязаны быть NULL |
 | `cost_price` | numeric | YES | — | Закупочная себестоимость, ₽. Для заготовок (пустых) залита одноразово, для готовых выставлена через `/products` |
 | `sale_price` | numeric | YES | — | Розничная цена (последняя известная). Тянется через `sync-prices` |
@@ -265,7 +270,8 @@ ID — `uuid` с дефолтом `gen_random_uuid()`. Временные мет
   и с дизайном, и с типом нанесения.
 - `UNIQUE (sku)` — `offer_id` уникален в каталоге
 - Уникальный индекс пустой комбо: `UNIQUE (category, fabric, color, size) WHERE is_blank=true`
-- Уникальный индекс готового комбо: `UNIQUE (category, fabric, color, size, design, decoration_type) WHERE is_blank=false`
+- `UNIQUE (ozon_sku) WHERE ozon_sku IS NOT NULL` (`merch_products_ozon_sku_key`) — идентичность по маркетплейсу
+- Индекс готового комбо `idx_merch_products_finished_combo (category, fabric, color, size, design, decoration_type) WHERE is_blank=false` — **НЕ уникальный** (только для скорости поиска в `findOrCreateProduct`). Идентичность готового держат `sku` + `ozon_sku`; защита от дублей — `UNIQUE(sku)` + `UNIQUE(ozon_sku)` + `buildSku` (дописывает суффикс варианта). Варианты (V01/V02, REG/CRP, FLC/NF) = просто разные строки с разными артикулами
 - GIN-индекс на `legacy_skus` — быстрый поиск по старым `offer_id`
 
 **Где используется**
@@ -472,6 +478,9 @@ ARCHITECTURE 1).
 | `result_product_id` | uuid | YES | — | FK → `merch_products` (SET NULL). Создаётся при `received` |
 | `quantity` | integer | NO | — | CHECK `> 0` |
 | `notes` | text | YES | — | |
+| `design_version` | text | YES | — | Целевая версия макета. Передаётся в `findOrCreateProduct` при приёмке, чтобы выбрать нужный вариант |
+| `hoodie_fit` | text | YES | — | Целевая посадка худи (`REG`/`CRP`). Дизамбигуация варианта при приёмке |
+| `hoodie_fabric` | text | YES | — | Целевая ткань худи (`FLC`/`NF`). Дизамбигуация варианта при приёмке |
 
 **Индексы**
 
@@ -779,9 +788,11 @@ merch_expense_categories ──< merch_expenses.category_id  (SET NULL)
 
 | Таблица | Уникальность | Зачем |
 |---|---|---|
-| `merch_products` | `sku` | `offer_id` Ozon должен быть уникален |
+| `merch_products` | `sku` | Артикул (`offer_id`) — первичная идентичность |
+| `merch_products` | `ozon_sku WHERE NOT NULL` | Идентичность по маркетплейсу (стабильна при переименовании) |
 | `merch_products` | `(category, fabric, color, size) WHERE is_blank` | Не дублировать заготовки |
-| `merch_products` | `(category, fabric, color, size, design, decoration_type) WHERE NOT is_blank` | Не дублировать готовые |
+
+> Готовый товар идентифицируется артикулом (`sku`/`ozon_sku`), а НЕ кортежем атрибутов: `idx_merch_products_finished_combo` — обычный индекс. version/fit/fabric — описательные. Дубли готовых ловит `UNIQUE(sku)` + `UNIQUE(ozon_sku)` + `buildSku`.
 | `merch_inventory` | `(product_id, warehouse_id)` | Один остаток на пару |
 | `merch_print_inventory` | `(design_id, warehouse_id)` | Один остаток принта на пару |
 | `merch_ozon_orders` | `posting_number` | Идемпотентный апсерт sync-orders |
