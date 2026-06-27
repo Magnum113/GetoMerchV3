@@ -24,10 +24,8 @@ function readEnv(): { baseUrl: string; token: string; basicAuth: string | null }
   return { baseUrl: baseUrl.replace(/\/$/, ""), token, basicAuth };
 }
 
-export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFetchInit) {
-  const { baseUrl, token, basicAuth } = readEnv();
-  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-
+function buildHeaders(opts: { hasBody: boolean; idempotencyKey?: string }) {
+  const { token, basicAuth } = readEnv();
   // API-токен передаём в собственном заголовке X-Komui-Admin-Token, чтобы он
   // не конфликтовал с Authorization, который на staging занят Basic Auth.
   // Backend KOMUI читает токен именно из этого заголовка.
@@ -35,8 +33,8 @@ export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFe
     "X-Komui-Admin-Token": token,
     Accept: "application/json",
   };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
+  if (opts.hasBody) headers["Content-Type"] = "application/json";
+  if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
 
   if (basicAuth) {
     const b64 = Buffer.from(basicAuth, "utf8").toString("base64");
@@ -46,6 +44,22 @@ export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFe
     // оставляем его, если staging-логин не настроен.
     headers["Authorization"] = `Bearer ${token}`;
   }
+  return headers;
+}
+
+function parseBody(text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFetchInit) {
+  const { baseUrl } = readEnv();
+  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = buildHeaders({ hasBody: body !== undefined, idempotencyKey });
 
   const res = await fetch(url, {
     method,
@@ -55,14 +69,7 @@ export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFe
   });
 
   const text = await res.text();
-  let json: unknown = null;
-  if (text) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      // Non-JSON response — keep as text below.
-    }
-  }
+  const json = parseBody(text);
 
   if (!res.ok) {
     const msg =
@@ -78,6 +85,28 @@ export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFe
   }
 
   return json;
+}
+
+// Вариант, который НЕ бросает на 2xx и 202 — нужен для runtime/fallback,
+// где 202 = pending и клиент должен начать polling. Возвращает status и body
+// напрямую, чтобы прокси-роут мог их передать дальше.
+export async function komuiFetchRaw({ method, path, body, idempotencyKey }: KomuiFetchInit): Promise<{
+  status: number;
+  body: unknown;
+  rawText: string;
+}> {
+  const { baseUrl } = readEnv();
+  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = buildHeaders({ hasBody: body !== undefined, idempotencyKey });
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  return { status: res.status, body: parseBody(text), rawText: text };
 }
 
 export class KomuiApiError extends Error {

@@ -17,6 +17,7 @@ import {
   ShoppingBag,
   Wallet,
   Store,
+  Cable,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +43,10 @@ const NAV: NavItem[] = [
 // основной админкой.
 const KOMUI_NAV: NavSection = {
   label: "Админка Komui",
-  items: [{ href: "/komui", label: "Импорт из Ozon", icon: Store }],
+  items: [
+    { href: "/komui/import", label: "Импорт из Ozon", icon: Store },
+    { href: "/komui/runtime", label: "Production runtime", icon: Cable },
+  ],
 };
 
 function isActive(pathname: string, href: string) {

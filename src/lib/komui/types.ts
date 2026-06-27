@@ -140,3 +140,76 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   failed: "Ошибка",
   partial: "Частично",
 };
+
+// =============================================================================
+// Runtime / traffic switch — управление режимом komui.ru: новый сервер vs legacy
+// Vercel/Supabase. Backend KOMUI отвечает за фактическое переключение nginx,
+// мы только показываем статус и шлём команду.
+// =============================================================================
+
+export type RuntimeMode = "server" | "legacy" | "staging" | (string & {});
+
+export type RuntimeState =
+  | "idle"
+  | "prepared"
+  | "applied"
+  | "failed"
+  | "rejected"
+  | (string & {});
+
+export type TrafficSwitch = {
+  enabled?: boolean;
+  target?: RuntimeMode;
+  currentMode?: RuntimeMode;
+  state?: RuntimeState;
+  legacyOriginConfigured?: boolean;
+  productionVhostEnabled?: boolean;
+  message?: string;
+  updatedAt?: string;
+  lastRequestId?: string;
+  nginxTest?: string;
+  constraints?: string[];
+};
+
+export type RuntimeStatus = {
+  runtimeMode: RuntimeMode;
+  legacyFallbackConfigured?: boolean;
+  trafficSwitchEnabled?: boolean;
+  service?: string;
+  trafficSwitch: TrafficSwitch;
+};
+
+export type RuntimeSwitchResponse = {
+  requestId?: string;
+  status: "applied" | "prepared" | "pending" | "failed" | "rejected" | (string & {});
+  mode?: RuntimeMode;
+  message?: string;
+  productionVhostEnabled?: boolean;
+  nginxTest?: string;
+  trafficSwitch?: TrafficSwitch;
+  error?: { message?: string; code?: string } | string;
+};
+
+export const RUNTIME_MODE_LABELS: Record<string, string> = {
+  server: "Новый сервер",
+  legacy: "Legacy Vercel/Supabase",
+  staging: "Staging",
+};
+
+export const RUNTIME_STATE_LABELS: Record<string, string> = {
+  idle: "Idle",
+  prepared: "Подготовлено",
+  applied: "Применено",
+  failed: "Ошибка",
+  rejected: "Отклонено",
+};
+
+export function runtimeModeLabel(m?: RuntimeMode): string {
+  if (!m) return "—";
+  return RUNTIME_MODE_LABELS[m] ?? m;
+}
+
+export function runtimeStateLabel(s?: RuntimeState): string {
+  if (!s) return "—";
+  return RUNTIME_STATE_LABELS[s] ?? s;
+}
