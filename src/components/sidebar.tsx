@@ -16,10 +16,15 @@ import {
   X,
   ShoppingBag,
   Wallet,
+  Store,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV = [
+type NavItem = { href: string; label: string; icon: typeof LineChart };
+type NavSection = { label: string; items: NavItem[] };
+
+// Основная админка (Ozon-учёт). НЕ редактировать в задачах про Komui.
+const NAV: NavItem[] = [
   { href: "/", label: "Аналитика", icon: LineChart },
   { href: "/orders", label: "Заказы Ozon", icon: ShoppingBag },
   { href: "/inventory", label: "Остатки", icon: WarehouseIcon },
@@ -30,6 +35,19 @@ const NAV = [
   { href: "/designs", label: "Дизайны", icon: Palette },
   { href: "/settings", label: "Справочники", icon: Settings },
 ];
+
+// Отдельная админка бренда Komui (свой сайт, свой backend). Полностью
+// независима от учёта Ozon выше — упоминание "Ozon" в каком-нибудь пункте
+// внутри Komui означает только источник данных для импорта, а не связь с
+// основной админкой.
+const KOMUI_NAV: NavSection = {
+  label: "Админка Komui",
+  items: [{ href: "/komui", label: "Импорт из Ozon", icon: Store }],
+};
+
+function isActive(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -45,10 +63,30 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
         {NAV.map((item) => {
-          const active =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+          const active = isActive(pathname, item.href);
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="truncate">{item.label}</span>
+            </Link>
+          );
+        })}
+
+        <div className="pt-4 pb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {KOMUI_NAV.label}
+        </div>
+        {KOMUI_NAV.items.map((item) => {
+          const active = isActive(pathname, item.href);
           const Icon = item.icon;
           return (
             <Link
@@ -104,8 +142,30 @@ export function MobileHeader() {
           />
           <nav className="lg:hidden fixed top-14 left-0 right-0 z-40 bg-background border-b shadow-lg p-2 space-y-0.5 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
             {NAV.map((item) => {
-              const active =
-                item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              const active = isActive(pathname, item.href);
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-4 py-3 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-foreground hover:bg-accent",
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+            <div className="pt-3 pb-1 px-4 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {KOMUI_NAV.label}
+            </div>
+            {KOMUI_NAV.items.map((item) => {
+              const active = isActive(pathname, item.href);
               const Icon = item.icon;
               return (
                 <Link
