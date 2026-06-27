@@ -42,6 +42,23 @@ type SwitchOutcome =
   | { kind: "pending"; message: string }
   | { kind: "failed"; message: string };
 
+// Достаём код ошибки из ответа backend независимо от формы (строка,
+// {error:{code}}, {code}). Нужно чтобы поймать legacy_origin_unreachable.
+function extractErrorCode(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (typeof d.error === "string") return d.error;
+  if (d.error && typeof d.error === "object") {
+    const code = (d.error as Record<string, unknown>).code;
+    if (typeof code === "string") return code;
+  }
+  if (typeof d.code === "string") return d.code;
+  return null;
+}
+
+const LEGACY_UNREACHABLE_MESSAGE =
+  "Сервер не может достучаться до Vercel напрямую — нужен ручной DNS rollback или нужно починить egress/VPN на сервере.";
+
 export function RuntimePanel() {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,6 +70,9 @@ export function RuntimePanel() {
   const [switching, setSwitching] = useState(false);
 
   const [outcome, setOutcome] = useState<SwitchOutcome | null>(null);
+  // Если backend ответил legacy_origin_unreachable — держим legacy кнопку
+  // выключенной и показываем красное предупреждение, пока статус не обновится.
+  const [legacyUnreachable, setLegacyUnreachable] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollStop = useRef<number>(0);
 
@@ -66,6 +86,9 @@ export function RuntimePanel() {
       }
       setStatus(data);
       setError(null);
+      // Свежий статус с сервера может означать что egress починили — снимаем
+      // блокировку legacy кнопки. Если ошибка вернётся снова — снова заблокируем.
+      setLegacyUnreachable(false);
       return data;
     } catch (e) {
       const msg = errorMessage(e);
@@ -130,7 +153,15 @@ export function RuntimePanel() {
         }),
       });
       const data = (await res.json()) as RuntimeSwitchResponse | { error: string };
+      const errorCode = extractErrorCode(data);
       if (!res.ok && res.status !== 202) {
+        if (dialogMode === "legacy" && errorCode === "legacy_origin_unreachable") {
+          setLegacyUnreachable(true);
+          setDialogMode(null);
+          setOutcome({ kind: "failed", message: LEGACY_UNREACHABLE_MESSAGE });
+          toast.error("Legacy origin недоступен с сервера");
+          return;
+        }
         const msg =
           ("error" in data && typeof data.error === "string" && data.error) ||
           (data && "error" in data &&
@@ -194,7 +225,11 @@ export function RuntimePanel() {
   const switchToServerDisabled =
     switching || !trafficSwitchEnabled || currentMode === "server";
   const switchToLegacyDisabled =
-    switching || !trafficSwitchEnabled || !legacyConfigured || currentMode === "legacy";
+    switching ||
+    !trafficSwitchEnabled ||
+    !legacyConfigured ||
+    legacyUnreachable ||
+    currentMode === "legacy";
 
   return (
     <div className="space-y-5">
@@ -307,6 +342,18 @@ export function RuntimePanel() {
         </Card>
       )}
 
+      {legacyUnreachable && (
+        <Card>
+          <CardContent className="p-4 flex items-start gap-3 bg-state-danger">
+            <XCircle className="h-5 w-5 text-state-danger-fg shrink-0 mt-0.5" />
+            <div className="text-sm text-state-danger-fg">
+              <div className="font-medium">Legacy origin недоступен</div>
+              <div className="opacity-90 mt-0.5">{LEGACY_UNREACHABLE_MESSAGE}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {ts?.constraints && ts.constraints.length > 0 && (
         <Card>
           <CardContent className="p-4 space-y-2">
@@ -349,7 +396,14 @@ export function RuntimePanel() {
           {trafficSwitchEnabled && !legacyConfigured && (
             <div className="text-xs text-muted-foreground">
               «Вернуть на Vercel/Supabase» доступно после настройки LEGACY_ORIGIN
-              на сервере.
+              на сервере и успешной проверки доступности legacy origin.
+            </div>
+          )}
+          {trafficSwitchEnabled && legacyConfigured && legacyUnreachable && (
+            <div className="text-xs text-state-danger-fg">
+              Переключение на legacy заблокировано — backend сообщил
+              <code className="font-mono"> legacy_origin_unreachable</code>.
+              Обновите статус, когда egress/VPN восстановят.
             </div>
           )}
         </CardContent>
