@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowRight,
+  Braces,
   CheckCircle2,
   ClipboardCopy,
   Download,
@@ -69,6 +70,67 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "conflict", label: "Конфликты" },
 ];
 
+// Группируем action по семантике. Backend выдаёт глаголы вроде
+// "update_storefront_offer", "create_storefront_product", "noop" — нам важно
+// отделить create от update, чтобы в сводке честно показать что произойдёт.
+function classifyAction(action: string): "create" | "update" | "noop" | "other" {
+  const a = action.toLowerCase();
+  if (a === "noop" || a === "skip") return "noop";
+  if (
+    a.startsWith("create_") ||
+    a.startsWith("insert_") ||
+    a.startsWith("add_")
+  )
+    return "create";
+  if (
+    a.startsWith("update_") ||
+    a.startsWith("upsert_") ||
+    a.startsWith("sync_") ||
+    a.startsWith("apply_")
+  )
+    return "update";
+  return "other";
+}
+
+type ActionableBreakdown = {
+  postgresCreate: number;
+  postgresUpdate: number;
+  postgresOther: number;
+  supabaseCreate: number;
+  supabaseUpdate: number;
+  supabaseOther: number;
+  newProducts: number; // позиции без targetProduct
+};
+
+function computeBreakdown(items: PreviewItem[]): ActionableBreakdown {
+  const acc: ActionableBreakdown = {
+    postgresCreate: 0,
+    postgresUpdate: 0,
+    postgresOther: 0,
+    supabaseCreate: 0,
+    supabaseUpdate: 0,
+    supabaseOther: 0,
+    newProducts: 0,
+  };
+  for (const it of items) {
+    if (!it.targetProduct) acc.newProducts += 1;
+    for (const a of it.plannedActions) {
+      const cls = classifyAction(a.action);
+      if (cls === "noop") continue;
+      if (a.target === "serverPostgres") {
+        if (cls === "create") acc.postgresCreate += 1;
+        else if (cls === "update") acc.postgresUpdate += 1;
+        else acc.postgresOther += 1;
+      } else if (a.target === "supabase") {
+        if (cls === "create") acc.supabaseCreate += 1;
+        else if (cls === "update") acc.supabaseUpdate += 1;
+        else acc.supabaseOther += 1;
+      }
+    }
+  }
+  return acc;
+}
+
 function statusBadgeClasses(status: ItemStatus): string {
   switch (status) {
     case "matched":
@@ -130,6 +192,10 @@ export function OzonImportTab() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // Item, открытый в JSON-debug диалоге — показывает все поля как пришли с
+  // backend (matchReason, targetProduct, plannedActions, …).
+  const [inspectItem, setInspectItem] = useState<PreviewItem | null>(null);
 
   const [job, setJob] = useState<JobResponse | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -246,6 +312,11 @@ export function OzonImportTab() {
       (it) => matchesFilter(it, filter) && matchesSearch(it, query),
     );
   }, [preview, filter, query]);
+
+  const breakdown = useMemo(
+    () => (preview ? computeBreakdown(preview.items) : null),
+    [preview],
+  );
 
   const hasErrors = useMemo(() => {
     if (!preview) return false;
@@ -365,7 +436,7 @@ export function OzonImportTab() {
 
       {preview && (
         <>
-          <SummaryCards preview={preview} />
+          <SummaryCards preview={preview} breakdown={breakdown} />
 
           {preview.warnings.length > 0 && (
             <Card>
@@ -416,7 +487,7 @@ export function OzonImportTab() {
 
               <Separator />
 
-              <ItemsTable items={filteredItems} />
+              <ItemsTable items={filteredItems} onInspect={setInspectItem} />
 
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                 <div className="text-xs text-muted-foreground">
@@ -450,6 +521,47 @@ export function OzonImportTab() {
 
       {job && <JobPanel job={job} />}
 
+      <Dialog
+        open={inspectItem !== null}
+        onOpenChange={(open) => {
+          if (!open) setInspectItem(null);
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>JSON позиции</DialogTitle>
+            <DialogDescription>
+              Поля как пришли с backend: matchReason, targetProduct,
+              targetMerchProduct, plannedActions, offerId, sku, productId.
+            </DialogDescription>
+          </DialogHeader>
+          {inspectItem && (
+            <pre className="text-[11px] font-mono bg-muted/50 rounded-md p-3 overflow-auto max-h-[60vh] whitespace-pre-wrap break-words">
+              {JSON.stringify(inspectItem, null, 2)}
+            </pre>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!inspectItem) return;
+                try {
+                  await navigator.clipboard.writeText(
+                    JSON.stringify(inspectItem, null, 2),
+                  );
+                  toast.success("JSON скопирован");
+                } catch (e) {
+                  toast.error(errorMessage(e));
+                }
+              }}
+            >
+              <ClipboardCopy className="h-4 w-4" /> Копировать
+            </Button>
+            <Button onClick={() => setInspectItem(null)}>Закрыть</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
@@ -480,9 +592,20 @@ export function OzonImportTab() {
   );
 }
 
-function SummaryCards({ preview }: { preview: PreviewResponse }) {
+function SummaryCards({
+  preview,
+  breakdown,
+}: {
+  preview: PreviewResponse;
+  breakdown: ActionableBreakdown | null;
+}) {
   const s = preview.summary;
-  const cards: { label: string; value: number; tone?: string }[] = [
+  const cards: {
+    label: string;
+    value: number;
+    tone?: string;
+    breakdown?: { create: number; update: number; other: number };
+  }[] = [
     { label: "Из Ozon", value: s.totalOzonItems },
     {
       label: "Сопоставлено карточек",
@@ -495,14 +618,28 @@ function SummaryCards({ preview }: { preview: PreviewResponse }) {
       tone: "text-state-success-fg",
     },
     {
-      label: "К записи в Postgres",
+      label: "К применению в Postgres",
       value: s.actionableServerPostgres,
       tone: s.actionableServerPostgres > 0 ? "text-state-info-fg" : undefined,
+      breakdown: breakdown
+        ? {
+            create: breakdown.postgresCreate,
+            update: breakdown.postgresUpdate,
+            other: breakdown.postgresOther,
+          }
+        : undefined,
     },
     {
-      label: "К записи в Supabase",
+      label: "К применению в Supabase",
       value: s.actionableSupabase,
       tone: s.actionableSupabase > 0 ? "text-state-info-fg" : undefined,
+      breakdown: breakdown
+        ? {
+            create: breakdown.supabaseCreate,
+            update: breakdown.supabaseUpdate,
+            other: breakdown.supabaseOther,
+          }
+        : undefined,
     },
     { label: "Без изменений", value: s.noop },
     {
@@ -512,22 +649,45 @@ function SummaryCards({ preview }: { preview: PreviewResponse }) {
     },
   ];
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
-      {cards.map((c) => (
-        <Card key={c.label}>
-          <CardContent className="p-3">
-            <div className="text-xs text-muted-foreground">{c.label}</div>
-            <div
-              className={cn(
-                "text-xl font-semibold tabular-nums mt-0.5",
-                c.tone,
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        {cards.map((c) => (
+          <Card key={c.label}>
+            <CardContent className="p-3">
+              <div className="text-xs text-muted-foreground">{c.label}</div>
+              <div
+                className={cn(
+                  "text-xl font-semibold tabular-nums mt-0.5",
+                  c.tone,
+                )}
+              >
+                {c.value}
+              </div>
+              {c.breakdown && c.value > 0 && (
+                <div className="text-[10px] text-muted-foreground tabular-nums mt-1 flex flex-wrap gap-x-1.5">
+                  {c.breakdown.create > 0 && (
+                    <span>create: {c.breakdown.create}</span>
+                  )}
+                  {c.breakdown.update > 0 && (
+                    <span>update: {c.breakdown.update}</span>
+                  )}
+                  {c.breakdown.other > 0 && (
+                    <span>other: {c.breakdown.other}</span>
+                  )}
+                </div>
               )}
-            >
-              {c.value}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {s.noop === 0 && s.actionableServerPostgres > 0 && (
+        <div className="text-[11px] text-muted-foreground">
+          Backend ещё не сравнивает старые/новые значения цены, visible,
+          archived — поэтому «Без изменений» = 0, а в плане у строк стоит{" "}
+          <code className="font-mono">update_storefront_offer</code> для всех
+          сопоставленных позиций.
+        </div>
+      )}
     </div>
   );
 }
@@ -548,7 +708,13 @@ function PriceCell({ item }: { item: PreviewItem }) {
   );
 }
 
-function ItemsTable({ items }: { items: PreviewItem[] }) {
+function ItemsTable({
+  items,
+  onInspect,
+}: {
+  items: PreviewItem[];
+  onInspect: (it: PreviewItem) => void;
+}) {
   if (items.length === 0) {
     return (
       <div className="text-sm text-muted-foreground py-8 text-center">
@@ -567,6 +733,7 @@ function ItemsTable({ items }: { items: PreviewItem[] }) {
             <TableHead className="w-32 text-right">Цена</TableHead>
             <TableHead>Матчинг</TableHead>
             <TableHead>План</TableHead>
+            <TableHead className="w-12"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -604,9 +771,16 @@ function ItemsTable({ items }: { items: PreviewItem[] }) {
                     <> · sku {it.targetMerchProduct.sku}</>
                   )}
                 </div>
+                {it.targetProduct?.slug && (
+                  <div className="text-[10px] text-muted-foreground">
+                    <span className="opacity-70">slug:</span>{" "}
+                    <span className="font-mono">{it.targetProduct.slug}</span>
+                  </div>
+                )}
                 {it.targetProduct?.designKey && (
-                  <div className="text-[10px] text-muted-foreground font-mono">
-                    {it.targetProduct.designKey}
+                  <div className="text-[10px] text-muted-foreground">
+                    <span className="opacity-70">ключ карточки:</span>{" "}
+                    <span className="font-mono">{it.targetProduct.designKey}</span>
                   </div>
                 )}
               </TableCell>
@@ -662,6 +836,18 @@ function ItemsTable({ items }: { items: PreviewItem[] }) {
                     ))}
                   </ul>
                 )}
+              </TableCell>
+              <TableCell>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => onInspect(it)}
+                  aria-label="Показать JSON позиции"
+                  title="Показать JSON"
+                  className="h-7 w-7"
+                >
+                  <Braces className="h-3.5 w-3.5" />
+                </Button>
               </TableCell>
             </TableRow>
           ))}
