@@ -88,10 +88,11 @@ export const api = {
   },
 
   // ---------- PRODUCTS ----------
-  async listProducts(filters?: { is_blank?: boolean }): Promise<Product[]> {
+  async listProducts(filters?: { is_blank?: boolean; design_id?: string }): Promise<Product[]> {
     const sb = createClient();
     let q = sb.from("merch_products").select(PRODUCT_SELECT).order("created_at", { ascending: false });
     if (filters?.is_blank !== undefined) q = q.eq("is_blank", filters.is_blank);
+    if (filters?.design_id) q = q.eq("design_id", filters.design_id);
     const { data, error } = await q;
     if (error) throw toError(error);
     return (data ?? []) as Product[];
