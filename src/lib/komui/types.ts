@@ -49,6 +49,22 @@ export type PlannedAction = {
   reason?: string;
 };
 
+export type DiffField = {
+  field: string;
+  current: unknown;
+  next: unknown;
+  changed: boolean;
+};
+
+export type ItemDiff = {
+  changed: boolean;
+  changedFields: string[];
+  fields: DiffField[];
+  operation: "noop" | "update" | "create" | "delete" | (string & {});
+  table?: string;
+  target?: string;
+};
+
 export type PreviewItem = {
   itemId: string;
   status: ItemStatus;
@@ -71,6 +87,9 @@ export type PreviewItem = {
     sku?: string;
   } | null;
   plannedActions: PlannedAction[];
+  // Поле появилось после обновления backend ozonImport.ts — содержит реальный
+  // diff между текущим storefront и тем что прилетело из Ozon.
+  diff?: ItemDiff;
   errors?: string[];
 };
 

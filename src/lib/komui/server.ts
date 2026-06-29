@@ -37,13 +37,13 @@ function buildHeaders(opts: { hasBody: boolean; idempotencyKey?: string }) {
   if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
 
   if (basicAuth) {
+    // На staging Authorization уже занят Basic Auth прокси (nginx). Bearer
+    // сюда класть нельзя — он замаскирует Basic и фронт-прокси отдаст 401.
     const b64 = Buffer.from(basicAuth, "utf8").toString("base64");
     headers["Authorization"] = `Basic ${b64}`;
-  } else {
-    // На проде без Basic Auth прокси API всё равно ожидает Bearer как fallback —
-    // оставляем его, если staging-логин не настроен.
-    headers["Authorization"] = `Bearer ${token}`;
   }
+  // На проде без Basic Auth Authorization не нужен вообще — admin token
+  // backend читает из X-Komui-Admin-Token.
   return headers;
 }
 

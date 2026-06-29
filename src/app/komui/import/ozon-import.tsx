@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowRight,
   Braces,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ClipboardCopy,
   Download,
   Loader2,
@@ -45,8 +47,10 @@ import { cn, errorMessage, formatDate, formatMoney } from "@/lib/utils";
 import {
   JOB_STATUS_LABELS,
   statusLabel,
+  type DiffField,
   type ImportStartResponse,
   type ImportTargets,
+  type ItemDiff,
   type ItemStatus,
   type JobResponse,
   type PreviewItem,
@@ -680,16 +684,41 @@ function SummaryCards({
           </Card>
         ))}
       </div>
-      {s.noop === 0 && s.actionableServerPostgres > 0 && (
-        <div className="text-[11px] text-muted-foreground">
-          Backend ещё не сравнивает старые/новые значения цены, visible,
-          archived — поэтому «Без изменений» = 0, а в плане у строк стоит{" "}
-          <code className="font-mono">update_storefront_offer</code> для всех
-          сопоставленных позиций.
-        </div>
-      )}
     </div>
   );
+}
+
+// Форматируем значение поля diff'а в короткую строку. Массивы → "[a, b, …]",
+// строки в кавычках, null → "—", числа без кавычек. Длинные значения
+// сокращаются, полный вид всегда доступен через JSON-debug диалог.
+function formatDiffValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return `"${v}"`;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const inner = v.slice(0, 3).map((x) => formatDiffValue(x)).join(", ");
+    return v.length > 3 ? `[${inner}, …+${v.length - 3}]` : `[${inner}]`;
+  }
+  return JSON.stringify(v);
+}
+
+const DIFF_FIELD_LABELS: Record<string, string> = {
+  "offers.price": "цена",
+  "offers.old_price": "old price",
+  "offers.min_price": "min price",
+  "offers.offer_id": "offer_id",
+  "offers.product_id": "product_id",
+  "offers.visible": "visible",
+  "offers.archived": "archived",
+  price_min: "price_min",
+  price_max: "price_max",
+  ozon_product_ids: "ozon_product_ids",
+  ozon_skus: "ozon_skus",
+  ozon_offer_ids: "ozon_offer_ids",
+};
+
+function diffFieldLabel(field: string): string {
+  return DIFF_FIELD_LABELS[field] ?? field;
 }
 
 function PriceCell({ item }: { item: PreviewItem }) {
@@ -715,6 +744,16 @@ function ItemsTable({
   items: PreviewItem[];
   onInspect: (it: PreviewItem) => void;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  function toggle(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   if (items.length === 0) {
     return (
       <div className="text-sm text-muted-foreground py-8 text-center">
@@ -727,18 +766,40 @@ function ItemsTable({
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8"></TableHead>
             <TableHead className="w-32">Статус</TableHead>
             <TableHead>Карточка / SKU</TableHead>
             <TableHead className="w-44">Offer ID</TableHead>
             <TableHead className="w-32 text-right">Цена</TableHead>
-            <TableHead>Матчинг</TableHead>
+            <TableHead>Изменения</TableHead>
             <TableHead>План</TableHead>
             <TableHead className="w-12"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map((it) => (
-            <TableRow key={it.itemId}>
+          {items.map((it) => {
+            const isOpen = expanded.has(it.itemId);
+            const changedFields = it.diff?.changedFields ?? [];
+            const hasDiff = it.diff && it.diff.fields.length > 0;
+            return (
+              <Fragment key={it.itemId}>
+            <TableRow>
+              <TableCell>
+                {hasDiff && (
+                  <button
+                    type="button"
+                    onClick={() => toggle(it.itemId)}
+                    className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-accent text-muted-foreground"
+                    aria-label={isOpen ? "Свернуть" : "Развернуть"}
+                  >
+                    {isOpen ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+              </TableCell>
               <TableCell>
                 <Badge
                   variant="outline"
@@ -754,6 +815,11 @@ function ItemsTable({
                 {it.severity === "warning" && (
                   <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-state-warning-fg">
                     <AlertTriangle className="h-3 w-3" /> warning
+                  </div>
+                )}
+                {it.matchReason && it.matchReason !== "none" && (
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    match: <span className="font-mono">{it.matchReason}</span>
                   </div>
                 )}
               </TableCell>
@@ -797,9 +863,44 @@ function ItemsTable({
                 <PriceCell item={it} />
               </TableCell>
               <TableCell className="text-xs">
-                <div className="text-muted-foreground">
-                  {it.matchReason === "none" ? "не найдено" : it.matchReason}
-                </div>
+                {it.diff ? (
+                  changedFields.length === 0 ? (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "border-transparent text-[10px]",
+                        statusBadgeClasses("noop"),
+                      )}
+                    >
+                      без изменений
+                    </Badge>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {changedFields.slice(0, 4).map((f) => (
+                        <Badge
+                          key={f}
+                          variant="outline"
+                          className={cn(
+                            "border-transparent text-[10px] font-mono",
+                            statusBadgeClasses("matched"),
+                          )}
+                        >
+                          {diffFieldLabel(f)}
+                        </Badge>
+                      ))}
+                      {changedFields.length > 4 && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                        >
+                          +{changedFields.length - 4}
+                        </Badge>
+                      )}
+                    </div>
+                  )
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
               </TableCell>
               <TableCell className="text-xs">
                 {it.plannedActions.length === 0 ? (
@@ -850,9 +951,97 @@ function ItemsTable({
                 </Button>
               </TableCell>
             </TableRow>
-          ))}
+            {isOpen && it.diff && (
+              <TableRow>
+                <TableCell colSpan={8} className="bg-muted/30 p-0">
+                  <DiffTable diff={it.diff} />
+                </TableCell>
+              </TableRow>
+            )}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function DiffTable({ diff }: { diff: ItemDiff }) {
+  return (
+    <div className="px-4 py-3 text-xs space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+        <span>
+          target: <span className="font-mono text-foreground">{diff.target}</span>
+        </span>
+        {diff.table && (
+          <span>
+            · table:{" "}
+            <span className="font-mono text-foreground">{diff.table}</span>
+          </span>
+        )}
+        <span>
+          · operation:{" "}
+          <span className="font-mono text-foreground">{diff.operation}</span>
+        </span>
+        <span>
+          · changed:{" "}
+          <span
+            className={cn(
+              "font-mono",
+              diff.changed ? "text-state-warning-fg" : "text-state-success-fg",
+            )}
+          >
+            {String(diff.changed)}
+          </span>
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="text-left font-medium py-1 pr-3 w-1/4">поле</th>
+              <th className="text-left font-medium py-1 pr-3 w-[35%]">сейчас</th>
+              <th className="text-left font-medium py-1 pr-3 w-[35%]">будет</th>
+              <th className="text-left font-medium py-1 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {diff.fields.map((f: DiffField) => (
+              <tr
+                key={f.field}
+                className={cn(
+                  "align-top border-t border-border/40",
+                  f.changed && "bg-state-warning text-state-warning-fg",
+                )}
+              >
+                <td className="py-1 pr-3 font-mono">{f.field}</td>
+                <td className="py-1 pr-3 font-mono break-all">
+                  {formatDiffValue(f.current)}
+                </td>
+                <td className="py-1 pr-3 font-mono break-all">
+                  {formatDiffValue(f.next)}
+                </td>
+                <td className="py-1">
+                  {f.changed ? (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "border-transparent text-[10px]",
+                        statusBadgeClasses("matched"),
+                      )}
+                    >
+                      diff
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">=</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
