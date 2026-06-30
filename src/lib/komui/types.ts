@@ -232,3 +232,81 @@ export function runtimeStateLabel(s?: RuntimeState): string {
   if (!s) return "—";
   return RUNTIME_STATE_LABELS[s] ?? s;
 }
+
+// =============================================================================
+// Storefront products — редактор товаров сайта komui.ru (server PostgreSQL,
+// не Supabase). См. /Users/kadimagomedov/Documents/KomuiMerch/docs/
+//   admin-storefront-products-api.md.
+// =============================================================================
+
+export type StorefrontOffer = {
+  size?: string;
+  sku?: string;
+  price?: number;
+  oldPrice?: number;
+  visible?: boolean;
+  [k: string]: unknown;
+};
+
+export type StorefrontProduct = {
+  id: string;
+  designKey?: string;
+  name: string;
+  slug?: string;
+  description?: string | null;
+  shortDescription?: string | null;
+  category?: string;
+  productType?: string;
+  decorationType?: string;
+  colorName?: string;
+  collectionName?: string;
+  sizes: string[];
+  salePrice: number;
+  priceMax?: number;
+  regularPrice?: number | null;
+  currency?: string;
+  primaryImageUrl?: string;
+  mainImagePath?: string | null;
+  imageUrls: string[];
+  offers?: StorefrontOffer[];
+  isActive: boolean;
+  sortOrder?: number;
+  badges?: string[];
+  updatedAt?: string;
+};
+
+export type StorefrontListResponse = {
+  products: StorefrontProduct[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
+};
+
+export type StorefrontProductResponse = {
+  product: StorefrontProduct;
+  changedFields?: string[];
+};
+
+export type StorefrontPatch = {
+  name?: string;
+  description?: string | null;
+  shortDescription?: string | null;
+  salePrice?: number;
+  regularPrice?: number | null;
+  sizes?: string[];
+  imageUrls?: string[];
+  mainImagePath?: string | null;
+  isActive?: boolean;
+  sortOrder?: number;
+  syncOfferPrices?: boolean;
+};
+
+export type StorefrontActiveFilter = "all" | "active" | "inactive";
+
+export const STOREFRONT_ACTIVE_LABELS: Record<StorefrontActiveFilter, string> = {
+  all: "Все",
+  active: "Активные",
+  inactive: "Скрытые",
+};

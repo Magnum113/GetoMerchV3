@@ -18,6 +18,7 @@ import {
   Wallet,
   Store,
   Cable,
+  Shirt as ShirtIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +45,7 @@ const NAV: NavItem[] = [
 const KOMUI_NAV: NavSection = {
   label: "Админка Komui",
   items: [
+    { href: "/komui/products", label: "Товары сайта", icon: ShirtIcon },
     { href: "/komui/import", label: "Импорт из Ozon", icon: Store },
     { href: "/komui/runtime", label: "Production runtime", icon: Cable },
   ],

@@ -5,7 +5,7 @@ import "server-only";
 // on the server.
 
 export type KomuiFetchInit = {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   path: string; // e.g. "/admin/ozon/products/import-preview"
   body?: unknown;
   idempotencyKey?: string;
