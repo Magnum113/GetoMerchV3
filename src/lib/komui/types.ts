@@ -310,3 +310,253 @@ export const STOREFRONT_ACTIVE_LABELS: Record<StorefrontActiveFilter, string> = 
   active: "Активные",
   inactive: "Скрытые",
 };
+
+// =============================================================================
+// Storefront orders — обработка заказов с komui.ru.
+// См. /Users/kadimagomedov/Documents/KomuiMerch/docs/admin-storefront-orders-api.md
+// =============================================================================
+
+export type PaymentStatus =
+  | "created"
+  | "pending_payment"
+  | "authorized"
+  | "paid"
+  | "payment_failed"
+  | "payment_review"
+  | "canceled"
+  | "partially_refunded"
+  | "refunded"
+  | (string & {});
+
+export type FulfillmentStatus =
+  | "new"
+  | "processing"
+  | "shipped"
+  | "delivered"
+  | "canceled"
+  | "returned"
+  | (string & {});
+
+export type CdekStatus =
+  | "pending"
+  | "creating"
+  | "accepted"
+  | "created"
+  | "invalid"
+  | "failed"
+  | "deleted"
+  | "unknown"
+  | (string & {});
+
+export type OrderCustomer = {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  marketingConsent?: boolean;
+};
+
+export type OrderDelivery = {
+  provider?: string;
+  pointCode?: string;
+  city?: string;
+  address?: string;
+  hours?: string;
+  eta?: string;
+};
+
+export type OrderAmounts = {
+  subtotal?: number; // копейки
+  discount?: number;
+  delivery?: number;
+  total?: number;
+  currency?: string;
+};
+
+export type OrderCdek = {
+  status?: CdekStatus;
+  uuid?: string;
+  number?: string;
+  errorMessage?: string | null;
+};
+
+export type OrderLatestPayment = {
+  providerStatus?: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+export type StorefrontOrderSummary = {
+  id: string;
+  orderNumber: string;
+  paymentStatus: PaymentStatus;
+  fulfillmentStatus: FulfillmentStatus;
+  fulfillmentNote?: string | null;
+  customer?: OrderCustomer;
+  delivery?: OrderDelivery;
+  amounts?: OrderAmounts;
+  promoCode?: string | null;
+  source?: string;
+  itemCount?: number;
+  lineCount?: number;
+  latestPayment?: OrderLatestPayment | null;
+  cdek?: OrderCdek | null;
+  paidAt?: string | null;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type StorefrontOrderItem = {
+  id?: string;
+  productId?: string;
+  name?: string;
+  slug?: string;
+  size?: string;
+  quantity?: number;
+  unitPrice?: number; // копейки
+  totalPrice?: number;
+  imageUrl?: string;
+};
+
+export type PaymentAttempt = {
+  id?: string;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type PaymentEvent = {
+  id?: string;
+  type?: string;
+  receivedAt?: string;
+  status?: string;
+  amount?: number;
+  raw?: unknown;
+};
+
+export type CdekShipment = {
+  id?: string;
+  status?: CdekStatus;
+  uuid?: string | null;
+  number?: string | null;
+  errorMessage?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CdekEvent = {
+  id?: string;
+  type?: string;
+  receivedAt?: string;
+  status?: string;
+  raw?: unknown;
+};
+
+export type StorefrontOrderListResponse = {
+  orders: StorefrontOrderSummary[];
+  pagination: { limit: number; offset: number; total: number };
+  statuses?: {
+    payment: PaymentStatus[];
+    fulfillment: FulfillmentStatus[];
+  };
+};
+
+export type StorefrontOrderDetailResponse = {
+  order: StorefrontOrderSummary;
+  items?: StorefrontOrderItem[];
+  paymentAttempts?: PaymentAttempt[];
+  paymentEvents?: PaymentEvent[];
+  cdekShipment?: CdekShipment | null;
+  cdekEvents?: CdekEvent[];
+};
+
+export type MarkShippedResponse = {
+  order: StorefrontOrderSummary;
+};
+
+export const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  created: "Создан",
+  pending_payment: "Ожидает оплаты",
+  authorized: "Авторизован",
+  paid: "Оплачен",
+  payment_failed: "Не оплачен",
+  payment_review: "На проверке",
+  canceled: "Отменён",
+  partially_refunded: "Возврат частичный",
+  refunded: "Возвращён",
+};
+
+export const FULFILLMENT_STATUS_LABELS: Record<string, string> = {
+  new: "Новый",
+  processing: "В работе",
+  shipped: "Отправлен",
+  delivered: "Доставлен",
+  canceled: "Отменён",
+  returned: "Возвращён",
+};
+
+export const CDEK_STATUS_LABELS: Record<string, string> = {
+  pending: "Ждёт",
+  creating: "Создаётся",
+  accepted: "Принят СДЭК",
+  created: "Накладная",
+  invalid: "Ошибка данных",
+  failed: "Не создан",
+  deleted: "Удалён",
+  unknown: "—",
+};
+
+export const FULFILLMENT_STATUSES: FulfillmentStatus[] = [
+  "new",
+  "processing",
+  "shipped",
+  "delivered",
+  "canceled",
+  "returned",
+];
+
+export const PAYMENT_STATUSES: PaymentStatus[] = [
+  "created",
+  "pending_payment",
+  "authorized",
+  "paid",
+  "payment_failed",
+  "payment_review",
+  "canceled",
+  "partially_refunded",
+  "refunded",
+];
+
+export function paymentStatusLabel(s?: string): string {
+  if (!s) return "—";
+  return PAYMENT_STATUS_LABELS[s] ?? s;
+}
+
+export function fulfillmentStatusLabel(s?: string): string {
+  if (!s) return "—";
+  return FULFILLMENT_STATUS_LABELS[s] ?? s;
+}
+
+export function cdekStatusLabel(s?: string): string {
+  if (!s) return "—";
+  return CDEK_STATUS_LABELS[s] ?? s;
+}
+
+export function canMarkShipped(o: StorefrontOrderSummary): boolean {
+  if (o.paymentStatus !== "paid" && o.paymentStatus !== "authorized") return false;
+  if (o.fulfillmentStatus === "shipped" || o.fulfillmentStatus === "delivered")
+    return false;
+  return true;
+}
+
+// Сумма приходит в копейках — делим для UI.
+export function moneyFromKopecks(v: number | undefined | null): number | null {
+  if (v == null) return null;
+  return v / 100;
+}
