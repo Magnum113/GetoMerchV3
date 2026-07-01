@@ -634,12 +634,18 @@ items quantity выводим через `accruals / sale_price`, для мно�
 **Формула прибыли**
 
 ```
+revenue       = Σ positive accruals_for_sale  за период
+returns       = Σ abs(negative accruals_for_sale)  за период
 cashFromOzon  = Σ amount  за период
-COGS          = Σ stockCost(item.qty)  по сматченным позициям
-tax           = max(0, cashFromOzon) × 0.06   (УСН 6%)
+COGS          = Σ stockCostAt(operation_date, item.qty)  по сматченным позициям
+tax           = max(0, revenue − returns) × 0.06   (УСН 6%)
 otherExpenses = Σ amount merch_expenses  за период
 netProfit     = cashFromOzon − COGS − tax − otherExpenses
 ```
+
+`stockCostAt` обычно берёт `product.cost_price`, но с 2026-05-15 печатные
+футболки (`category=tshirt`, `decoration_type=print`) считаются по 900 ₽ за
+штуку. Это правило применяется только в аналитике и не меняет историю БД.
 
 Все промежуточные расходы (комиссия, логистика, возвраты, налог, прочее)
 сгруппированы в `expenseBreakdown` так, чтобы `Σ expenseBreakdown = revenue − netProfit`.

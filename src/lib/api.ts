@@ -1001,15 +1001,21 @@ export const api = {
   // ---------- OZON FINANCE OPERATIONS ----------
   async listFinanceOperations(filters?: { from?: string; to?: string }): Promise<OzonFinanceOperation[]> {
     const sb = createClient();
-    let q = sb
-      .from("merch_ozon_finance_operations")
-      .select("id, operation_id, operation_type, operation_type_name, operation_date, posting_number, accruals_for_sale, sale_commission, amount, services, items, synced_at")
-      .order("operation_date", { ascending: false });
-    if (filters?.from) q = q.gte("operation_date", filters.from);
-    if (filters?.to) q = q.lte("operation_date", filters.to);
-    const { data, error } = await q;
-    if (error) throw toError(error);
-    return ((data ?? []) as unknown) as OzonFinanceOperation[];
+    const pageSize = 1000;
+    const out: OzonFinanceOperation[] = [];
+    for (let from = 0; ; from += pageSize) {
+      let q = sb
+        .from("merch_ozon_finance_operations")
+        .select("id, operation_id, operation_type, operation_type_name, operation_date, posting_number, accruals_for_sale, sale_commission, amount, services, items, synced_at")
+        .order("operation_date", { ascending: false });
+      if (filters?.from) q = q.gte("operation_date", filters.from);
+      if (filters?.to) q = q.lte("operation_date", filters.to);
+      const { data, error } = await q.range(from, from + pageSize - 1);
+      if (error) throw toError(error);
+      out.push(...(((data ?? []) as unknown) as OzonFinanceOperation[]));
+      if (!data || data.length < pageSize) break;
+    }
+    return out;
   },
 
   // Все пары (ozon_sku, product) для COGS-фолбэка по items финопов,

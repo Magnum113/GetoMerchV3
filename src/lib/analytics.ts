@@ -7,6 +7,8 @@ import type {
 } from "@/lib/types";
 
 export const TAX_RATE = 0.06;
+export const PRINT_TSHIRT_COST_CHANGE_DATE = new Date(Date.UTC(2026, 4, 15));
+export const PRINT_TSHIRT_COST_AFTER_CHANGE = 900;
 
 export type Granularity = "day" | "week" | "month";
 
@@ -44,6 +46,44 @@ export interface CostIndex {
   byPosting: Map<string, PostingCost>;
   bySku: Map<string, Product>;
   productById: Map<string, Product>;
+}
+
+function norm(value: unknown): string {
+  return String(value ?? "").toLowerCase();
+}
+
+function isPrintTshirt(product: Product | undefined): boolean {
+  if (!product || product.is_blank) return false;
+  const category = norm(product.category?.slug || product.category?.name || product.sku);
+  const decoration = norm(product.decoration_type?.slug || product.decoration_type?.name);
+  const sku = norm(product.sku);
+  const isTshirt = category.includes("tshirt")
+    || category.includes("shirt")
+    || category.includes("фут")
+    || sku.includes("tshirt");
+  const isPrint = decoration.includes("print")
+    || decoration.includes("принт")
+    || sku.includes("print");
+  return isTshirt && isPrint;
+}
+
+function productCostAt(product: Product | undefined, date: Date): number {
+  if (!product) return 0;
+  if (date >= PRINT_TSHIRT_COST_CHANGE_DATE && isPrintTshirt(product)) {
+    return PRINT_TSHIRT_COST_AFTER_CHANGE;
+  }
+  return Number(product.cost_price ?? 0);
+}
+
+function postingCostAt(posting: PostingCost, productById: Map<string, Product>, date: Date): PostingCost {
+  if (posting.productUnits.size === 0) return posting;
+  let totalCost = 0;
+  for (const [productId, units] of posting.productUnits) {
+    const product = productById.get(productId);
+    if (!product) return posting;
+    totalCost += productCostAt(product, date) * units;
+  }
+  return { ...posting, totalCost };
 }
 
 export function buildCostIndex(orders: OzonOrder[], skuMap?: Array<{ ozon_sku: string; product: Product }>): CostIndex {
@@ -87,9 +127,10 @@ export function buildCostIndex(orders: OzonOrder[], skuMap?: Array<{ ozon_sku: s
 // so for a single-item op we infer qty from accruals_for_sale / sale_price
 // when possible (otherwise default to 1).
 function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | null {
+  const opDate = new Date(op.operation_date);
   if (op.posting_number) {
     const c = cost.byPosting.get(op.posting_number);
-    if (c) return c;
+    if (c) return postingCostAt(c, cost.productById, opDate);
   }
   const items = op.items ?? [];
   if (items.length === 0) return null;
@@ -111,7 +152,7 @@ function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | nu
           qty = Math.max(1, Math.round(ratio));
         }
       }
-      const unitCost = Number(product.cost_price ?? 0);
+      const unitCost = productCostAt(product, opDate);
       return {
         totalCost: unitCost * qty,
         units: qty,
@@ -125,7 +166,7 @@ function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | nu
     if (it.sku == null) continue;
     const product = cost.bySku.get(String(it.sku));
     if (!product) continue;
-    const c = Number(product.cost_price ?? 0);
+    const c = productCostAt(product, opDate);
     totalCost += c;
     units += 1;
     productUnits.set(product.id, (productUnits.get(product.id) ?? 0) + 1);
@@ -208,7 +249,9 @@ export function computePeriodMetrics(
   // (fines, return-handling fees, acquiring, subscriptions, packaging, etc.).
   // Derived so the waterfall balances cashFromOzon perfectly.
   const ozonOther = Math.max(0, revenue - returns - cashFromOzon - ozonCommission - ozonServices);
-  const tax = Math.max(0, cashFromOzon) * TAX_RATE;
+  // USN "income" uses the buyer-facing marketplace revenue, not the net Ozon payout.
+  const taxBase = Math.max(0, revenue - returns);
+  const tax = taxBase * TAX_RATE;
   // Returns reduce profit just like an expense → include them in totalExpenses
   // so the "Выручка − Расходы = Прибыль" mental model holds in KPIs and donut.
   const totalExpenses = returns + cogs + ozonCommission + ozonServices + ozonOther + tax + otherExpenses;
@@ -661,7 +704,7 @@ export function topProductsByProfit(
       entry.units += sign * units;
       entry.revenue += acc * share;
       const product = cost.productById.get(pid);
-      const unitCost = Number(product?.cost_price ?? 0);
+      const unitCost = productCostAt(product, d);
       entry.cogs += sign * unitCost * units;
       entry.ozonFees += opFees * share;
       stats.set(pid, entry);
