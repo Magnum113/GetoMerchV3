@@ -20,6 +20,7 @@ import {
   Cable,
   Shirt as ShirtIcon,
   Receipt,
+  DownloadCloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +31,7 @@ type NavSection = { label: string; items: NavItem[] };
 const NAV: NavItem[] = [
   { href: "/", label: "Аналитика", icon: LineChart },
   { href: "/orders", label: "Заказы Ozon", icon: ShoppingBag },
+  { href: "/ozon/import", label: "Импорт Ozon", icon: DownloadCloud },
   { href: "/inventory", label: "Остатки", icon: WarehouseIcon },
   { href: "/products", label: "Каталог SKU", icon: Package },
   { href: "/workshop", label: "Заказы в цех", icon: Hammer },
