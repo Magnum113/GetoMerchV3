@@ -8,6 +8,7 @@ type PreviewBody = {
   mode?: "preview";
   limit?: number;
   includeArchived?: boolean;
+  updatePrices?: boolean;
 };
 
 export async function POST(req: Request) {
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
       mode: "preview" as const,
       limit: typeof raw.limit === "number" ? raw.limit : 200,
       includeArchived: Boolean(raw.includeArchived),
+      updatePrices: raw.updatePrices !== false,
     };
 
     const data = await komuiFetch({

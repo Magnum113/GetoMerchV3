@@ -93,15 +93,42 @@ export type PreviewItem = {
   errors?: string[];
 };
 
+// Backend отдаёт warnings объектами; исторические строки тоже терпим.
+export type PreviewWarning =
+  | string
+  | { code?: string; message?: string; count?: number };
+
+export function previewWarningText(w: PreviewWarning): string {
+  if (typeof w === "string") return w;
+  return w.message ?? w.code ?? JSON.stringify(w);
+}
+
+export function hasPreviewWarning(
+  warnings: PreviewWarning[] | undefined,
+  code: string,
+): boolean {
+  return (warnings ?? []).some(
+    (w) => typeof w === "object" && w !== null && w.code === code,
+  );
+}
+
+export type PreviewMode = {
+  serverPostgres?: boolean;
+  supabaseRequested?: boolean;
+  supabaseWriteEnabled?: boolean;
+  ozonImportMode?: string;
+  updatePrices?: boolean;
+};
+
 export type PreviewResponse = {
   previewId: string;
   createdAt?: string;
   importType?: string;
-  mode?: string;
+  mode?: PreviewMode | string;
   summary: PreviewSummary;
   items: PreviewItem[];
   canImport: boolean;
-  warnings: string[];
+  warnings: PreviewWarning[];
 };
 
 export type ImportStartResponse = {

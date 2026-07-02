@@ -45,7 +45,9 @@ import {
 } from "@/components/ui/table";
 import { cn, errorMessage, formatDate, formatMoney } from "@/lib/utils";
 import {
+  hasPreviewWarning,
   JOB_STATUS_LABELS,
+  previewWarningText,
   statusLabel,
   type DiffField,
   type ImportStartResponse,
@@ -188,6 +190,11 @@ export function OzonImportTab() {
   });
   const [limit, setLimit] = useState<number>(200);
   const [includeArchived, setIncludeArchived] = useState(false);
+  // false → backend не трогает цены существующих офферов (price/old_price/
+  // min_price, sale_price). Новые офферы всё равно получают начальную цену.
+  const [updatePrices, setUpdatePrices] = useState(true);
+  // true, если галку сняли, но backend флаг не поддержал (старый release).
+  const [priceFlagIgnored, setPriceFlagIgnored] = useState(false);
 
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -221,6 +228,7 @@ export function OzonImportTab() {
           mode: "preview",
           limit,
           includeArchived,
+          updatePrices,
         }),
       });
       const data = (await res.json()) as PreviewResponse | { error: string };
@@ -229,6 +237,12 @@ export function OzonImportTab() {
       }
       setPreview(data);
       setJob(null);
+      // Старый backend молча отбрасывает незнакомый флаг. Если галка снята,
+      // но backend не подтвердил (warning отсутствует) — план построен
+      // С обновлением цен, честно предупреждаем.
+      setPriceFlagIgnored(
+        !updatePrices && !hasPreviewWarning(data.warnings, "price_updates_disabled"),
+      );
       const actionable =
         data.summary.actionableServerPostgres +
         data.summary.actionableSupabase;
@@ -356,7 +370,7 @@ export function OzonImportTab() {
       <Card>
         <CardContent className="p-4 space-y-4">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] items-end">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5">
                 <Label className="text-xs">Цели импорта</Label>
                 <div className="flex flex-col gap-1.5">
@@ -410,6 +424,20 @@ export function OzonImportTab() {
                   Включать архивные
                 </label>
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Цены</Label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={updatePrices}
+                    onCheckedChange={(v) => setUpdatePrices(v === true)}
+                  />
+                  Обновлять цены
+                </label>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Выкл — цены существующих офферов и sale_price не трогаются.
+                  Новые офферы всё равно получат начальную цену из Ozon.
+                </p>
+              </div>
             </div>
             <Button
               onClick={runPreview}
@@ -442,6 +470,26 @@ export function OzonImportTab() {
         <>
           <SummaryCards preview={preview} breakdown={breakdown} />
 
+          {priceFlagIgnored && (
+            <Card>
+              <CardContent className="p-4 flex items-start gap-3 bg-state-danger">
+                <XCircle className="h-5 w-5 text-state-danger-fg shrink-0 mt-0.5" />
+                <div className="text-sm text-state-danger-fg">
+                  <div className="font-medium">
+                    Backend не поддержал отключение цен
+                  </div>
+                  <div className="opacity-90 mt-0.5">
+                    На сервере старый release без флага{" "}
+                    <code className="font-mono">updatePrices</code> — этот
+                    preview построен <span className="font-semibold">с</span>{" "}
+                    обновлением цен. Импорт из него изменит цены. Обнови
+                    backend или оставь галку включённой.
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {preview.warnings.length > 0 && (
             <Card>
               <CardContent className="p-4 space-y-2">
@@ -451,7 +499,7 @@ export function OzonImportTab() {
                 </div>
                 <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
                   {preview.warnings.map((w, i) => (
-                    <li key={i}>{w}</li>
+                    <li key={i}>{previewWarningText(w)}</li>
                   ))}
                 </ul>
               </CardContent>
