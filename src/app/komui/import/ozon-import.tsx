@@ -44,6 +44,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn, errorMessage, formatDate, formatMoney } from "@/lib/utils";
+import { LinkOffersSection } from "./link-offers-section";
+import { NewProductGroupsSection } from "./new-product-groups";
 import {
   hasPreviewWarning,
   JOB_STATUS_LABELS,
@@ -154,7 +156,15 @@ function statusBadgeClasses(status: ItemStatus): string {
 }
 
 function isActionable(item: PreviewItem): boolean {
-  return item.plannedActions.some((a) => a.action !== "noop");
+  return item.plannedActions.some(
+    (a) => a.action !== "noop" && a.action !== "skip",
+  );
+}
+
+// Позиции, которые можно выборочно импортировать: сматчены с карточкой сайта
+// и имеют реальное действие в плане.
+function isSelectable(item: PreviewItem): boolean {
+  return Boolean(item.targetProduct?.id) && isActionable(item);
 }
 
 function matchesFilter(item: PreviewItem, filter: FilterKey): boolean {
@@ -188,18 +198,24 @@ export function OzonImportTab() {
     // вводить в заблуждение — флажок остаётся доступным для будущего.
     supabase: false,
   });
-  const [limit, setLimit] = useState<number>(200);
+  const [limit, setLimit] = useState<number>(1000);
   const [includeArchived, setIncludeArchived] = useState(false);
-  // false → backend не трогает цены существующих офферов (price/old_price/
-  // min_price, sale_price). Новые офферы всё равно получают начальную цену.
-  const [updatePrices, setUpdatePrices] = useState(true);
-  // true, если галку сняли, но backend флаг не поддержал (старый release).
+  // Цены сайта и цены Ozon у KOMUI сознательно разные, поэтому безопасный
+  // дефолт — НЕ переносить Ozon-цены. Ozon-цены при этом сохраняются в
+  // технические поля offers[].ozon_price и видны в админке.
+  const [updatePrices, setUpdatePrices] = useState(false);
+  // true → syncSizes:"add" — новые размеры добавляются к карточке. Удаление
+  // размеров остаётся ручным действием в редакторе товара.
+  const [syncSizes, setSyncSizes] = useState(true);
+  // true, если галку цен сняли, но backend флаг не поддержал (старый release).
   const [priceFlagIgnored, setPriceFlagIgnored] = useState(false);
 
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
+  // Выбранные к импорту itemId (только selectable-позиции).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -229,6 +245,7 @@ export function OzonImportTab() {
           limit,
           includeArchived,
           updatePrices,
+          syncSizes: syncSizes ? "add" : "off",
         }),
       });
       const data = (await res.json()) as PreviewResponse | { error: string };
@@ -237,17 +254,25 @@ export function OzonImportTab() {
       }
       setPreview(data);
       setJob(null);
+      // Предвыбираем все importable-позиции — админ может снять лишние.
+      setSelected(
+        new Set(data.items.filter(isSelectable).map((it) => it.itemId)),
+      );
       // Старый backend молча отбрасывает незнакомый флаг. Если галка снята,
-      // но backend не подтвердил (warning отсутствует) — план построен
-      // С обновлением цен, честно предупреждаем.
+      // но backend не подтвердил (ни warning, ни mode.updatePrices=false) —
+      // план построен С обновлением цен, честно предупреждаем.
+      const modeConfirms =
+        typeof data.mode === "object" && data.mode?.updatePrices === false;
       setPriceFlagIgnored(
-        !updatePrices && !hasPreviewWarning(data.warnings, "price_updates_disabled"),
+        !updatePrices &&
+          !modeConfirms &&
+          !hasPreviewWarning(data.warnings, "price_updates_disabled"),
       );
       const actionable =
         data.summary.actionableServerPostgres +
         data.summary.actionableSupabase;
       toast.success(
-        `Просканировано ${data.summary.totalOzonItems}, к действию: ${actionable}`,
+        `Просканировано ${data.summary.totalOzonItems}, к действию: ${actionable}, новых карточек: ${data.summary.newProductGroups ?? data.newProductGroups?.length ?? 0}`,
       );
     } catch (e) {
       toast.error(errorMessage(e));
@@ -301,6 +326,9 @@ export function OzonImportTab() {
           previewId: preview.previewId,
           targets,
           confirm: true,
+          // Всегда шлём явный список — так рекомендует контракт API; без
+          // списка backend применил бы весь importable preview.
+          itemIds: Array.from(selected),
         }),
       });
       const data = (await res.json()) as ImportStartResponse | { error: string };
@@ -346,14 +374,40 @@ export function OzonImportTab() {
       preview.summary.actionableSupabase
     : 0;
 
+  const selectableTotal = useMemo(
+    () => (preview ? preview.items.filter(isSelectable).length : 0),
+    [preview],
+  );
+
   const jobActive = job && (job.status === "queued" || job.status === "running");
   const importDisabled =
     !preview ||
     !preview.canImport ||
     hasErrors ||
-    actionableTotal === 0 ||
+    selected.size === 0 ||
     importing ||
     Boolean(jobActive);
+
+  function toggleSelected(itemId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible(check: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const it of filteredItems) {
+        if (!isSelectable(it)) continue;
+        if (check) next.add(it.itemId);
+        else next.delete(it.itemId);
+      }
+      return next;
+    });
+  }
 
   async function copyPreviewJson() {
     if (!preview) return;
@@ -370,7 +424,7 @@ export function OzonImportTab() {
       <Card>
         <CardContent className="p-4 space-y-4">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] items-end">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div className="space-y-1.5">
                 <Label className="text-xs">Цели импорта</Label>
                 <div className="flex flex-col gap-1.5">
@@ -434,8 +488,23 @@ export function OzonImportTab() {
                   Обновлять цены
                 </label>
                 <p className="text-[11px] text-muted-foreground leading-tight">
-                  Выкл — цены существующих офферов и sale_price не трогаются.
-                  Новые офферы всё равно получат начальную цену из Ozon.
+                  Цены сайта и Ozon у Komui разные — включай, только если
+                  сознательно хочешь заменить цены сайта Ozon-ценами.
+                  Ozon-цены и так сохраняются в offers[].ozon_price.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Размеры</Label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={syncSizes}
+                    onCheckedChange={(v) => setSyncSizes(v === true)}
+                  />
+                  Добавлять новые размеры
+                </label>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Только добавляет размеры из Ozon. Удаление размеров — вручную
+                  в редакторе товара.
                 </p>
               </div>
             </div>
@@ -539,11 +608,18 @@ export function OzonImportTab() {
 
               <Separator />
 
-              <ItemsTable items={filteredItems} onInspect={setInspectItem} />
+              <ItemsTable
+                items={filteredItems}
+                onInspect={setInspectItem}
+                selected={selected}
+                onToggle={toggleSelected}
+                onToggleAll={toggleAllVisible}
+              />
 
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                 <div className="text-xs text-muted-foreground">
                   Показано {filteredItems.length} из {preview.items.length}
+                  {" · "}выбрано {selected.size} из {selectableTotal}
                   {hasErrors && (
                     <span className="ml-2 text-state-danger-fg">
                       Есть ошибки — импорт заблокирован
@@ -562,12 +638,21 @@ export function OzonImportTab() {
                   onClick={() => setConfirmOpen(true)}
                   disabled={importDisabled}
                 >
-                  <Download className="h-4 w-4" /> Импортировать
-                  {actionableTotal > 0 && ` (${actionableTotal})`}
+                  <Download className="h-4 w-4" /> Применить выбранные
+                  {selected.size > 0 && ` (${selected.size})`}
                 </Button>
               </div>
             </CardContent>
           </Card>
+
+          <LinkOffersSection
+            preview={preview}
+            updatePrices={updatePrices}
+            syncSizes={syncSizes}
+            onLinked={runPreview}
+          />
+
+          <NewProductGroupsSection preview={preview} onCreated={runPreview} />
         </>
       )}
 
@@ -619,10 +704,14 @@ export function OzonImportTab() {
           <DialogHeader>
             <DialogTitle>Подтвердить импорт</DialogTitle>
             <DialogDescription>
-              Будут обновлены данные в{" "}
+              Будут применены выбранные позиции ({selected.size} шт) в{" "}
               {targets.serverPostgres && "server PostgreSQL"}
               {targets.serverPostgres && targets.supabase && " и "}
-              {targets.supabase && "Supabase"}. Продолжить?
+              {targets.supabase && "Supabase"}.
+              {updatePrices
+                ? " Цены сайта будут заменены Ozon-ценами."
+                : " Цены сайта не изменятся."}{" "}
+              Продолжить?
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -699,10 +788,18 @@ function SummaryCards({
       value: s.unmatched,
       tone: s.unmatched > 0 ? "text-state-warning-fg" : undefined,
     },
+    {
+      label: "Новые карточки",
+      value: s.newProductGroups ?? preview.newProductGroups?.length ?? 0,
+      tone:
+        (s.newProductGroups ?? preview.newProductGroups?.length ?? 0) > 0
+          ? "text-state-info-fg"
+          : undefined,
+    },
   ];
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
         {cards.map((c) => (
           <Card key={c.label}>
             <CardContent className="p-3">
@@ -788,9 +885,15 @@ function PriceCell({ item }: { item: PreviewItem }) {
 function ItemsTable({
   items,
   onInspect,
+  selected,
+  onToggle,
+  onToggleAll,
 }: {
   items: PreviewItem[];
   onInspect: (it: PreviewItem) => void;
+  selected: Set<string>;
+  onToggle: (itemId: string) => void;
+  onToggleAll: (check: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   function toggle(id: string) {
@@ -801,6 +904,11 @@ function ItemsTable({
       return next;
     });
   }
+
+  const selectable = items.filter(isSelectable);
+  const allChecked =
+    selectable.length > 0 && selectable.every((it) => selected.has(it.itemId));
+  const someChecked = selectable.some((it) => selected.has(it.itemId));
 
   if (items.length === 0) {
     return (
@@ -814,6 +922,15 @@ function ItemsTable({
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              {selectable.length > 0 && (
+                <Checkbox
+                  checked={allChecked ? true : someChecked ? "indeterminate" : false}
+                  onCheckedChange={(v) => onToggleAll(v === true)}
+                  aria-label="Выбрать все видимые"
+                />
+              )}
+            </TableHead>
             <TableHead className="w-8"></TableHead>
             <TableHead className="w-32">Статус</TableHead>
             <TableHead>Карточка / SKU</TableHead>
@@ -832,6 +949,15 @@ function ItemsTable({
             return (
               <Fragment key={it.itemId}>
             <TableRow>
+              <TableCell>
+                {isSelectable(it) && (
+                  <Checkbox
+                    checked={selected.has(it.itemId)}
+                    onCheckedChange={() => onToggle(it.itemId)}
+                    aria-label={`Выбрать ${it.offerId}`}
+                  />
+                )}
+              </TableCell>
               <TableCell>
                 {hasDiff && (
                   <button
@@ -906,6 +1032,11 @@ function ItemsTable({
                       → {it.normalizedOfferId}
                     </div>
                   )}
+                {it.size && (
+                  <div className="text-[10px] text-muted-foreground">
+                    размер: {it.size}
+                  </div>
+                )}
               </TableCell>
               <TableCell>
                 <PriceCell item={it} />
@@ -1001,7 +1132,7 @@ function ItemsTable({
             </TableRow>
             {isOpen && it.diff && (
               <TableRow>
-                <TableCell colSpan={8} className="bg-muted/30 p-0">
+                <TableCell colSpan={9} className="bg-muted/30 p-0">
                   <DiffTable diff={it.diff} />
                 </TableCell>
               </TableRow>

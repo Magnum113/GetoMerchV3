@@ -18,6 +18,8 @@ export type PreviewSummary = {
   actionableSupabase: number;
   noop: number;
   unmatched: number;
+  // Кол-во групп-кандидатов в новые карточки (появилось в API v2).
+  newProductGroups?: number;
 };
 
 // Статусы, которые backend сейчас отдаёт. Список расширяемый — рендер
@@ -72,6 +74,9 @@ export type PreviewItem = {
   offerId: string;
   normalizedOfferId?: string;
   productId: string | number;
+  sku?: string | number;
+  // Размер, распарсенный backend'ом из offer_id/name (API v2).
+  size?: string;
   price?: number;
   oldPrice?: number;
   minPrice?: number;
@@ -86,11 +91,41 @@ export type PreviewItem = {
     id: string;
     sku?: string;
   } | null;
+  // Предполагаемый новый товар для несматченного оффера (API v2).
+  inferredProduct?: {
+    designKey?: string;
+    slug?: string;
+    name?: string;
+  } | null;
   plannedActions: PlannedAction[];
   // Поле появилось после обновления backend ozonImport.ts — содержит реальный
   // diff между текущим storefront и тем что прилетело из Ozon.
   diff?: ItemDiff;
   errors?: string[];
+};
+
+// Группа несматченных offer-ов одного дизайна — кандидат в новую карточку.
+export type NewProductGroup = {
+  designKey?: string;
+  slug?: string;
+  ozonVariant?: string;
+  productType?: string;
+  productTypeSlug?: string;
+  category?: string;
+  categorySlug?: string;
+  decorationType?: string;
+  decorationSlug?: string;
+  colorName?: string;
+  colorSlug?: string;
+  colorHex?: string;
+  itemIds: string[];
+  offerIds: string[];
+  sizes: string[];
+  suggestedName?: string;
+  primaryImageUrl?: string;
+  imageUrls?: string[];
+  minOzonPrice?: number;
+  maxOzonPrice?: number;
 };
 
 // Backend отдаёт warnings объектами; исторические строки тоже терпим.
@@ -118,6 +153,7 @@ export type PreviewMode = {
   supabaseWriteEnabled?: boolean;
   ozonImportMode?: string;
   updatePrices?: boolean;
+  syncSizes?: "add" | "off" | (string & {});
 };
 
 export type PreviewResponse = {
@@ -127,8 +163,40 @@ export type PreviewResponse = {
   mode?: PreviewMode | string;
   summary: PreviewSummary;
   items: PreviewItem[];
+  newProductGroups?: NewProductGroup[];
   canImport: boolean;
   warnings: PreviewWarning[];
+};
+
+export type LinkOffersResponse = {
+  productId: string;
+  linkedOzon?: {
+    itemIds?: string[];
+    offerIds?: string[];
+    skus?: string[];
+    productIds?: string[];
+  };
+  applied?: number;
+  syncedAt?: string;
+};
+
+export type CreateProductFromGroupResponse = {
+  product: {
+    id: string;
+    designKey?: string;
+    slug?: string;
+    name?: string;
+    sizes?: string[];
+    salePrice?: number;
+    primaryImageUrl?: string;
+    isActive?: boolean;
+  };
+  linkedOzon?: {
+    itemIds?: string[];
+    offerIds?: string[];
+    skus?: string[];
+    productIds?: string[];
+  };
 };
 
 export type ImportStartResponse = {

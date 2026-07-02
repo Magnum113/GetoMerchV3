@@ -9,6 +9,7 @@ type PreviewBody = {
   limit?: number;
   includeArchived?: boolean;
   updatePrices?: boolean;
+  syncSizes?: "add" | "off";
 };
 
 export async function POST(req: Request) {
@@ -22,12 +23,15 @@ export async function POST(req: Request) {
     const body = {
       targets: {
         serverPostgres: raw.targets?.serverPostgres ?? true,
-        supabase: raw.targets?.supabase ?? true,
+        supabase: raw.targets?.supabase ?? false,
       },
       mode: "preview" as const,
       limit: typeof raw.limit === "number" ? raw.limit : 200,
       includeArchived: Boolean(raw.includeArchived),
-      updatePrices: raw.updatePrices !== false,
+      // Безопасный дефолт по контракту KOMUI: цены сайта не трогаем, если
+      // админ явно не попросил обратного.
+      updatePrices: raw.updatePrices === true,
+      syncSizes: raw.syncSizes === "off" ? ("off" as const) : ("add" as const),
     };
 
     const data = await komuiFetch({
