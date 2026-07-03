@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage, formatMoney } from "@/lib/utils";
+import { InfoTip } from "./info-tip";
 import type {
   CreateProductFromGroupResponse,
   NewProductGroup,
@@ -63,12 +64,12 @@ export function NewProductGroupsSection({
   return (
     <Card>
       <CardContent className="p-4 space-y-3">
-        <div>
-          <div className="text-sm font-medium">Новые товары из Ozon</div>
-          <div className="text-xs text-muted-foreground">
-            Кандидаты в новые карточки сайта ({groups.length}). Название, цену
-            сайта и описание нужно задать вручную.
-          </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Новые карточки</span>
+          <Badge variant="secondary" className="tabular-nums">
+            {groups.length}
+          </Badge>
+          <InfoTip text="Новые дизайны из Ozon, для которых на сайте ещё нет карточек. Размеры, фото и цвет возьмутся из Ozon автоматически; название, цену сайта и описание нужно задать вручную." />
         </div>
         <Separator />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

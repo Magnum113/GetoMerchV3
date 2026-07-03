@@ -43,117 +43,35 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn, errorMessage, formatDate, formatMoney } from "@/lib/utils";
+import { InfoTip } from "./info-tip";
 import { LinkOffersSection } from "./link-offers-section";
 import { NewProductGroupsSection } from "./new-product-groups";
 import {
   hasPreviewWarning,
   JOB_STATUS_LABELS,
   previewWarningText,
-  statusLabel,
   type DiffField,
   type ImportStartResponse,
   type ImportTargets,
   type ItemDiff,
-  type ItemStatus,
   type JobResponse,
   type PreviewItem,
   type PreviewResponse,
 } from "@/lib/komui/types";
 
-type FilterKey =
-  | "all"
-  | "matched"
-  | "unmatched"
-  | "actionable"
-  | "noop"
-  | "conflict";
+// ============================================================================
+// Helpers
+// ============================================================================
+
+type FilterKey = "all" | "changed" | "noop";
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "Все" },
-  { key: "actionable", label: "К действию" },
-  { key: "matched", label: "Сопоставлены" },
-  { key: "unmatched", label: "Не сопоставлены" },
+  { key: "changed", label: "С изменениями" },
   { key: "noop", label: "Без изменений" },
-  { key: "conflict", label: "Конфликты" },
 ];
-
-// Группируем action по семантике. Backend выдаёт глаголы вроде
-// "update_storefront_offer", "create_storefront_product", "noop" — нам важно
-// отделить create от update, чтобы в сводке честно показать что произойдёт.
-function classifyAction(action: string): "create" | "update" | "noop" | "other" {
-  const a = action.toLowerCase();
-  if (a === "noop" || a === "skip") return "noop";
-  if (
-    a.startsWith("create_") ||
-    a.startsWith("insert_") ||
-    a.startsWith("add_")
-  )
-    return "create";
-  if (
-    a.startsWith("update_") ||
-    a.startsWith("upsert_") ||
-    a.startsWith("sync_") ||
-    a.startsWith("apply_")
-  )
-    return "update";
-  return "other";
-}
-
-type ActionableBreakdown = {
-  postgresCreate: number;
-  postgresUpdate: number;
-  postgresOther: number;
-  supabaseCreate: number;
-  supabaseUpdate: number;
-  supabaseOther: number;
-  newProducts: number; // позиции без targetProduct
-};
-
-function computeBreakdown(items: PreviewItem[]): ActionableBreakdown {
-  const acc: ActionableBreakdown = {
-    postgresCreate: 0,
-    postgresUpdate: 0,
-    postgresOther: 0,
-    supabaseCreate: 0,
-    supabaseUpdate: 0,
-    supabaseOther: 0,
-    newProducts: 0,
-  };
-  for (const it of items) {
-    if (!it.targetProduct) acc.newProducts += 1;
-    for (const a of it.plannedActions) {
-      const cls = classifyAction(a.action);
-      if (cls === "noop") continue;
-      if (a.target === "serverPostgres") {
-        if (cls === "create") acc.postgresCreate += 1;
-        else if (cls === "update") acc.postgresUpdate += 1;
-        else acc.postgresOther += 1;
-      } else if (a.target === "supabase") {
-        if (cls === "create") acc.supabaseCreate += 1;
-        else if (cls === "update") acc.supabaseUpdate += 1;
-        else acc.supabaseOther += 1;
-      }
-    }
-  }
-  return acc;
-}
-
-function statusBadgeClasses(status: ItemStatus): string {
-  switch (status) {
-    case "matched":
-      return "bg-state-success text-state-success-fg";
-    case "unmatched":
-      return "bg-state-warning text-state-warning-fg";
-    case "conflict":
-      return "bg-state-danger text-state-danger-fg";
-    case "noop":
-    case "skipped":
-      return "bg-state-neutral text-state-neutral-fg";
-    default:
-      return "bg-state-info text-state-info-fg";
-  }
-}
 
 function isActionable(item: PreviewItem): boolean {
   return item.plannedActions.some(
@@ -167,15 +85,14 @@ function isSelectable(item: PreviewItem): boolean {
   return Boolean(item.targetProduct?.id) && isActionable(item);
 }
 
+function isMatched(item: PreviewItem): boolean {
+  return Boolean(item.targetProduct?.id || item.targetMerchProduct?.id);
+}
+
 function matchesFilter(item: PreviewItem, filter: FilterKey): boolean {
   if (filter === "all") return true;
-  if (filter === "actionable") return isActionable(item);
-  if (filter === "matched") return item.status === "matched";
-  if (filter === "unmatched") return item.status === "unmatched";
-  if (filter === "noop")
-    return item.status === "noop" || item.status === "skipped";
-  if (filter === "conflict") return item.status === "conflict";
-  return true;
+  if (filter === "changed") return isActionable(item);
+  return !isActionable(item);
 }
 
 function matchesSearch(item: PreviewItem, q: string): boolean {
@@ -190,22 +107,80 @@ function matchesSearch(item: PreviewItem, q: string): boolean {
   );
 }
 
+// Сырые имена полей diff'а группируем в человеческие категории — в строке
+// таблицы видно «что поменяется», а точные поля живут в раскрытом diff'е.
+const PRICE_FIELDS = new Set([
+  "price", "old_price", "min_price", "price_min", "price_max", "sale_price",
+]);
+const OZON_PRICE_FIELDS = new Set([
+  "ozon_price", "ozon_old_price", "ozon_min_price",
+]);
+const IMAGE_FIELDS = new Set([
+  "primary_image", "primary_image_url", "main_image_path", "image_urls",
+  "images", "images360", "color_image",
+]);
+const LINK_FIELDS = new Set([
+  "ozon_product_ids", "ozon_skus", "ozon_offer_ids", "product_id", "sku",
+  "offer_id", "last_ozon_sync_at",
+]);
+
+function changeCategories(fields: string[]): string[] {
+  const cats: string[] = [];
+  const add = (c: string) => {
+    if (!cats.includes(c)) cats.push(c);
+  };
+  for (const f of fields) {
+    const base = f.includes(".") ? (f.split(".").at(-1) ?? f) : f;
+    if (PRICE_FIELDS.has(base)) add("цена");
+    else if (OZON_PRICE_FIELDS.has(base)) add("цена Ozon");
+    else if (IMAGE_FIELDS.has(base)) add("фото");
+    else if (base === "sizes") add("размеры");
+    else if (LINK_FIELDS.has(base)) add("привязка SKU");
+    else if (base === "name") add("название");
+    else if (base === "visible" || base === "archived") add("видимость");
+    else add(base);
+  }
+  return cats;
+}
+
+function categoryBadgeClasses(cat: string): string {
+  switch (cat) {
+    case "цена":
+      return "bg-state-danger text-state-danger-fg";
+    case "фото":
+      return "bg-state-info text-state-info-fg";
+    case "размеры":
+      return "bg-state-success text-state-success-fg";
+    default:
+      return "bg-state-neutral text-state-neutral-fg";
+  }
+}
+
+// Форматируем значение поля diff'а в короткую строку. Массивы → "[a, b, …]",
+// строки в кавычках, null → "—", числа без кавычек.
+function formatDiffValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return `"${v}"`;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    const inner = v.slice(0, 3).map((x) => formatDiffValue(x)).join(", ");
+    return v.length > 3 ? `[${inner}, …+${v.length - 3}]` : `[${inner}]`;
+  }
+  return JSON.stringify(v);
+}
+
+// ============================================================================
+// Main component
+// ============================================================================
+
 export function OzonImportTab() {
   const [targets, setTargets] = useState<ImportTargets>({
     serverPostgres: true,
-    // Backend сейчас стоит на staging-safety: запись в Supabase отключена
-    // флагом OZON_IMPORT_WRITE_SUPABASE=false. Дефолтим в false, чтобы не
-    // вводить в заблуждение — флажок остаётся доступным для будущего.
     supabase: false,
   });
   const [limit, setLimit] = useState<number>(1000);
   const [includeArchived, setIncludeArchived] = useState(false);
-  // Цены сайта и цены Ozon у KOMUI сознательно разные, поэтому безопасный
-  // дефолт — НЕ переносить Ozon-цены. Ozon-цены при этом сохраняются в
-  // технические поля offers[].ozon_price и видны в админке.
   const [updatePrices, setUpdatePrices] = useState(false);
-  // true → syncSizes:"add" — новые размеры добавляются к карточке. Удаление
-  // размеров остаётся ручным действием в редакторе товара.
   const [syncSizes, setSyncSizes] = useState(true);
   // true, если галку цен сняли, но backend флаг не поддержал (старый release).
   const [priceFlagIgnored, setPriceFlagIgnored] = useState(false);
@@ -214,14 +189,10 @@ export function OzonImportTab() {
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
-  // Выбранные к импорту itemId (только selectable-позиции).
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importing, setImporting] = useState(false);
-
-  // Item, открытый в JSON-debug диалоге — показывает все поля как пришли с
-  // backend (matchReason, targetProduct, plannedActions, …).
   const [inspectItem, setInspectItem] = useState<PreviewItem | null>(null);
 
   const [job, setJob] = useState<JobResponse | null>(null);
@@ -272,7 +243,7 @@ export function OzonImportTab() {
         data.summary.actionableServerPostgres +
         data.summary.actionableSupabase;
       toast.success(
-        `Просканировано ${data.summary.totalOzonItems}, к действию: ${actionable}, новых карточек: ${data.summary.newProductGroups ?? data.newProductGroups?.length ?? 0}`,
+        `Просканировано ${data.summary.totalOzonItems}, к обновлению: ${actionable}`,
       );
     } catch (e) {
       toast.error(errorMessage(e));
@@ -352,22 +323,25 @@ export function OzonImportTab() {
     }
   }
 
-  const filteredItems = useMemo(() => {
-    if (!preview) return [];
-    return preview.items.filter(
-      (it) => matchesFilter(it, filter) && matchesSearch(it, query),
-    );
-  }, [preview, filter, query]);
-
-  const breakdown = useMemo(
-    () => (preview ? computeBreakdown(preview.items) : null),
+  // Основная таблица — только сматченные позиции; unmatched живут в секции
+  // «Привязка», новые дизайны — в «Новых карточках».
+  const matchedItems = useMemo(
+    () => (preview ? preview.items.filter(isMatched) : []),
     [preview],
   );
 
-  const hasErrors = useMemo(() => {
-    if (!preview) return false;
-    return preview.items.some((it) => it.severity === "error");
-  }, [preview]);
+  const filteredItems = useMemo(
+    () =>
+      matchedItems.filter(
+        (it) => matchesFilter(it, filter) && matchesSearch(it, query),
+      ),
+    [matchedItems, filter, query],
+  );
+
+  const hasErrors = useMemo(
+    () => (preview ? preview.items.some((it) => it.severity === "error") : false),
+    [preview],
+  );
 
   const actionableTotal = preview
     ? preview.summary.actionableServerPostgres +
@@ -375,8 +349,8 @@ export function OzonImportTab() {
     : 0;
 
   const selectableTotal = useMemo(
-    () => (preview ? preview.items.filter(isSelectable).length : 0),
-    [preview],
+    () => matchedItems.filter(isSelectable).length,
+    [matchedItems],
   );
 
   const jobActive = job && (job.status === "queued" || job.status === "running");
@@ -420,105 +394,96 @@ export function OzonImportTab() {
   }
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="space-y-5">
+      {/* Панель запуска: всё в одну строку, пояснения — в (i) */}
       <Card>
-        <CardContent className="p-4 space-y-4">
-          <div className="grid gap-4 md:grid-cols-[1fr_auto] items-end">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Цели импорта</Label>
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={targets.serverPostgres}
-                      onCheckedChange={(v) =>
-                        setTargets((t) => ({ ...t, serverPostgres: v === true }))
-                      }
-                    />
-                    Server PostgreSQL
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={targets.supabase}
-                      onCheckedChange={(v) =>
-                        setTargets((t) => ({ ...t, supabase: v === true }))
-                      }
-                    />
-                    Supabase
-                  </label>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-tight">
-                  На staging запись в Supabase отключена флагом
-                  <code className="font-mono"> OZON_IMPORT_WRITE_SUPABASE=false</code>.
-                  Несопоставленные позиции не создаются автоматически — мапить вручную.
-                </p>
+        <CardContent className="p-4">
+          <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground font-medium">
+                Куда пишем
+                <InfoTip text="Server PostgreSQL — основная база сайта komui.ru. Supabase — legacy-контур; запись в него сейчас отключена на сервере (OZON_IMPORT_WRITE_SUPABASE=false)." />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="komui-limit" className="text-xs">
-                  Лимит товаров
-                </Label>
-                <Input
-                  id="komui-limit"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={limit}
-                  onChange={(e) =>
-                    setLimit(Math.max(1, Number(e.target.value) || 1))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Архивные</Label>
-                <label className="flex items-center gap-2 text-sm h-10">
-                  <Checkbox
-                    checked={includeArchived}
-                    onCheckedChange={(v) => setIncludeArchived(v === true)}
-                  />
-                  Включать архивные
-                </label>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Цены</Label>
+              <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
-                    checked={updatePrices}
-                    onCheckedChange={(v) => setUpdatePrices(v === true)}
+                    checked={targets.serverPostgres}
+                    onCheckedChange={(v) =>
+                      setTargets((t) => ({ ...t, serverPostgres: v === true }))
+                    }
                   />
-                  Обновлять цены
+                  PostgreSQL
                 </label>
-                <p className="text-[11px] text-muted-foreground leading-tight">
-                  Цены сайта и Ozon у Komui разные — включай, только если
-                  сознательно хочешь заменить цены сайта Ozon-ценами.
-                  Ozon-цены и так сохраняются в offers[].ozon_price.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Размеры</Label>
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
-                    checked={syncSizes}
-                    onCheckedChange={(v) => setSyncSizes(v === true)}
+                    checked={targets.supabase}
+                    onCheckedChange={(v) =>
+                      setTargets((t) => ({ ...t, supabase: v === true }))
+                    }
                   />
-                  Добавлять новые размеры
+                  Supabase
                 </label>
-                <p className="text-[11px] text-muted-foreground leading-tight">
-                  Только добавляет размеры из Ozon. Удаление размеров — вручную
-                  в редакторе товара.
-                </p>
               </div>
             </div>
-            <Button
-              onClick={runPreview}
-              disabled={previewing || (!targets.serverPostgres && !targets.supabase)}
-            >
-              {previewing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCcw className="h-4 w-4" />
-              )}
-              Проверить новые товары из Ozon
-            </Button>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="komui-limit" className="text-xs text-muted-foreground font-medium">
+                Лимит
+              </Label>
+              <Input
+                id="komui-limit"
+                type="number"
+                min={1}
+                max={10000}
+                value={limit}
+                onChange={(e) =>
+                  setLimit(Math.max(1, Number(e.target.value) || 1))
+                }
+                className="w-24 h-9"
+              />
+            </div>
+
+            <div className="flex items-center gap-4 pb-2">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={includeArchived}
+                  onCheckedChange={(v) => setIncludeArchived(v === true)}
+                />
+                Архивные
+                <InfoTip text="Включать в скан архивные товары Ozon." />
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={updatePrices}
+                  onCheckedChange={(v) => setUpdatePrices(v === true)}
+                />
+                Обновлять цены
+                <InfoTip text="Цены сайта и Ozon у Komui разные. Включай, только если сознательно хочешь заменить цены сайта Ozon-ценами. Ozon-цены и так сохраняются в технические поля offers[].ozon_price." />
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={syncSizes}
+                  onCheckedChange={(v) => setSyncSizes(v === true)}
+                />
+                Новые размеры
+                <InfoTip text="Добавлять к карточкам размеры, появившиеся в Ozon. Только добавляет — удаление размеров остаётся ручным действием в редакторе товара." />
+              </label>
+            </div>
+
+            <div className="ml-auto pb-0.5">
+              <Button
+                onClick={runPreview}
+                disabled={previewing || (!targets.serverPostgres && !targets.supabase)}
+              >
+                {previewing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCcw className="h-4 w-4" />
+                )}
+                Проверить товары из Ozon
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -529,7 +494,7 @@ export function OzonImportTab() {
             <EmptyState
               icon={Store}
               title="Превью ещё не запускалось"
-              description="Нажмите «Проверить новые товары из Ozon», чтобы получить diff: какие позиции сопоставились, какие требуют ручного маппинга."
+              description="Нажмите «Проверить товары из Ozon» — покажем, какие карточки обновятся, какие offer-ы нужно привязать вручную и какие товары можно создать."
             />
           </CardContent>
         </Card>
@@ -537,7 +502,7 @@ export function OzonImportTab() {
 
       {preview && (
         <>
-          <SummaryCards preview={preview} breakdown={breakdown} />
+          <SummaryCards preview={preview} actionableTotal={actionableTotal} />
 
           {priceFlagIgnored && (
             <Card>
@@ -551,8 +516,7 @@ export function OzonImportTab() {
                     На сервере старый release без флага{" "}
                     <code className="font-mono">updatePrices</code> — этот
                     preview построен <span className="font-semibold">с</span>{" "}
-                    обновлением цен. Импорт из него изменит цены. Обнови
-                    backend или оставь галку включённой.
+                    обновлением цен. Импорт из него изменит цены сайта.
                   </div>
                 </div>
               </CardContent>
@@ -561,16 +525,13 @@ export function OzonImportTab() {
 
           {preview.warnings.length > 0 && (
             <Card>
-              <CardContent className="p-4 space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <AlertTriangle className="h-4 w-4 text-state-warning-fg" />
-                  Предупреждения backend
-                </div>
-                <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
+              <CardContent className="p-3 flex items-start gap-2 text-sm">
+                <AlertTriangle className="h-4 w-4 text-state-warning-fg shrink-0 mt-0.5" />
+                <div className="space-y-0.5 text-muted-foreground">
                   {preview.warnings.map((w, i) => (
-                    <li key={i}>{previewWarningText(w)}</li>
+                    <div key={i}>{previewWarningText(w)}</div>
                   ))}
-                </ul>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -578,31 +539,49 @@ export function OzonImportTab() {
           <Card>
             <CardContent className="p-4 space-y-3">
               <div className="flex flex-wrap gap-2 items-center justify-between">
-                <div className="flex flex-wrap gap-1.5">
-                  {FILTERS.map((f) => (
-                    <Pill
-                      key={f.key}
-                      shape="square"
-                      active={filter === f.key}
-                      onClick={() => setFilter(f.key)}
-                    >
-                      {f.label}
-                    </Pill>
-                  ))}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Обновления карточек</span>
+                  <Badge variant="secondary" className="tabular-nums">
+                    {matchedItems.length}
+                  </Badge>
+                  <InfoTip text="Товары Ozon, автоматически сопоставленные с карточками сайта. Отметь галками нужные строки и нажми «Применить». Стрелка слева от строки раскрывает точный список изменений." />
                 </div>
                 <div className="flex gap-2 items-center">
+                  <div className="flex flex-wrap gap-1.5">
+                    {FILTERS.map((f) => (
+                      <Pill
+                        key={f.key}
+                        shape="square"
+                        active={filter === f.key}
+                        onClick={() => setFilter(f.key)}
+                      >
+                        {f.label}
+                      </Pill>
+                    ))}
+                  </div>
                   <div className="relative">
                     <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="offerId, productId, SKU, название"
+                      placeholder="Поиск: артикул или название"
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
-                      className="pl-8 w-72"
+                      className="pl-8 w-64 h-8"
                     />
                   </div>
-                  <Button variant="outline" onClick={copyPreviewJson}>
-                    <ClipboardCopy className="h-4 w-4" /> JSON
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={copyPreviewJson}
+                        aria-label="Скопировать JSON превью"
+                      >
+                        <ClipboardCopy className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Скопировать весь ответ preview (JSON)</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -616,22 +595,17 @@ export function OzonImportTab() {
                 onToggleAll={toggleAllVisible}
               />
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
                 <div className="text-xs text-muted-foreground">
-                  Показано {filteredItems.length} из {preview.items.length}
+                  Показано {filteredItems.length} из {matchedItems.length}
                   {" · "}выбрано {selected.size} из {selectableTotal}
                   {hasErrors && (
                     <span className="ml-2 text-state-danger-fg">
                       Есть ошибки — импорт заблокирован
                     </span>
                   )}
-                  {!hasErrors && !preview.canImport && (
-                    <span className="ml-2 text-state-warning-fg">
-                      Backend отметил canImport=false
-                    </span>
-                  )}
                   {!hasErrors && preview.canImport && actionableTotal === 0 && (
-                    <span className="ml-2">Нечего импортировать</span>
+                    <span className="ml-2">Всё уже синхронизировано</span>
                   )}
                 </div>
                 <Button
@@ -658,6 +632,7 @@ export function OzonImportTab() {
 
       {job && <JobPanel job={job} />}
 
+      {/* JSON-инспектор позиции: все технические поля живут здесь */}
       <Dialog
         open={inspectItem !== null}
         onOpenChange={(open) => {
@@ -668,8 +643,8 @@ export function OzonImportTab() {
           <DialogHeader>
             <DialogTitle>JSON позиции</DialogTitle>
             <DialogDescription>
-              Поля как пришли с backend: matchReason, targetProduct,
-              targetMerchProduct, plannedActions, offerId, sku, productId.
+              Все поля как пришли с backend: идентификаторы, matchReason,
+              plannedActions, diff.
             </DialogDescription>
           </DialogHeader>
           {inspectItem && (
@@ -730,141 +705,87 @@ export function OzonImportTab() {
         </DialogContent>
       </Dialog>
     </div>
+    </TooltipProvider>
   );
 }
 
+// ============================================================================
+// Summary
+// ============================================================================
+
 function SummaryCards({
   preview,
-  breakdown,
+  actionableTotal,
 }: {
   preview: PreviewResponse;
-  breakdown: ActionableBreakdown | null;
+  actionableTotal: number;
 }) {
   const s = preview.summary;
-  const cards: {
-    label: string;
-    value: number;
-    tone?: string;
-    breakdown?: { create: number; update: number; other: number };
-  }[] = [
-    { label: "Из Ozon", value: s.totalOzonItems },
+  const groups = s.newProductGroups ?? preview.newProductGroups?.length ?? 0;
+  const cards: { label: string; value: number; tone?: string; hint?: string }[] = [
     {
-      label: "Сопоставлено карточек",
-      value: s.matchedStorefront,
-      tone: "text-state-success-fg",
+      label: "Из Ozon",
+      value: s.totalOzonItems,
+      hint: "Сколько товаров Ozon просканировано в этом preview.",
     },
     {
-      label: "Сопоставлено SKU",
-      value: s.matchedMerchProducts,
-      tone: "text-state-success-fg",
+      label: "К обновлению",
+      value: actionableTotal,
+      tone: actionableTotal > 0 ? "text-state-info-fg" : undefined,
+      hint: "Сматченные карточки, у которых есть реальные изменения — таблица ниже.",
     },
     {
-      label: "К применению в Postgres",
-      value: s.actionableServerPostgres,
-      tone: s.actionableServerPostgres > 0 ? "text-state-info-fg" : undefined,
-      breakdown: breakdown
-        ? {
-            create: breakdown.postgresCreate,
-            update: breakdown.postgresUpdate,
-            other: breakdown.postgresOther,
-          }
-        : undefined,
+      label: "Без изменений",
+      value: s.noop,
+      hint: "Сматчены, но данные уже совпадают — импорт их пропустит.",
     },
     {
-      label: "К применению в Supabase",
-      value: s.actionableSupabase,
-      tone: s.actionableSupabase > 0 ? "text-state-info-fg" : undefined,
-      breakdown: breakdown
-        ? {
-            create: breakdown.supabaseCreate,
-            update: breakdown.supabaseUpdate,
-            other: breakdown.supabaseOther,
-          }
-        : undefined,
-    },
-    { label: "Без изменений", value: s.noop },
-    {
-      label: "Не сопоставлено",
-      value: s.unmatched,
-      tone: s.unmatched > 0 ? "text-state-warning-fg" : undefined,
+      label: "Требуют привязки",
+      value: s.unmatched - groupItemsCount(preview),
+      tone:
+        s.unmatched - groupItemsCount(preview) > 0
+          ? "text-state-warning-fg"
+          : undefined,
+      hint: "Offer-ы без автоматического матча — привяжи их к карточкам в секции «Привязка» ниже.",
     },
     {
       label: "Новые карточки",
-      value: s.newProductGroups ?? preview.newProductGroups?.length ?? 0,
-      tone:
-        (s.newProductGroups ?? preview.newProductGroups?.length ?? 0) > 0
-          ? "text-state-info-fg"
-          : undefined,
+      value: groups,
+      tone: groups > 0 ? "text-state-info-fg" : undefined,
+      hint: "Группы новых дизайнов, из которых можно создать карточки сайта — секция внизу страницы.",
     },
   ];
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
-        {cards.map((c) => (
-          <Card key={c.label}>
-            <CardContent className="p-3">
-              <div className="text-xs text-muted-foreground">{c.label}</div>
-              <div
-                className={cn(
-                  "text-xl font-semibold tabular-nums mt-0.5",
-                  c.tone,
-                )}
-              >
-                {c.value}
-              </div>
-              {c.breakdown && c.value > 0 && (
-                <div className="text-[10px] text-muted-foreground tabular-nums mt-1 flex flex-wrap gap-x-1.5">
-                  {c.breakdown.create > 0 && (
-                    <span>create: {c.breakdown.create}</span>
-                  )}
-                  {c.breakdown.update > 0 && (
-                    <span>update: {c.breakdown.update}</span>
-                  )}
-                  {c.breakdown.other > 0 && (
-                    <span>other: {c.breakdown.other}</span>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      {cards.map((c) => (
+        <Card key={c.label}>
+          <CardContent className="p-3">
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              {c.label}
+              {c.hint && <InfoTip text={c.hint} />}
+            </div>
+            <div
+              className={cn("text-xl font-semibold tabular-nums mt-0.5", c.tone)}
+            >
+              {c.value}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
 
-// Форматируем значение поля diff'а в короткую строку. Массивы → "[a, b, …]",
-// строки в кавычках, null → "—", числа без кавычек. Длинные значения
-// сокращаются, полный вид всегда доступен через JSON-debug диалог.
-function formatDiffValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "string") return `"${v}"`;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (Array.isArray(v)) {
-    const inner = v.slice(0, 3).map((x) => formatDiffValue(x)).join(", ");
-    return v.length > 3 ? `[${inner}, …+${v.length - 3}]` : `[${inner}]`;
-  }
-  return JSON.stringify(v);
+// Offer-ы, уже сгруппированные в кандидаты новых карточек, не считаем
+// «требующими привязки» — у них свой путь (создание карточки).
+function groupItemsCount(preview: PreviewResponse): number {
+  const groups = preview.newProductGroups ?? [];
+  return groups.reduce((sum, g) => sum + g.itemIds.length, 0);
 }
 
-const DIFF_FIELD_LABELS: Record<string, string> = {
-  "offers.price": "цена",
-  "offers.old_price": "old price",
-  "offers.min_price": "min price",
-  "offers.offer_id": "offer_id",
-  "offers.product_id": "product_id",
-  "offers.visible": "visible",
-  "offers.archived": "archived",
-  price_min: "price_min",
-  price_max: "price_max",
-  ozon_product_ids: "ozon_product_ids",
-  ozon_skus: "ozon_skus",
-  ozon_offer_ids: "ozon_offer_ids",
-};
-
-function diffFieldLabel(field: string): string {
-  return DIFF_FIELD_LABELS[field] ?? field;
-}
+// ============================================================================
+// Items table
+// ============================================================================
 
 function PriceCell({ item }: { item: PreviewItem }) {
   if (item.price == null) return <span>—</span>;
@@ -931,14 +852,10 @@ function ItemsTable({
                 />
               )}
             </TableHead>
-            <TableHead className="w-8"></TableHead>
-            <TableHead className="w-32">Статус</TableHead>
-            <TableHead>Карточка / SKU</TableHead>
-            <TableHead className="w-44">Offer ID</TableHead>
-            <TableHead className="w-32 text-right">Цена</TableHead>
-            <TableHead>Изменения</TableHead>
-            <TableHead>План</TableHead>
-            <TableHead className="w-12"></TableHead>
+            <TableHead>Товар</TableHead>
+            <TableHead className="w-32 text-right">Цена Ozon</TableHead>
+            <TableHead>Что изменится</TableHead>
+            <TableHead className="w-20"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -946,197 +863,111 @@ function ItemsTable({
             const isOpen = expanded.has(it.itemId);
             const changedFields = it.diff?.changedFields ?? [];
             const hasDiff = it.diff && it.diff.fields.length > 0;
+            const cats = changeCategories(changedFields);
             return (
               <Fragment key={it.itemId}>
-            <TableRow>
-              <TableCell>
-                {isSelectable(it) && (
-                  <Checkbox
-                    checked={selected.has(it.itemId)}
-                    onCheckedChange={() => onToggle(it.itemId)}
-                    aria-label={`Выбрать ${it.offerId}`}
-                  />
-                )}
-              </TableCell>
-              <TableCell>
-                {hasDiff && (
-                  <button
-                    type="button"
-                    onClick={() => toggle(it.itemId)}
-                    className="inline-flex items-center justify-center h-6 w-6 rounded hover:bg-accent text-muted-foreground"
-                    aria-label={isOpen ? "Свернуть" : "Развернуть"}
-                  >
-                    {isOpen ? (
-                      <ChevronDown className="h-4 w-4" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" />
+                <TableRow className={cn(!isActionable(it) && "opacity-60")}>
+                  <TableCell>
+                    {isSelectable(it) && (
+                      <Checkbox
+                        checked={selected.has(it.itemId)}
+                        onCheckedChange={() => onToggle(it.itemId)}
+                        aria-label={`Выбрать ${it.offerId}`}
+                      />
                     )}
-                  </button>
-                )}
-              </TableCell>
-              <TableCell>
-                <Badge
-                  variant="outline"
-                  className={cn("border-transparent", statusBadgeClasses(it.status))}
-                >
-                  {statusLabel(it.status)}
-                </Badge>
-                {it.severity === "error" && (
-                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-state-danger-fg">
-                    <XCircle className="h-3 w-3" /> error
-                  </div>
-                )}
-                {it.severity === "warning" && (
-                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-state-warning-fg">
-                    <AlertTriangle className="h-3 w-3" /> warning
-                  </div>
-                )}
-                {it.matchReason && it.matchReason !== "none" && (
-                  <div className="mt-1 text-[10px] text-muted-foreground">
-                    match: <span className="font-mono">{it.matchReason}</span>
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>
-                <div className="text-sm font-medium truncate max-w-[280px]">
-                  {it.targetProduct?.name ?? (
-                    <span className="text-muted-foreground italic">
-                      без карточки
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-muted-foreground tabular-nums font-mono">
-                  product {it.productId}
-                  {it.targetMerchProduct?.sku && (
-                    <> · sku {it.targetMerchProduct.sku}</>
-                  )}
-                </div>
-                {it.targetProduct?.slug && (
-                  <div className="text-[10px] text-muted-foreground">
-                    <span className="opacity-70">slug:</span>{" "}
-                    <span className="font-mono">{it.targetProduct.slug}</span>
-                  </div>
-                )}
-                {it.targetProduct?.designKey && (
-                  <div className="text-[10px] text-muted-foreground">
-                    <span className="opacity-70">ключ карточки:</span>{" "}
-                    <span className="font-mono">{it.targetProduct.designKey}</span>
-                  </div>
-                )}
-              </TableCell>
-              <TableCell className="font-mono text-xs">
-                {it.offerId}
-                {it.normalizedOfferId &&
-                  it.normalizedOfferId !== it.offerId && (
-                    <div className="text-[10px] text-muted-foreground">
-                      → {it.normalizedOfferId}
-                    </div>
-                  )}
-                {it.size && (
-                  <div className="text-[10px] text-muted-foreground">
-                    размер: {it.size}
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>
-                <PriceCell item={it} />
-              </TableCell>
-              <TableCell className="text-xs">
-                {it.diff ? (
-                  changedFields.length === 0 ? (
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "border-transparent text-[10px]",
-                        statusBadgeClasses("noop"),
-                      )}
-                    >
-                      без изменений
-                    </Badge>
-                  ) : (
-                    <div className="flex flex-wrap gap-1">
-                      {changedFields.slice(0, 4).map((f) => (
-                        <Badge
-                          key={f}
-                          variant="outline"
-                          className={cn(
-                            "border-transparent text-[10px] font-mono",
-                            statusBadgeClasses("matched"),
-                          )}
-                        >
-                          {diffFieldLabel(f)}
-                        </Badge>
-                      ))}
-                      {changedFields.length > 4 && (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px]"
-                        >
-                          +{changedFields.length - 4}
-                        </Badge>
-                      )}
-                    </div>
-                  )
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </TableCell>
-              <TableCell className="text-xs">
-                {it.plannedActions.length === 0 ? (
-                  <span className="text-muted-foreground">—</span>
-                ) : (
-                  <ul className="space-y-0.5">
-                    {it.plannedActions.map((a, i) => (
-                      <li
-                        key={i}
-                        className="flex flex-wrap gap-1.5 items-center"
-                      >
-                        <Badge variant="outline" className="text-[10px]">
-                          {a.target}
-                        </Badge>
-                        <span className="font-medium font-mono">{a.action}</span>
-                        {a.table && (
-                          <span className="text-muted-foreground">
-                            → {a.table}
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm font-medium truncate max-w-[320px]">
+                      {it.targetProduct?.name ??
+                        it.targetMerchProduct?.sku ?? (
+                          <span className="text-muted-foreground italic">
+                            без карточки
                           </span>
                         )}
-                        {a.reason && (
-                          <span className="text-muted-foreground/70">
-                            ({a.reason})
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground font-mono">
+                      {it.offerId}
+                      {it.size && <> · {it.size}</>}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <PriceCell item={it} />
+                  </TableCell>
+                  <TableCell>
+                    {it.severity === "error" ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-state-danger-fg">
+                        <XCircle className="h-3.5 w-3.5" /> ошибка —
+                        подробности в JSON
+                      </span>
+                    ) : cats.length === 0 ? (
+                      <span className="text-xs text-muted-foreground">
+                        без изменений
+                      </span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {cats.map((c) => (
+                          <Badge
+                            key={c}
+                            variant="outline"
+                            className={cn(
+                              "border-transparent text-[10px]",
+                              categoryBadgeClasses(c),
+                            )}
+                          >
+                            {c}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1 justify-end">
+                      {hasDiff && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => toggle(it.itemId)}
+                              aria-label={isOpen ? "Свернуть diff" : "Показать diff"}
+                            >
+                              {isOpen ? (
+                                <ChevronDown className="h-4 w-4" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Точный список изменений</TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => onInspect(it)}
+                            aria-label="Показать JSON позиции"
+                          >
+                            <Braces className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Технические данные (ID, matchReason, план)
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </TableCell>
+                </TableRow>
+                {isOpen && it.diff && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="bg-muted/30 p-0">
+                      <DiffTable diff={it.diff} />
+                    </TableCell>
+                  </TableRow>
                 )}
-                {it.errors && it.errors.length > 0 && (
-                  <ul className="mt-1 space-y-0.5 text-state-danger-fg">
-                    {it.errors.map((e, i) => (
-                      <li key={i}>{e}</li>
-                    ))}
-                  </ul>
-                )}
-              </TableCell>
-              <TableCell>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => onInspect(it)}
-                  aria-label="Показать JSON позиции"
-                  title="Показать JSON"
-                  className="h-7 w-7"
-                >
-                  <Braces className="h-3.5 w-3.5" />
-                </Button>
-              </TableCell>
-            </TableRow>
-            {isOpen && it.diff && (
-              <TableRow>
-                <TableCell colSpan={9} className="bg-muted/30 p-0">
-                  <DiffTable diff={it.diff} />
-                </TableCell>
-              </TableRow>
-            )}
               </Fragment>
             );
           })}
@@ -1151,28 +982,12 @@ function DiffTable({ diff }: { diff: ItemDiff }) {
     <div className="px-4 py-3 text-xs space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
         <span>
-          target: <span className="font-mono text-foreground">{diff.target}</span>
+          таблица:{" "}
+          <span className="font-mono text-foreground">{diff.table}</span>
         </span>
-        {diff.table && (
-          <span>
-            · table:{" "}
-            <span className="font-mono text-foreground">{diff.table}</span>
-          </span>
-        )}
         <span>
-          · operation:{" "}
+          · операция:{" "}
           <span className="font-mono text-foreground">{diff.operation}</span>
-        </span>
-        <span>
-          · changed:{" "}
-          <span
-            className={cn(
-              "font-mono",
-              diff.changed ? "text-state-warning-fg" : "text-state-success-fg",
-            )}
-          >
-            {String(diff.changed)}
-          </span>
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -1205,10 +1020,7 @@ function DiffTable({ diff }: { diff: ItemDiff }) {
                   {f.changed ? (
                     <Badge
                       variant="outline"
-                      className={cn(
-                        "border-transparent text-[10px]",
-                        statusBadgeClasses("matched"),
-                      )}
+                      className="border-transparent text-[10px] bg-state-warning text-state-warning-fg"
                     >
                       diff
                     </Badge>
@@ -1224,6 +1036,10 @@ function DiffTable({ diff }: { diff: ItemDiff }) {
     </div>
   );
 }
+
+// ============================================================================
+// Job panel
+// ============================================================================
 
 function JobPanel({ job }: { job: JobResponse }) {
   const tone =
@@ -1256,7 +1072,7 @@ function JobPanel({ job }: { job: JobResponse }) {
             <Icon className={cn("h-5 w-5", tone, iconSpin && "animate-spin")} />
             <div>
               <div className="font-medium">
-                Job {JOB_STATUS_LABELS[job.status]}
+                Импорт: {JOB_STATUS_LABELS[job.status]}
               </div>
               <div className="text-xs text-muted-foreground font-mono">
                 {job.jobId}

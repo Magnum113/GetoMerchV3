@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { cn, errorMessage, formatMoney } from "@/lib/utils";
+import { InfoTip } from "./info-tip";
 import type {
   LinkOffersResponse,
   PreviewItem,
@@ -79,14 +80,12 @@ export function LinkOffersSection({
     <Card>
       <CardContent className="p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-sm font-medium">
-              Привязать к существующему товару
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Offer-ы без автоматического матча ({unmatched.length}). Отметь
-              нужные и выбери карточку сайта.
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">Привязка</span>
+            <Badge variant="secondary" className="tabular-nums">
+              {unmatched.length}
+            </Badge>
+            <InfoTip text="Offer-ы Ozon, которые не сматчились с карточками сайта автоматически (исторические артикулы). Отметь нужные, нажми «Привязать» и выбери карточку — offer-ы добавятся в неё." />
           </div>
           <Button
             onClick={() => setDialogOpen(true)}
