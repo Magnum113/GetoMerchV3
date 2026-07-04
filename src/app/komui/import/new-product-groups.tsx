@@ -49,28 +49,56 @@ function slugify(value: string): string {
   return out.replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
-function ozonDesignSlug(group: NewProductGroup): string {
-  const fromOffer = group.offerIds
-    .map((offerId) => /^D(\d+)-/i.exec(offerId)?.[1])
-    .find(Boolean);
-  if (fromOffer) return `d${fromOffer}`;
+const COLOR_SEO_SLUGS: Record<string, string> = {
+  white: "belaya",
+  black: "chernaya",
+  blue: "sinyaya",
+  "washed-grey": "varenaya-seraya",
+  "washed-beige": "varenaya-bezhevaya",
+};
 
-  const fromVariant = /^var(\d+)$/i.exec(group.ozonVariant ?? "")?.[1];
-  if (fromVariant) return `d${fromVariant}`;
+const DECORATION_SEO_SLUGS: Record<string, string> = {
+  print: "print",
+  embroidery: "vyshivka",
+};
 
-  return "";
+function hasSlugToken(slug: string, token: string): boolean {
+  return new RegExp(`(^|-)${token}($|-)`).test(slug);
+}
+
+function decorationAlreadyInSlug(base: string, decoration: string): boolean {
+  if (decoration === "print") return base.includes("print");
+  if (decoration === "vyshivka") return base.includes("vyshiv");
+  return hasSlugToken(base, decoration);
+}
+
+function decorationSuffix(base: string, decorationSlug?: string): string {
+  const decoration = decorationSlug ? DECORATION_SEO_SLUGS[decorationSlug] : "";
+  if (!decoration || decorationAlreadyInSlug(base, decoration)) return "";
+  return decoration;
+}
+
+function compactColorSuffix(base: string, colorSlug?: string): string {
+  const color = colorSlug ? COLOR_SEO_SLUGS[colorSlug] : "";
+  if (!color) return "";
+  return color
+    .split("-")
+    .filter((token) => token && !hasSlugToken(base, token))
+    .join("-");
 }
 
 function defaultSiteSlug(group: NewProductGroup): string {
   const base = slugify(group.suggestedName ?? "");
-  const design = ozonDesignSlug(group);
-  if (base && design && !base.endsWith(`-${design}`)) return `${base}-${design}`;
+  const decoration = decorationSuffix(base, group.decorationSlug);
+  const colorSuffix = compactColorSuffix(base, group.colorSlug);
+  const parts = [base, decoration, colorSuffix].filter(Boolean);
+  if (parts.length) return parts.join("-");
   if (base) return base;
 
   // Fallback для старых preview: не показываем пользователю varXX как будто это
   // артикул. Это только URL slug, реальные Ozon offer_id сохраняются отдельно.
   const fallback = (group.slug ?? "").replace(/^var(\d+)-/i, "d$1-");
-  return fallback || design;
+  return fallback || "product";
 }
 
 export function NewProductGroupsSection({
