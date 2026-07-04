@@ -11,7 +11,9 @@ export type KomuiFetchInit = {
   idempotencyKey?: string;
 };
 
-function readEnv(): { baseUrl: string; token: string; basicAuth: string | null } {
+type KomuiEnv = { baseUrl: string; token: string; basicAuth: string | null };
+
+function readEnv(): KomuiEnv {
   const baseUrl = process.env.KOMUI_MIGRATION_API_BASE_URL;
   const token = process.env.KOMUI_ADMIN_API_TOKEN;
   if (!baseUrl) {
@@ -24,8 +26,46 @@ function readEnv(): { baseUrl: string; token: string; basicAuth: string | null }
   return { baseUrl: baseUrl.replace(/\/$/, ""), token, basicAuth };
 }
 
+function hostnameFromBaseUrl(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function isStageBaseUrl(baseUrl: string): boolean {
+  const hostname = hostnameFromBaseUrl(baseUrl);
+  return hostname === "stage.komui.ru" || hostname.startsWith("stage.");
+}
+
+export function getKomuiConfigSummary(): {
+  baseUrl: string;
+  hostname: string;
+  target: "prod" | "stage" | "custom";
+  basicAuthConfigured: boolean;
+  basicAuthSent: boolean;
+} {
+  const { baseUrl, basicAuth } = readEnv();
+  const hostname = hostnameFromBaseUrl(baseUrl);
+  const target =
+    hostname === "komui.ru" || hostname === "www.komui.ru"
+      ? "prod"
+      : isStageBaseUrl(baseUrl)
+        ? "stage"
+        : "custom";
+
+  return {
+    baseUrl,
+    hostname,
+    target,
+    basicAuthConfigured: !!basicAuth,
+    basicAuthSent: !!basicAuth && isStageBaseUrl(baseUrl),
+  };
+}
+
 function buildHeaders(opts: { hasBody: boolean; idempotencyKey?: string }) {
-  const { token, basicAuth } = readEnv();
+  const { baseUrl, token, basicAuth } = readEnv();
   // API-токен передаём в собственном заголовке X-Komui-Admin-Token, чтобы он
   // не конфликтовал с Authorization, который на staging занят Basic Auth.
   // Backend KOMUI читает токен именно из этого заголовка.
@@ -36,7 +76,7 @@ function buildHeaders(opts: { hasBody: boolean; idempotencyKey?: string }) {
   if (opts.hasBody) headers["Content-Type"] = "application/json";
   if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
 
-  if (basicAuth) {
+  if (basicAuth && isStageBaseUrl(baseUrl)) {
     // На staging Authorization уже занят Basic Auth прокси (nginx). Bearer
     // сюда класть нельзя — он замаскирует Basic и фронт-прокси отдаст 401.
     const b64 = Buffer.from(basicAuth, "utf8").toString("base64");

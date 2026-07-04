@@ -317,7 +317,7 @@ function EditProductDialog({ product, onClose, onDone }: { product: Product | nu
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>Артикул (SKU)</Label>
-            <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="var2-Hoodie-Black-L" className="font-mono" />
+            <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="D002-HDY-EMB-BLK-REG-FLC-L" className="font-mono" />
             <div className="text-[11px] text-muted-foreground">Артикул должен быть уникальным. Можно использовать offer_id из Ozon.</div>
           </div>
 

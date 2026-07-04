@@ -350,26 +350,32 @@ export function ProductEditor({ productId }: { productId: string }) {
 
       {lastChanged && (
         <Card>
-          <CardContent className="p-3 text-xs flex flex-wrap items-center gap-2">
-            <span className="text-state-success-fg font-medium">
-              Сохранено
-            </span>
-            {lastChanged.length > 0 ? (
-              <>
-                <span className="text-muted-foreground">обновлены поля:</span>
-                {lastChanged.map((f) => (
-                  <Badge
-                    key={f}
-                    variant="outline"
-                    className="font-mono text-[10px]"
-                  >
-                    {f}
-                  </Badge>
-                ))}
-              </>
-            ) : (
-              <span className="text-muted-foreground">без изменений</span>
-            )}
+          <CardContent className="p-3 text-xs space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-state-success-fg font-medium">
+                Сохранено
+              </span>
+              {lastChanged.length > 0 ? (
+                <>
+                  <span className="text-muted-foreground">обновлены поля:</span>
+                  {lastChanged.map((f) => (
+                    <Badge
+                      key={f}
+                      variant="outline"
+                      className="font-mono text-[10px]"
+                    >
+                      {f}
+                    </Badge>
+                  ))}
+                </>
+              ) : (
+                <span className="text-muted-foreground">без изменений</span>
+              )}
+            </div>
+            <p className="text-muted-foreground">
+              Изменения записаны в Komui API. Публичные статические страницы
+              сайта обновятся после prod deploy/rebuild.
+            </p>
           </CardContent>
         </Card>
       )}

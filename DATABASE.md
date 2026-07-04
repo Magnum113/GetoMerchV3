@@ -422,7 +422,8 @@ ARCHITECTURE 1).
 
 Заказы во внешний цех вышивки. Жизненный цикл: `sent → ready → received`
 (плюс терминальный `cancelled`). Раньше были статусы `pending`/`in_progress` —
-удалены в миграции `202605231200`, см. правило 11 в ARCHITECTURE.
+удалены в миграции `202605251200_workshop_simplify_and_link_ozon.sql`, см.
+правило 11 в ARCHITECTURE.
 
 | Колонка | Тип | NULL | Default | Описание |
 |---|---|---|---|---|

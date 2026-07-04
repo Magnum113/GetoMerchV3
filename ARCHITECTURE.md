@@ -39,10 +39,10 @@
 | Иконки | **lucide-react** | — | Других иконок не добавлять |
 | Графики | **recharts** | 2.x | Для аналитики (`PeriodChart`, `ExpenseDonut`, `Sparkline`). Обёрнуты тонким `ChartContainer`/`ChartTooltipCard` в `components/ui/chart.tsx` для подхвата CSS-переменных темы |
 | Тосты | **sonner** | — | Везде `toast.success/error(...)`, не `alert()` |
-| Формы | **react-hook-form** + **zod** | — | Установлены, но в текущих диалогах не используются — для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией) — берём RHF + Zod |
+| Формы | Локальный state + точечная валидация | — | Для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией), добавляем form/validation-библиотеки отдельным осознанным решением |
 | БД | **Supabase Postgres** | — | RLS включён везде, политика `for all using (true)` (одно-пользовательский режим) |
 | Клиент БД | `@supabase/ssr` (browser), `@supabase/supabase-js` (server) | — | На клиенте `createClient()` из `src/lib/supabase/client.ts`; на сервере (route handlers) — `createClient` из `@supabase/supabase-js` напрямую |
-| Дата/время | **date-fns** | — | Установлен; в утилитах используем `Intl.DateTimeFormat('ru-RU')` |
+| Дата/время | `Intl.DateTimeFormat('ru-RU')` | — | Форматирование держим в `src/lib/utils.ts`, отдельную библиотеку дат не тащим без необходимости |
 
 **Не добавлять без причины:** другие UI-киты (MUI, AntD, Mantine), CSS-фреймворки кроме Tailwind, ORM поверх Supabase (Prisma, Drizzle), state-менеджеры (Redux, Zustand, Jotai) — пока нечего шарить между страницами.
 
@@ -85,7 +85,7 @@ src/
                             #   expenseBreakdown, topProductsByProfit, lookupCost)
     types.ts                # типы доменных сущностей и константы лейблов
     utils.ts                # cn, formatDate, formatMoney, toError
-    supabase/{client,server}.ts
+    supabase/client.ts        # browser client; route handlers используют @supabase/supabase-js напрямую
 supabase/
   migrations/               # SQL-миграции, имя: <YYYYMMDDHHMM>_<snake_case>.sql
 ```
