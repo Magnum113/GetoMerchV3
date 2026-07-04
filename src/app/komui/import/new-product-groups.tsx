@@ -49,6 +49,30 @@ function slugify(value: string): string {
   return out.replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
+function ozonDesignSlug(group: NewProductGroup): string {
+  const fromOffer = group.offerIds
+    .map((offerId) => /^D(\d+)-/i.exec(offerId)?.[1])
+    .find(Boolean);
+  if (fromOffer) return `d${fromOffer}`;
+
+  const fromVariant = /^var(\d+)$/i.exec(group.ozonVariant ?? "")?.[1];
+  if (fromVariant) return `d${fromVariant}`;
+
+  return "";
+}
+
+function defaultSiteSlug(group: NewProductGroup): string {
+  const base = slugify(group.suggestedName ?? "");
+  const design = ozonDesignSlug(group);
+  if (base && design && !base.endsWith(`-${design}`)) return `${base}-${design}`;
+  if (base) return base;
+
+  // Fallback для старых preview: не показываем пользователю varXX как будто это
+  // артикул. Это только URL slug, реальные Ozon offer_id сохраняются отдельно.
+  const fallback = (group.slug ?? "").replace(/^var(\d+)-/i, "d$1-");
+  return fallback || design;
+}
+
 export function NewProductGroupsSection({
   preview,
   onCreated,
@@ -157,7 +181,7 @@ function CreateProductDialog({
   onCreated: () => void;
 }) {
   const [name, setName] = useState(group.suggestedName ?? "");
-  const [slug, setSlug] = useState(group.slug ?? "");
+  const [slug, setSlug] = useState(defaultSiteSlug(group));
   const [salePrice, setSalePrice] = useState("");
   const [regularPrice, setRegularPrice] = useState("");
   const [shortDescription, setShortDescription] = useState("");
@@ -283,15 +307,30 @@ function CreateProductDialog({
             />
           </div>
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="np-slug" className="text-xs">
-              Slug
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="np-slug" className="text-xs">
+                URL slug, не артикул
+              </Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => setSlug(defaultSiteSlug({ ...group, suggestedName: name }))}
+              >
+                Сгенерировать из названия
+              </Button>
+            </div>
             <Input
               id="np-slug"
               value={slug}
-              onChange={(e) => setSlug(e.target.value)}
+              onChange={(e) => setSlug(slugify(e.target.value))}
               className="font-mono"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Это адрес страницы вида /p/slug. Ozon offer_id/SKU сохраняются
+              отдельно и не должны подменяться этим полем.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="np-sale" className="text-xs">
