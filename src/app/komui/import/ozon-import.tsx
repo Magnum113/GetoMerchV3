@@ -57,6 +57,9 @@ import {
   type ImportTargets,
   type ItemDiff,
   type JobResponse,
+  type JobEvent,
+  type JobStatus,
+  type JobSummary,
   type PreviewItem,
   type PreviewResponse,
 } from "@/lib/komui/types";
@@ -72,6 +75,160 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "changed", label: "С изменениями" },
   { key: "noop", label: "Без изменений" },
 ];
+
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
+}
+
+function textFromUnknown(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+  const record = asRecord(value);
+  if (record) {
+    if (typeof record.message === "string") return record.message;
+    if (typeof record.error === "string") return record.error;
+    if (typeof record.code === "string") return record.code;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function pickNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const n = numberValue(value);
+    if (n !== undefined) return n;
+  }
+  return undefined;
+}
+
+function normalizeErrors(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(textFromUnknown).filter(Boolean);
+}
+
+function normalizeEvents(value: unknown): JobEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((event) => {
+      const record = asRecord(event);
+      if (!record) return null;
+      const rawLevel = record.level;
+      const level: JobEvent["level"] =
+        rawLevel === "error" || rawLevel === "warning" ? rawLevel : "info";
+      const rawTime = record.time ?? record.createdAt ?? record.created_at;
+      return {
+        time: typeof rawTime === "string" ? rawTime : new Date().toISOString(),
+        level,
+        message: textFromUnknown(record.message ?? event),
+      };
+    })
+    .filter((event): event is JobEvent => Boolean(event));
+}
+
+function normalizeJobStatus(value: unknown): JobStatus {
+  return typeof value === "string" && value.length > 0
+    ? (value as JobStatus)
+    : "running";
+}
+
+function normalizeJobResponse(value: unknown): JobResponse | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const jobId = record.jobId ?? record.id;
+  if (typeof jobId !== "string" || jobId.length === 0) return null;
+
+  const progress = asRecord(record.progress) ?? {};
+  const summarySource = asRecord(record.summary) ?? {};
+  // Backend KOMUI сейчас возвращает итоги в result, а не в summary.
+  // Нормализуем оба формата, чтобы UI не зависел от версии backend release.
+  const resultSource =
+    asRecord(record.result) ??
+    asRecord(record.resultPayload) ??
+    asRecord(record.result_payload) ??
+    {};
+  const errors = normalizeErrors(record.errors);
+
+  const appliedServerPostgres = pickNumber(
+    summarySource.appliedServerPostgres,
+    summarySource.appliedServer,
+    resultSource.appliedServerPostgres,
+  );
+  const supabasePatched = pickNumber(
+    summarySource.supabasePatched,
+    resultSource.supabasePatched,
+  );
+  const supabaseSkipped = pickNumber(
+    summarySource.supabaseSkipped,
+    resultSource.supabaseSkipped,
+  );
+
+  const summary: JobSummary = {
+    appliedServerPostgres,
+    insertedServer: pickNumber(summarySource.insertedServer, resultSource.insertedServer),
+    updatedServer: pickNumber(summarySource.updatedServer, resultSource.updatedServer),
+    supabasePatched,
+    supabaseSkipped,
+    insertedSupabase: pickNumber(
+      summarySource.insertedSupabase,
+      resultSource.insertedSupabase,
+    ),
+    updatedSupabase: pickNumber(
+      summarySource.updatedSupabase,
+      resultSource.updatedSupabase,
+    ),
+    skipped: pickNumber(summarySource.skipped, resultSource.skipped),
+    errors: pickNumber(summarySource.errors, errors.length),
+  };
+
+  const current =
+    pickNumber(
+      progress.current,
+      record.progressCurrent,
+      record.progress_current,
+      appliedServerPostgres,
+    ) ?? 0;
+  const total =
+    pickNumber(progress.total, record.progressTotal, record.progress_total) ??
+    current;
+
+  return {
+    jobId,
+    status: normalizeJobStatus(record.status),
+    progress: { current, total },
+    summary,
+    events: normalizeEvents(record.events),
+    errors,
+  };
+}
+
+function isJobInProgress(job: JobResponse): boolean {
+  return job.status === "queued" || job.status === "running";
+}
+
+function showJobResultToast(job: JobResponse) {
+  if (job.status === "succeeded") toast.success("Импорт завершён");
+  else if (job.status === "partial") toast.warning("Импорт завершён частично — есть ошибки");
+  else if (job.status === "failed") toast.error("Импорт не выполнен");
+}
 
 function isActionable(item: PreviewItem): boolean {
   return item.plannedActions.some(
@@ -261,15 +418,15 @@ export function OzonImportTab() {
         if (!res.ok || "error" in data) {
           throw new Error(("error" in data && data.error) || `Ошибка ${res.status}`);
         }
-        setJob(data);
-        if (data.status === "queued" || data.status === "running") {
+        const normalized = normalizeJobResponse(data);
+        if (!normalized) {
+          throw new Error("Backend вернул некорректный статус job импорта");
+        }
+        setJob(normalized);
+        if (isJobInProgress(normalized)) {
           pollJob(jobId);
-        } else if (data.status === "succeeded") {
-          toast.success("Импорт завершён");
-        } else if (data.status === "partial") {
-          toast.warning("Импорт завершён частично — есть ошибки");
-        } else if (data.status === "failed") {
-          toast.error("Импорт не выполнен");
+        } else {
+          showJobResultToast(normalized);
         }
       } catch (e) {
         toast.error(errorMessage(e));
@@ -306,16 +463,17 @@ export function OzonImportTab() {
       if (!res.ok || "error" in data) {
         throw new Error(("error" in data && data.error) || `Ошибка ${res.status}`);
       }
-      setJob({
-        jobId: data.jobId,
-        status: data.status,
-        progress: { current: 0, total: 0 },
-        summary: {},
-        events: [],
-        errors: [],
-      });
-      toast.success("Импорт запущен");
-      pollJob(data.jobId);
+      const normalized = normalizeJobResponse(data);
+      if (!normalized) {
+        throw new Error("Backend вернул некорректный ответ запуска импорта");
+      }
+      setJob(normalized);
+      if (isJobInProgress(normalized)) {
+        toast.success("Импорт запущен");
+        pollJob(normalized.jobId);
+      } else {
+        showJobResultToast(normalized);
+      }
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -1042,6 +1200,17 @@ function DiffTable({ diff }: { diff: ItemDiff }) {
 // ============================================================================
 
 function JobPanel({ job }: { job: JobResponse }) {
+  const summary = job.summary ?? {};
+  const progress = job.progress ?? { current: 0, total: 0 };
+  const events = Array.isArray(job.events) ? job.events : [];
+  const errors = Array.isArray(job.errors) ? job.errors : [];
+  const statusLabel = JOB_STATUS_LABELS[job.status] ?? job.status;
+  const serverApplied =
+    summary.appliedServerPostgres ??
+    (summary.insertedServer ?? 0) + (summary.updatedServer ?? 0);
+  const supabaseApplied =
+    summary.supabasePatched ??
+    (summary.insertedSupabase ?? 0) + (summary.updatedSupabase ?? 0);
   const tone =
     job.status === "succeeded"
       ? "text-state-success-fg"
@@ -1060,8 +1229,8 @@ function JobPanel({ job }: { job: JobResponse }) {
           : Loader2;
   const iconSpin = job.status === "queued" || job.status === "running";
   const pct =
-    job.progress.total > 0
-      ? Math.round((job.progress.current / job.progress.total) * 100)
+    progress.total > 0
+      ? Math.round((progress.current / progress.total) * 100)
       : null;
 
   return (
@@ -1072,7 +1241,7 @@ function JobPanel({ job }: { job: JobResponse }) {
             <Icon className={cn("h-5 w-5", tone, iconSpin && "animate-spin")} />
             <div>
               <div className="font-medium">
-                Импорт: {JOB_STATUS_LABELS[job.status]}
+                Импорт: {statusLabel}
               </div>
               <div className="text-xs text-muted-foreground font-mono">
                 {job.jobId}
@@ -1081,7 +1250,7 @@ function JobPanel({ job }: { job: JobResponse }) {
           </div>
           {pct !== null && (
             <div className="text-sm tabular-nums">
-              {job.progress.current} / {job.progress.total} ({pct}%)
+              {progress.current} / {progress.total} ({pct}%)
             </div>
           )}
         </div>
@@ -1102,39 +1271,38 @@ function JobPanel({ job }: { job: JobResponse }) {
           </div>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
-          <SummaryStat label="server insert" value={job.summary.insertedServer} />
-          <SummaryStat label="server update" value={job.summary.updatedServer} />
-          <SummaryStat label="supa insert" value={job.summary.insertedSupabase} />
-          <SummaryStat label="supa update" value={job.summary.updatedSupabase} />
-          <SummaryStat label="skipped" value={job.summary.skipped} />
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+          <SummaryStat label="PostgreSQL" value={serverApplied} />
+          <SummaryStat label="Supabase" value={supabaseApplied} />
+          <SummaryStat label="Supa skip" value={summary.supabaseSkipped} />
+          <SummaryStat label="Пропущено" value={summary.skipped} />
           <SummaryStat
-            label="errors"
-            value={job.summary.errors}
+            label="Ошибки"
+            value={summary.errors}
             tone={
-              (job.summary.errors ?? 0) > 0 ? "text-state-danger-fg" : undefined
+              (summary.errors ?? 0) > 0 ? "text-state-danger-fg" : undefined
             }
           />
         </div>
 
-        {job.errors.length > 0 && (
+        {errors.length > 0 && (
           <div className="space-y-1">
             <div className="text-xs font-medium text-state-danger-fg">
               Ошибки
             </div>
             <ul className="text-xs text-state-danger-fg list-disc pl-5 space-y-0.5">
-              {job.errors.map((e, i) => (
+              {errors.map((e, i) => (
                 <li key={i}>{e}</li>
               ))}
             </ul>
           </div>
         )}
 
-        {job.events.length > 0 && (
+        {events.length > 0 && (
           <div className="space-y-1">
             <div className="text-xs font-medium">Журнал</div>
             <ul className="text-xs space-y-0.5 max-h-48 overflow-y-auto">
-              {job.events.map((ev, i) => {
+              {events.map((ev, i) => {
                 const evTone =
                   ev.level === "error"
                     ? "text-state-danger-fg"

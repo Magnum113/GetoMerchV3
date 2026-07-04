@@ -126,7 +126,10 @@ function buildHeaders(
     Accept: "application/json",
   };
   if (opts.hasBody) headers["Content-Type"] = "application/json";
-  if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
+  if (opts.idempotencyKey) {
+    headers["Idempotency-Key"] = opts.idempotencyKey;
+    headers["X-Idempotency-Key"] = opts.idempotencyKey;
+  }
 
   if (env.basicAuth && env.target === "stage") {
     // На staging Authorization уже занят Basic Auth прокси (nginx). Bearer

@@ -201,7 +201,7 @@ export type CreateProductFromGroupResponse = {
 
 export type ImportStartResponse = {
   jobId: string;
-  status: "queued";
+  status: JobStatus;
 };
 
 export type JobStatus =
@@ -209,7 +209,8 @@ export type JobStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "partial";
+  | "partial"
+  | (string & {});
 
 export type JobEvent = {
   time: string;
@@ -218,8 +219,11 @@ export type JobEvent = {
 };
 
 export type JobSummary = {
+  appliedServerPostgres?: number;
   insertedServer?: number;
   updatedServer?: number;
+  supabasePatched?: number;
+  supabaseSkipped?: number;
   insertedSupabase?: number;
   updatedSupabase?: number;
   skipped?: number;
@@ -247,7 +251,7 @@ export function statusLabel(status: ItemStatus): string {
   return KNOWN_STATUS_LABELS[status] ?? status;
 }
 
-export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
+export const JOB_STATUS_LABELS: Record<string, string> = {
   queued: "В очереди",
   running: "Выполняется",
   succeeded: "Успешно",
