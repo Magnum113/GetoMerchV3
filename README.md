@@ -51,16 +51,23 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<publishable_key>
 Для серверных Ozon-операций дополнительно используются ключи Ozon из
 `.env.local`.
 
-Для раздела Komui админка ходит в production API:
+Для раздела Komui админка умеет переключаться между production и stage прямо
+из UI. Значение сохраняется в cookie `komui_api_target`.
 
 ```env
 KOMUI_MIGRATION_API_BASE_URL=https://komui.ru/api
 KOMUI_ADMIN_API_TOKEN=<admin_token>
+KOMUI_PROD_API_BASE_URL=https://komui.ru/api
+KOMUI_STAGE_API_BASE_URL=https://stage.komui.ru/api
 ```
 
-`KOMUI_STAGE_BASIC_AUTH` нужен только при ручном переключении админки на
-`https://stage.komui.ru/api`; на production-домен этот заголовок не
-отправляется.
+`KOMUI_MIGRATION_API_BASE_URL` остаётся fallback/default. Если для контуров
+будут разные токены, используй `KOMUI_PROD_ADMIN_API_TOKEN` и
+`KOMUI_STAGE_ADMIN_API_TOKEN`; иначе достаточно общего
+`KOMUI_ADMIN_API_TOKEN`.
+
+`KOMUI_STAGE_BASIC_AUTH` нужен только для `https://stage.komui.ru/api`; на
+production-домен этот заголовок не отправляется.
 
 ## Бизнес-логика заказов в цех
 

@@ -1,5 +1,8 @@
 import "server-only";
 
+import { cookies } from "next/headers";
+import { KOMUI_TARGET_COOKIE, type KomuiTarget, normalizeKomuiTarget } from "./target";
+
 // Server-only helpers for KOMUI migration API. NEVER import this from
 // client components — the bearer token and Basic-Auth credentials must stay
 // on the server.
@@ -11,19 +14,76 @@ export type KomuiFetchInit = {
   idempotencyKey?: string;
 };
 
-type KomuiEnv = { baseUrl: string; token: string; basicAuth: string | null };
+type KomuiEnv = {
+  target: KomuiTarget;
+  baseUrl: string;
+  token: string;
+  basicAuth: string | null;
+};
 
-function readEnv(): KomuiEnv {
-  const baseUrl = process.env.KOMUI_MIGRATION_API_BASE_URL;
-  const token = process.env.KOMUI_ADMIN_API_TOKEN;
+function targetFromBaseUrl(baseUrl: string | undefined): "prod" | "stage" | "custom" {
+  if (!baseUrl) return "custom";
+  const hostname = hostnameFromBaseUrl(baseUrl);
+  if (hostname === "komui.ru" || hostname === "www.komui.ru") return "prod";
+  if (hostname === "stage.komui.ru" || hostname.startsWith("stage.")) return "stage";
+  return "custom";
+}
+
+function fallbackTarget(): KomuiTarget {
+  return targetFromBaseUrl(process.env.KOMUI_MIGRATION_API_BASE_URL) === "stage"
+    ? "stage"
+    : "prod";
+}
+
+async function readSelectedTarget(): Promise<KomuiTarget> {
+  try {
+    const store = await cookies();
+    const cookieTarget = normalizeKomuiTarget(store.get(KOMUI_TARGET_COOKIE)?.value);
+    if (cookieTarget) return cookieTarget;
+  } catch {
+    // During non-request contexts, fall back to env.
+  }
+  return fallbackTarget();
+}
+
+function baseUrlForTarget(target: KomuiTarget): string | undefined {
+  if (target === "prod") {
+    return (
+      process.env.KOMUI_PROD_API_BASE_URL ||
+      (targetFromBaseUrl(process.env.KOMUI_MIGRATION_API_BASE_URL) === "prod"
+        ? process.env.KOMUI_MIGRATION_API_BASE_URL
+        : undefined) ||
+      "https://komui.ru/api"
+    );
+  }
+
+  return (
+    process.env.KOMUI_STAGE_API_BASE_URL ||
+    (targetFromBaseUrl(process.env.KOMUI_MIGRATION_API_BASE_URL) === "stage"
+      ? process.env.KOMUI_MIGRATION_API_BASE_URL
+      : undefined) ||
+    "https://stage.komui.ru/api"
+  );
+}
+
+function tokenForTarget(target: KomuiTarget): string | undefined {
+  if (target === "prod") {
+    return process.env.KOMUI_PROD_ADMIN_API_TOKEN || process.env.KOMUI_ADMIN_API_TOKEN;
+  }
+  return process.env.KOMUI_STAGE_ADMIN_API_TOKEN || process.env.KOMUI_ADMIN_API_TOKEN;
+}
+
+function readEnv(target: KomuiTarget): KomuiEnv {
+  const baseUrl = baseUrlForTarget(target);
+  const token = tokenForTarget(target);
   if (!baseUrl) {
-    throw new Error("KOMUI_MIGRATION_API_BASE_URL не настроен в .env.local");
+    throw new Error(`Komui ${target} API URL не настроен в .env.local`);
   }
   if (!token) {
-    throw new Error("KOMUI_ADMIN_API_TOKEN не настроен в .env.local");
+    throw new Error(`Komui ${target} admin token не настроен в .env.local`);
   }
-  const basicAuth = process.env.KOMUI_STAGE_BASIC_AUTH || null;
-  return { baseUrl: baseUrl.replace(/\/$/, ""), token, basicAuth };
+  const basicAuth = target === "stage" ? process.env.KOMUI_STAGE_BASIC_AUTH || null : null;
+  return { target, baseUrl: baseUrl.replace(/\/$/, ""), token, basicAuth };
 }
 
 function hostnameFromBaseUrl(baseUrl: string): string {
@@ -34,52 +94,44 @@ function hostnameFromBaseUrl(baseUrl: string): string {
   }
 }
 
-function isStageBaseUrl(baseUrl: string): boolean {
-  const hostname = hostnameFromBaseUrl(baseUrl);
-  return hostname === "stage.komui.ru" || hostname.startsWith("stage.");
-}
-
-export function getKomuiConfigSummary(): {
+export async function getKomuiConfigSummary(): Promise<{
   baseUrl: string;
   hostname: string;
-  target: "prod" | "stage" | "custom";
+  target: KomuiTarget;
   basicAuthConfigured: boolean;
   basicAuthSent: boolean;
-} {
-  const { baseUrl, basicAuth } = readEnv();
+}> {
+  const target = await readSelectedTarget();
+  const { baseUrl, basicAuth } = readEnv(target);
   const hostname = hostnameFromBaseUrl(baseUrl);
-  const target =
-    hostname === "komui.ru" || hostname === "www.komui.ru"
-      ? "prod"
-      : isStageBaseUrl(baseUrl)
-        ? "stage"
-        : "custom";
 
   return {
     baseUrl,
     hostname,
     target,
     basicAuthConfigured: !!basicAuth,
-    basicAuthSent: !!basicAuth && isStageBaseUrl(baseUrl),
+    basicAuthSent: !!basicAuth && target === "stage",
   };
 }
 
-function buildHeaders(opts: { hasBody: boolean; idempotencyKey?: string }) {
-  const { baseUrl, token, basicAuth } = readEnv();
+function buildHeaders(
+  env: KomuiEnv,
+  opts: { hasBody: boolean; idempotencyKey?: string },
+) {
   // API-токен передаём в собственном заголовке X-Komui-Admin-Token, чтобы он
   // не конфликтовал с Authorization, который на staging занят Basic Auth.
   // Backend KOMUI читает токен именно из этого заголовка.
   const headers: Record<string, string> = {
-    "X-Komui-Admin-Token": token,
+    "X-Komui-Admin-Token": env.token,
     Accept: "application/json",
   };
   if (opts.hasBody) headers["Content-Type"] = "application/json";
   if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
 
-  if (basicAuth && isStageBaseUrl(baseUrl)) {
+  if (env.basicAuth && env.target === "stage") {
     // На staging Authorization уже занят Basic Auth прокси (nginx). Bearer
     // сюда класть нельзя — он замаскирует Basic и фронт-прокси отдаст 401.
-    const b64 = Buffer.from(basicAuth, "utf8").toString("base64");
+    const b64 = Buffer.from(env.basicAuth, "utf8").toString("base64");
     headers["Authorization"] = `Basic ${b64}`;
   }
   // На проде без Basic Auth Authorization не нужен вообще — admin token
@@ -97,9 +149,10 @@ function parseBody(text: string): unknown {
 }
 
 export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFetchInit) {
-  const { baseUrl } = readEnv();
-  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-  const headers = buildHeaders({ hasBody: body !== undefined, idempotencyKey });
+  const target = await readSelectedTarget();
+  const env = readEnv(target);
+  const url = `${env.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = buildHeaders(env, { hasBody: body !== undefined, idempotencyKey });
 
   const res = await fetch(url, {
     method,
@@ -135,9 +188,10 @@ export async function komuiFetchRaw({ method, path, body, idempotencyKey }: Komu
   body: unknown;
   rawText: string;
 }> {
-  const { baseUrl } = readEnv();
-  const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-  const headers = buildHeaders({ hasBody: body !== undefined, idempotencyKey });
+  const target = await readSelectedTarget();
+  const env = readEnv(target);
+  const url = `${env.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = buildHeaders(env, { hasBody: body !== undefined, idempotencyKey });
 
   const res = await fetch(url, {
     method,
