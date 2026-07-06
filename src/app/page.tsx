@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, BarChart3, PieChart, RefreshCw, Sparkles, Truck } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, PackageX, PieChart, RefreshCw, Sparkles, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -11,6 +11,7 @@ import { Pill } from "@/components/ui/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ProductDisplay } from "@/components/product-display";
 import { ExpenseDonut } from "@/components/analytics/expense-donut";
+import { NonRedemptionChart } from "@/components/analytics/non-redemption-chart";
 import { OrdersChart } from "@/components/analytics/orders-chart";
 import { PeriodChart } from "@/components/analytics/period-chart";
 import { RevenueChart } from "@/components/analytics/revenue-chart";
@@ -19,6 +20,7 @@ import { StockValueCard } from "@/components/analytics/stock-value-card";
 import { api } from "@/lib/api";
 import {
   bucketize,
+  bucketizeNonRedemption,
   bucketizeOrders,
   bucketizeOrdersRevenue,
   buildCostIndex,
@@ -26,6 +28,7 @@ import {
   delta,
   expenseBreakdown,
   formatDateRange,
+  nonRedemptionByProduct,
   ordersRevenueSummary,
   ordersSummary,
   presetRange,
@@ -160,6 +163,22 @@ export default function AnalyticsDashboardPage() {
   );
   const revenueStats = useMemo(() => ordersRevenueSummary(orders, filter), [orders, filter]);
   const prevRevenueStats = useMemo(() => ordersRevenueSummary(orders, prevFilter), [orders, prevFilter]);
+  const nonRedemptionBuckets = useMemo(
+    () => bucketizeNonRedemption(orders, filter, granularity),
+    [orders, filter, granularity],
+  );
+  const prevNonRedemptionBuckets = useMemo(
+    () => bucketizeNonRedemption(orders, prevFilter, granularity),
+    [orders, prevFilter, granularity],
+  );
+  const productNonRedemption = useMemo(
+    () => nonRedemptionByProduct(orders, filter, 12),
+    [orders, filter],
+  );
+  const nonRedemptionTerminal = ordersStats.delivered + ordersStats.cancelled;
+  const prevNonRedemptionTerminal = prevOrdersStats.delivered + prevOrdersStats.cancelled;
+  const nonRedemptionRate = nonRedemptionTerminal > 0 ? ordersStats.cancelled / nonRedemptionTerminal : 0;
+  const prevNonRedemptionRate = prevNonRedemptionTerminal > 0 ? prevOrdersStats.cancelled / prevNonRedemptionTerminal : 0;
   const topProducts = useMemo(
     () =>
       topProductsByProfit(
@@ -399,6 +418,84 @@ export default function AnalyticsDashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Невыкуп */}
+          <div className="grid lg:grid-cols-2 gap-5 mb-5">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <PackageX className="h-4 w-4 text-muted-foreground" />
+                  Процент невыкупа
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <FunnelTile
+                    label="Невыкуп"
+                    value={`${(nonRedemptionRate * 100).toFixed(1)}%`}
+                    hint={`${ordersStats.cancelled} из ${nonRedemptionTerminal} финализированных`}
+                    delta={delta(nonRedemptionRate, prevNonRedemptionRate)}
+                    accent="danger"
+                    invertDelta
+                  />
+                  <FunnelTile
+                    label="Доставлено"
+                    value={String(ordersStats.delivered)}
+                    hint={nonRedemptionTerminal > 0 ? `${Math.round((ordersStats.delivered / nonRedemptionTerminal) * 100)}% финализированных` : undefined}
+                    delta={delta(ordersStats.delivered, prevOrdersStats.delivered)}
+                    accent="success"
+                  />
+                </div>
+                <NonRedemptionChart buckets={nonRedemptionBuckets} prevBuckets={prevNonRedemptionBuckets} />
+                <p className="text-[11px] text-muted-foreground">
+                  Процент считается только по финализированным товарам: доставлено + отменено / не принято. Заказы в пути не включены в знаменатель.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Невыкуп по товарам</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {productNonRedemption.length === 0 ? (
+                  <div className="text-sm text-muted-foreground text-center py-10">Нет финализированных товаров за период</div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Товар</TableHead>
+                        <TableHead className="text-right w-20">Невыкуп</TableHead>
+                        <TableHead className="text-right w-20">Доставлено</TableHead>
+                        <TableHead className="text-right w-20">Всего</TableHead>
+                        <TableHead className="text-right w-20">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {productNonRedemption.map((row) => (
+                        <TableRow key={row.key}>
+                          <TableCell>
+                            {row.product ? (
+                              <ProductDisplay p={row.product} compact />
+                            ) : (
+                              <div>
+                                <div className="font-medium">{row.name}</div>
+                                <div className="text-[11px] font-mono text-muted-foreground">{row.offerId}</div>
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-state-danger-fg">{row.nonRedeemed}</TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">{row.delivered}</TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">{row.terminal}</TableCell>
+                          <TableCell className="text-right tabular-nums font-semibold">{(row.rate * 100).toFixed(1)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Donut + Top products */}
           <div className="grid lg:grid-cols-2 gap-5 mb-5">

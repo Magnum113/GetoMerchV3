@@ -395,6 +395,14 @@ export function classifyOrderStatus(status: string): OrderFunnelStage {
   return "inflight";
 }
 
+export function isNonRedemptionStatus(status: string): boolean {
+  return status === "cancelled" || status === "not_accepted";
+}
+
+export function isDeliveredStatus(status: string): boolean {
+  return status === "delivered";
+}
+
 function orderItemsUnits(o: OzonOrder): number {
   let n = 0;
   for (const it of o.items ?? []) n += Number(it.quantity ?? 0);
@@ -549,6 +557,126 @@ export function ordersSummary(orders: OzonOrder[], filter: PeriodFilter): Orders
     orders: ordersCount,
     fulfillmentRate: terminal > 0 ? delivered / terminal : 0,
   };
+}
+
+export interface NonRedemptionBucket {
+  key: string;
+  label: string;
+  terminal: number;
+  delivered: number;
+  nonRedeemed: number;
+  inflight: number;
+  rate: number;
+}
+
+export function bucketizeNonRedemption(
+  orders: OzonOrder[],
+  filter: PeriodFilter,
+  gran: Granularity,
+): NonRedemptionBucket[] {
+  const byKey = new Map<string, NonRedemptionBucket>();
+  for (const k of enumerateBuckets(filter, gran)) {
+    byKey.set(k, { key: k, label: bucketLabel(k, gran), terminal: 0, delivered: 0, nonRedeemed: 0, inflight: 0, rate: 0 });
+  }
+
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+    const k = bucketKey(d, gran);
+    if (!byKey.has(k)) {
+      byKey.set(k, { key: k, label: bucketLabel(k, gran), terminal: 0, delivered: 0, nonRedeemed: 0, inflight: 0, rate: 0 });
+    }
+    const b = byKey.get(k)!;
+    const units = orderItemsUnits(o);
+    if (isDeliveredStatus(o.status)) {
+      b.delivered += units;
+      b.terminal += units;
+    } else if (isNonRedemptionStatus(o.status)) {
+      b.nonRedeemed += units;
+      b.terminal += units;
+    } else {
+      b.inflight += units;
+    }
+  }
+
+  for (const b of byKey.values()) {
+    b.rate = b.terminal > 0 ? b.nonRedeemed / b.terminal : 0;
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export interface ProductNonRedemptionRow {
+  key: string;
+  product: Product | null;
+  offerId: string;
+  name: string;
+  terminal: number;
+  delivered: number;
+  nonRedeemed: number;
+  inflight: number;
+  rate: number;
+}
+
+export function nonRedemptionByProduct(
+  orders: OzonOrder[],
+  filter: PeriodFilter,
+  limit = 12,
+): ProductNonRedemptionRow[] {
+  const byKey = new Map<string, ProductNonRedemptionRow>();
+
+  for (const o of orders) {
+    const dStr = o.in_process_at ?? o.ozon_created_at ?? o.created_at;
+    if (!dStr) continue;
+    const d = new Date(dStr);
+    if (d < filter.from || d >= filter.to) continue;
+
+    const stage = isDeliveredStatus(o.status)
+      ? "delivered"
+      : isNonRedemptionStatus(o.status)
+        ? "nonRedeemed"
+        : "inflight";
+
+    for (const it of o.items ?? []) {
+      const key = it.product_id ?? `offer:${it.offer_id}`;
+      const row = byKey.get(key) ?? {
+        key,
+        product: it.product ?? null,
+        offerId: it.offer_id,
+        name: it.name ?? it.offer_id,
+        terminal: 0,
+        delivered: 0,
+        nonRedeemed: 0,
+        inflight: 0,
+        rate: 0,
+      };
+      const units = Number(it.quantity ?? 0) || 1;
+      if (stage === "delivered") {
+        row.delivered += units;
+        row.terminal += units;
+      } else if (stage === "nonRedeemed") {
+        row.nonRedeemed += units;
+        row.terminal += units;
+      } else {
+        row.inflight += units;
+      }
+      byKey.set(key, row);
+    }
+  }
+
+  for (const row of byKey.values()) {
+    row.rate = row.terminal > 0 ? row.nonRedeemed / row.terminal : 0;
+  }
+
+  return Array.from(byKey.values())
+    .filter((row) => row.terminal > 0)
+    .sort((a, b) => {
+      if (b.rate !== a.rate) return b.rate - a.rate;
+      if (b.nonRedeemed !== a.nonRedeemed) return b.nonRedeemed - a.nonRedeemed;
+      return b.terminal - a.terminal;
+    })
+    .slice(0, limit);
 }
 
 export interface PeriodDelta {
