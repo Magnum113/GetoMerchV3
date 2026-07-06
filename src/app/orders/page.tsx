@@ -407,6 +407,18 @@ export default function OrdersPage() {
       return true;
     });
   }, [orders, tab, search]);
+  const activeCount = useMemo(
+    () => orders.filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status)).length,
+    [orders],
+  );
+  const shippedCount = useMemo(
+    () => orders.filter((o) => o.source !== "fbo" && (o.shipped_at || POST_SHIPMENT_STATUSES.has(o.status))).length,
+    [orders],
+  );
+  const fbsCount = useMemo(
+    () => orders.filter((o) => o.source !== "fbo").length,
+    [orders],
+  );
 
   // Заказы, которые реально можно закрыть одним действием (для чекбоксов и кнопок).
   const fulfillable = filtered.filter((o) => fulfillKind(o) !== null);
@@ -450,9 +462,9 @@ export default function OrdersPage() {
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <Tabs value={tab} onValueChange={(v) => { setTab(v as typeof tab); setSelected(new Set()); }}>
           <TabsList>
-            <TabsTrigger value="active">Активные</TabsTrigger>
-            <TabsTrigger value="shipped">Отправленные</TabsTrigger>
-            <TabsTrigger value="all">Все</TabsTrigger>
+            <TabsTrigger value="active">Активные ({activeCount})</TabsTrigger>
+            <TabsTrigger value="shipped">Отправленные ({shippedCount})</TabsTrigger>
+            <TabsTrigger value="all">Все ({fbsCount})</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="relative flex-1 max-w-md">
@@ -472,7 +484,7 @@ export default function OrdersPage() {
             />
             {selectedOrders.length > 0
               ? `Выбрано: ${selectedOrders.length} из ${fulfillable.length}`
-              : `Выбрать все (${fulfillable.length})`}
+              : `Выбрать готовые к действию (${fulfillable.length} из ${filtered.length})`}
           </label>
           <div className="flex items-center gap-2">
             {selectedOrders.length > 0 && (
