@@ -672,8 +672,8 @@ export function nonRedemptionByProduct(
   return Array.from(byKey.values())
     .filter((row) => row.terminal > 0)
     .sort((a, b) => {
-      if (b.rate !== a.rate) return b.rate - a.rate;
       if (b.nonRedeemed !== a.nonRedeemed) return b.nonRedeemed - a.nonRedeemed;
+      if (b.rate !== a.rate) return b.rate - a.rate;
       return b.terminal - a.terminal;
     })
     .slice(0, limit);

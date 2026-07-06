@@ -65,6 +65,7 @@ export default function AnalyticsDashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [gran, setGran] = useState<Granularity | "auto">("auto");
   const [ordersMode, setOrdersMode] = useState<"orders" | "revenue">("orders");
+  const [showAllNonRedemptionProducts, setShowAllNonRedemptionProducts] = useState(false);
 
   const filter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
   const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
@@ -175,6 +176,9 @@ export default function AnalyticsDashboardPage() {
     () => nonRedemptionByProduct(orders, filter, 12),
     [orders, filter],
   );
+  const visibleProductNonRedemption = showAllNonRedemptionProducts
+    ? productNonRedemption
+    : productNonRedemption.slice(0, 5);
   const nonRedemptionTerminal = ordersStats.delivered + ordersStats.cancelled;
   const prevNonRedemptionTerminal = prevOrdersStats.delivered + prevOrdersStats.cancelled;
   const nonRedemptionRate = nonRedemptionTerminal > 0 ? ordersStats.cancelled / nonRedemptionTerminal : 0;
@@ -455,7 +459,7 @@ export default function AnalyticsDashboardPage() {
 
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Невыкуп по товарам</CardTitle>
+                <CardTitle className="text-base">Топ товаров по невыкупу</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {productNonRedemption.length === 0 ? (
@@ -472,7 +476,7 @@ export default function AnalyticsDashboardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {productNonRedemption.map((row) => (
+                      {visibleProductNonRedemption.map((row) => (
                         <TableRow key={row.key}>
                           <TableCell>
                             {row.product ? (
@@ -492,6 +496,25 @@ export default function AnalyticsDashboardPage() {
                       ))}
                     </TableBody>
                   </Table>
+                )}
+                {productNonRedemption.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
+                    <p className="text-[11px] text-muted-foreground">
+                      Сортировка по количеству невыкупленных товаров, процент считается внутри финализированных единиц товара.
+                    </p>
+                    {productNonRedemption.length > 5 && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowAllNonRedemptionProducts((v) => !v)}
+                      >
+                        {showAllNonRedemptionProducts
+                          ? "Свернуть"
+                          : `Показать все (${productNonRedemption.length})`}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </CardContent>
             </Card>
