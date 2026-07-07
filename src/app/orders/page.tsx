@@ -38,6 +38,10 @@ interface ItemAvailability {
   finished: number;
   /** Пустых, доступных этому заказу (после вычета занятых ранее). */
   blank: number;
+  /** Пустых на складе цеха, доступных этому заказу. Только для вышивки. */
+  blankAtWorkshop: number;
+  /** Пустых на моём складе, доступных этому заказу. */
+  blankAtOwn: number;
   /** Принтов нужного дизайна, доступных этому заказу (только для печатных позиций). */
   print: number;
   blankProduct: Product | null;
@@ -53,6 +57,9 @@ interface ItemAvailability {
   printShort: boolean;
   /** Можно произвести недостающее у себя (готовые + пустые + принты покрывают заказ). */
   canOwnProduce: boolean;
+  /** Для вышивки: заготовки есть у меня, но их нужно передать в цех. */
+  needsWorkshopTransfer: boolean;
+  workshopTransferQty: number;
 }
 
 // Срочность заказа: дата отгрузки ↑ → дата создания на Ozon ↑ → дата записи.
@@ -148,8 +155,9 @@ export default function OrdersPage() {
   // затем дата создания) и вычитаем занятое из общего пула остатков — готовых,
   // пустых и принтов. Результат — карта itemId -> доступность с учётом резерва.
   const availabilityByItem = useMemo(() => {
-    const rankWh = (wid: string) => {
+    const rankWh = (wid: string, preferWorkshop = false) => {
       const t = warehouseTypeById.get(wid);
+      if (preferWorkshop) return t === "workshop" ? 0 : t === "own" ? 1 : 2;
       return t === "own" ? 0 : t === "workshop" ? 2 : 1;
     };
     // мутируемые копии пулов
@@ -172,12 +180,14 @@ export default function OrdersPage() {
       }
       return { total, list };
     }
-    // Списывает up to `want` из пула (свой склад первым). Возвращает разбивку по складам.
-    function take(rem: Map<string, Map<string, number>>, key: string, want: number, excludeWorkshop: boolean): WhQty[] {
+    // Списывает up to `want` из пула. Для печати — свой склад первым; для
+    // вышивки — склад цеха первым, чтобы заготовки в цехе резервировались под
+    // заказы раньше заготовок на моём складе.
+    function take(rem: Map<string, Map<string, number>>, key: string, want: number, excludeWorkshop: boolean, preferWorkshop = false): WhQty[] {
       const taken: WhQty[] = [];
       const byWh = rem.get(key);
       if (!byWh || want <= 0) return taken;
-      const wids = Array.from(byWh.keys()).sort((a, b) => rankWh(a) - rankWh(b));
+      const wids = Array.from(byWh.keys()).sort((a, b) => rankWh(a, preferWorkshop) - rankWh(b, preferWorkshop));
       let left = want;
       for (const wid of wids) {
         if (left <= 0) break;
@@ -196,7 +206,7 @@ export default function OrdersPage() {
       const need = item.quantity;
       const p = item.product;
       if (!p) {
-        return { status: "unmatched", finished: 0, blank: 0, print: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false, hasPrintInfo: false, printShort: false, canOwnProduce: false };
+        return { status: "unmatched", finished: 0, blank: 0, blankAtWorkshop: 0, blankAtOwn: 0, print: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false, hasPrintInfo: false, printShort: false, canOwnProduce: false, needsWorkshopTransfer: false, workshopTransferQty: 0 };
       }
       // Принт делается у меня на складе (или decoration_type не указан) — пустые из
       // цеха вышивки не учитываем, т.к. оттуда заготовки на мой склад не возят.
@@ -210,6 +220,8 @@ export default function OrdersPage() {
       // 2. Пустые и принты для производства недостающего.
       const blankProd = blankByKey.get(blankKey(p.category_id, p.fabric_id, p.color_id, p.size_id)) ?? null;
       let blank = 0;
+      let blankAtWorkshop = 0;
+      let blankAtOwn = 0;
       let blankByWh: WhQty[] = [];
       let print = 0;
       const hasPrintInfo = isPrint && !!p.design_id;
@@ -217,6 +229,8 @@ export default function OrdersPage() {
         const blkPeek = peek(prodRem, blankProd.id, isPrint);
         blank = blkPeek.total;
         blankByWh = blkPeek.list;
+        blankAtWorkshop = isPrint ? 0 : sumByWarehouseType(blkPeek.list, "workshop", warehouseTypeById);
+        blankAtOwn = sumByWarehouseType(blkPeek.list, "own", warehouseTypeById);
       }
       if (hasPrintInfo) {
         print = peek(printRem, p.design_id!, true).total;
@@ -224,7 +238,7 @@ export default function OrdersPage() {
       // Резервируем пустые/принты, которые этот заказ пустит в производство,
       // чтобы их не «увидел» доступными следующий заказ.
       if (remainingNeed > 0 && blankProd) {
-        take(prodRem, blankProd.id, Math.min(remainingNeed, blank), isPrint);
+        take(prodRem, blankProd.id, Math.min(remainingNeed, blank), isPrint, !isPrint);
         if (hasPrintInfo) take(printRem, p.design_id!, Math.min(remainingNeed, print), true);
       }
 
@@ -239,8 +253,12 @@ export default function OrdersPage() {
       const canOwnProduce =
         isPrint && finished < need && !!blankProd &&
         finished + Math.min(blank, print) >= need;
+      const workshopTransferQty = !isPrint && remainingNeed > 0
+        ? Math.min(Math.max(0, remainingNeed - blankAtWorkshop), blankAtOwn)
+        : 0;
+      const needsWorkshopTransfer = workshopTransferQty > 0;
 
-      return { status, finished, blank, print, blankProduct: blankProd, need, finishedByWh, blankByWh, isPrint, hasPrintInfo, printShort, canOwnProduce };
+      return { status, finished, blank, blankAtWorkshop, blankAtOwn, print, blankProduct: blankProd, need, finishedByWh, blankByWh, isPrint, hasPrintInfo, printShort, canOwnProduce, needsWorkshopTransfer, workshopTransferQty };
     }
 
     const competing = orders
@@ -701,6 +719,22 @@ function whDetail(list: { warehouseName: string; qty: number }[], total?: number
   return ` · ${list.map((w) => `${w.warehouseName}: ${w.qty}`).join(", ")}`;
 }
 
+function sumByWarehouseType(list: WhQty[], type: Warehouse["type"], warehouseTypeById: Map<string, Warehouse["type"]>) {
+  let total = 0;
+  for (const row of list) {
+    if (warehouseTypeById.get(row.warehouseId) === type) total += row.qty;
+  }
+  return total;
+}
+
+function blankGarmentLabel(product: Product | null) {
+  const raw = `${product?.category?.slug ?? ""} ${product?.category?.name ?? ""}`.toLowerCase();
+  if (raw.includes("hoodie") || raw.includes("худи")) return "худи";
+  if (raw.includes("sweatshirt") || raw.includes("свит")) return "свитшот";
+  if (raw.includes("tshirt") || raw.includes("shirt") || raw.includes("фут")) return "футболку";
+  return "изделие";
+}
+
 function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   if (a.status === "unmatched") {
     return (
@@ -729,6 +763,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
             <Hammer className="h-3 w-3" /> {blanksLabel} для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
           </Badge>
         )}
+        <WorkshopTransferBadge a={a} />
         <PrintBadge a={a} need={needForProduction} />
       </div>
     );
@@ -743,6 +778,7 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
             : `Готовых нет, есть пустые: ${a.blank}`}
           {whDetail(a.blankByWh, a.blank)}
         </Badge>
+        <WorkshopTransferBadge a={a} />
         <PrintBadge a={a} need={needForProduction} />
       </div>
     );
@@ -753,8 +789,18 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
         <X className="h-3 w-3" />{" "}
         {a.isPrint ? "Готовых нет · пустых нет на моём складе" : "Нет ни готовых, ни пустых"}
       </Badge>
+      <WorkshopTransferBadge a={a} />
       <PrintBadge a={a} need={needForProduction} />
     </div>
+  );
+}
+
+function WorkshopTransferBadge({ a }: { a: ItemAvailability }) {
+  if (a.isPrint || !a.needsWorkshopTransfer) return null;
+  return (
+    <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 gap-1">
+      <Truck className="h-3 w-3" /> Нужно отправить {blankGarmentLabel(a.blankProduct)} на склад вышивки: {a.workshopTransferQty}
+    </Badge>
   );
 }
 
