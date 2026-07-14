@@ -26,9 +26,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const loginUrl = request.nextUrl.clone();
-  loginUrl.pathname = "/login";
-  loginUrl.search = "";
+  const loginUrl = new URL("/login", requestOrigin(request));
   loginUrl.searchParams.set("next", `${pathname}${search}`);
   return NextResponse.redirect(loginUrl);
 }
@@ -39,4 +37,17 @@ export const config = {
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.has(pathname) || PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function requestOrigin(request: NextRequest) {
+  const proto = firstHeaderValue(request.headers.get("x-forwarded-proto")) || request.nextUrl.protocol.replace(/:$/, "");
+  const host =
+    firstHeaderValue(request.headers.get("x-forwarded-host")) ||
+    firstHeaderValue(request.headers.get("host")) ||
+    request.nextUrl.host;
+  return `${proto}://${host}`;
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
 }
