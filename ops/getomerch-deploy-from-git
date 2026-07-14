@@ -218,8 +218,13 @@ git remote set-url origin "$repo_url"
 git fetch --prune origin "$branch"
 git checkout -f -B "$branch" "origin/$branch"
 git reset --hard "origin/$branch"
-# Keep node_modules/.next when the first production service still points at deploy-source.
-git clean -ffd -e node_modules -e .next
+source_real="$(readlink -f "$source_dir")"
+if [[ "$previous_current" == "$source_real" ]]; then
+  # Keep runtime artifacts while the first production service still points at deploy-source.
+  git clean -ffd -e node_modules -e .next
+else
+  git clean -ffdx
+fi
 
 commit="$(git rev-parse HEAD)"
 short_commit="${commit:0:12}"
@@ -290,3 +295,8 @@ add_check "public /login 200"
 record_event "success" "GetoMerch admin deployed successfully"
 log "deploy complete"
 rm -rf "$build_dir"
+current_real="$(readlink -f "$current_link")"
+if [[ "$current_real" != "$source_real" ]]; then
+  log "cleaning deploy-source runtime artifacts"
+  rm -rf "$source_dir/node_modules" "$source_dir/.next"
+fi
