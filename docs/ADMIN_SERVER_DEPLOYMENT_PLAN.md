@@ -379,7 +379,30 @@ Auth, но целевой вариант — форма логина + HttpOnly 
 /var/lib/getomerch/deploy-registry.jsonl
 ```
 
-В будущем можно добавить в текущий Telegram bot новые inline-кнопки:
+Для первого production-контура админки используются отдельные команды:
+
+```bash
+sudo /usr/local/sbin/getomerch-deploy-from-git prod main
+sudo /usr/local/sbin/getomerch-deploy-status
+```
+
+`getomerch-deploy-from-git` должен:
+
+- подтянуть `origin/<branch>` в `/opt/getomerch/deploy-source`;
+- собрать проект в одноразовой папке `/opt/getomerch/build-source`, чтобы не
+  ломать текущий active release во время build;
+- создать immutable release в `/opt/getomerch/releases/<timestamp>-admin-<commit>`;
+- переключить `/opt/getomerch/current` только после успешной сборки;
+- перезапустить `getomerch-admin.service`;
+- проверить локально `/login`, защиту API без cookie и публичный
+  `https://admin.komui.ru`;
+- при неуспешном smoke вернуть `/opt/getomerch/current` на предыдущий release;
+- записать событие в `/var/lib/getomerch/deploy-registry.jsonl`;
+- обновить `/var/lib/getomerch/deploy-current.json`;
+- писать полный лог запуска в `/var/log/getomerch/deploy/`.
+
+В текущем этапе Telegram-бот магазина **не менять**. После стабилизации можно
+добавить в текущий Telegram bot новые inline-кнопки:
 
 ```text
 Deploy admin prod
@@ -387,8 +410,7 @@ Status admin prod
 Rollback admin prod
 ```
 
-Но это отдельное улучшение. Для первого запуска достаточно ручного deploy
-script:
+До этого используется ручной deploy script:
 
 ```text
 /usr/local/sbin/getomerch-deploy-from-git prod main
@@ -410,6 +432,8 @@ script:
 - `NEXT_PUBLIC_*` не содержит секретов;
 - магазин `https://komui.ru` работает как раньше;
 - `https://stage.komui.ru` работает как раньше;
+- `sudo /usr/local/sbin/getomerch-deploy-status` показывает active release,
+  последний deploy event и успешные smoke-проверки;
 - `sudo /usr/local/sbin/komui-deploy-status` не показывает проблем.
 
 ## 7. Backup и восстановление

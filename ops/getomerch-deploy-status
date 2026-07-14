@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source_dir="${GETOMERCH_DEPLOY_SOURCE_DIR:-/opt/getomerch/deploy-source}"
+current_link="${GETOMERCH_CURRENT_LINK:-/opt/getomerch/current}"
+registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
+current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
+service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+
+echo "GetoMerch admin deploy status"
+echo
+
+if [[ -d "$source_dir/.git" ]]; then
+  echo "deploy-source: $source_dir"
+  echo "branch: $(git -C "$source_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  echo "local:  $(git -C "$source_dir" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  remote="$(git -C "$source_dir" ls-remote origin refs/heads/main 2>/dev/null | awk '{print substr($1,1,12)}')"
+  echo "origin/main: ${remote:-unknown}"
+else
+  echo "deploy-source: not cloned"
+fi
+
+echo
+active_path="$(readlink -f "$current_link" 2>/dev/null || true)"
+echo "active release: ${active_path:-none}"
+if [[ -n "$active_path" ]]; then
+  echo "active name: $(basename "$active_path")"
+fi
+
+echo
+echo "services:"
+for unit in "$service_unit" nginx; do
+  printf "%s: %s\n" "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
+done
+
+echo
+echo "smoke:"
+curl -sS -o /dev/null -w "admin /: %{http_code} -> %{redirect_url}\n" --max-time 10 https://admin.komui.ru/ || true
+curl -sS -o /dev/null -w "admin /login: %{http_code}\n" --max-time 10 https://admin.komui.ru/login || true
+curl -sS -o /dev/null -w "admin protected API without cookie: %{http_code}\n" --max-time 10 https://admin.komui.ru/api/komui/runtime || true
+
+echo
+echo "registry:"
+if [[ -f "$current_state_path" ]]; then
+  python3 - "$current_state_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+event = data.get("lastEvent") or {}
+print(f"updatedAt: {data.get('updatedAt', '')}")
+print(f"last status: {event.get('status', '')}")
+print(f"last release: {event.get('release', '')}")
+print(f"last git: {event.get('gitCommit', '')[:12]}")
+print(f"last log: {event.get('logPath', '')}")
+PY
+else
+  echo "current state: not found"
+fi
+
+if [[ -f "$registry_path" ]]; then
+  echo
+  echo "last events:"
+  python3 - "$registry_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+events = []
+for raw in Path(sys.argv[1]).read_text().splitlines():
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        events.append(json.loads(raw))
+    except json.JSONDecodeError:
+        pass
+
+for event in events[-5:]:
+    timestamp = (event.get("timestamp") or "")[:20].ljust(20)
+    status = (event.get("status") or "")[:8].ljust(8)
+    release = (event.get("release") or "")[:36].ljust(36)
+    commit = (event.get("gitCommit") or "")[:12]
+    print(f"{timestamp} {status} {release} {commit}")
+PY
+else
+  echo "history: not found"
+fi

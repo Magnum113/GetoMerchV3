@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  sudo /usr/local/sbin/getomerch-deploy-from-git prod [branch]
+
+Builds GetoMerch admin from origin/<branch>, creates an immutable release,
+activates /opt/getomerch/current, restarts getomerch-admin.service, runs smoke
+checks, and appends an event to /var/lib/getomerch/deploy-registry.jsonl.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+target="${1:-}"
+branch="${2:-main}"
+case "$target" in
+  prod) ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac
+
+repo_url="${GETOMERCH_DEPLOY_REPO_URL:-https://github.com/Magnum113/GetoMerchV3.git}"
+base_dir="${GETOMERCH_BASE_DIR:-/opt/getomerch}"
+source_dir="${GETOMERCH_DEPLOY_SOURCE_DIR:-$base_dir/deploy-source}"
+build_dir="${GETOMERCH_BUILD_DIR:-$base_dir/build-source}"
+releases_dir="${GETOMERCH_RELEASES_DIR:-$base_dir/releases}"
+current_link="${GETOMERCH_CURRENT_LINK:-$base_dir/current}"
+shared_modules_dir="${GETOMERCH_SHARED_NODE_MODULES_DIR:-$base_dir/shared/node_modules}"
+service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
+registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
+current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
+lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
+npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/lib/getomerch/.npm}"
+deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+log_file="$log_dir/${run_id}-${target}.log"
+
+install -d -m 0755 "$base_dir" "$releases_dir" "$log_dir" "$(dirname "$registry_path")" "$npm_cache_dir" "$deploy_home" "$shared_modules_dir"
+exec > >(tee -a "$log_file") 2>&1
+
+export HOME="$deploy_home"
+export npm_config_cache="$npm_cache_dir"
+export NPM_CONFIG_CACHE="$npm_cache_dir"
+
+previous_current=""
+previous_release=""
+release=""
+release_dir=""
+commit=""
+checks=""
+activated=0
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+add_check() {
+  checks="${checks}${checks:+$'\n'}$*"
+}
+
+record_event() {
+  local status="$1"
+  local summary="$2"
+  EVENT_STATUS="$status" \
+  EVENT_SUMMARY="$summary" \
+  EVENT_TARGET="$target" \
+  EVENT_BRANCH="$branch" \
+  EVENT_RELEASE="$release" \
+  EVENT_RELEASE_PATH="$release_dir" \
+  EVENT_PREVIOUS_RELEASE="$previous_release" \
+  EVENT_GIT_COMMIT="$commit" \
+  EVENT_LOG_PATH="$log_file" \
+  EVENT_CHECKS="$checks" \
+  EVENT_REGISTRY="$registry_path" \
+  EVENT_CURRENT="$current_state_path" \
+  EVENT_SERVICE="$service_unit" \
+  EVENT_CURRENT_LINK="$current_link" \
+  python3 - <<'PY'
+import fcntl
+import json
+import os
+import socket
+import subprocess
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_text(args):
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+
+
+registry = Path(os.environ["EVENT_REGISTRY"])
+current_file = Path(os.environ["EVENT_CURRENT"])
+current_link = Path(os.environ["EVENT_CURRENT_LINK"])
+service = os.environ["EVENT_SERVICE"]
+active_path = run_text(["readlink", "-f", str(current_link)])
+active_release = Path(active_path).name if active_path else ""
+service_state = run_text(["systemctl", "is-active", service]) or "unknown"
+checks = [line for line in os.environ.get("EVENT_CHECKS", "").splitlines() if line.strip()]
+event = {
+    "id": str(uuid.uuid4()),
+    "timestamp": utc_now(),
+    "host": socket.getfqdn() or socket.gethostname(),
+    "actor": os.environ.get("SUDO_USER") or os.environ.get("USER") or "",
+    "event": "deploy",
+    "component": "admin",
+    "status": os.environ["EVENT_STATUS"],
+    "target": os.environ["EVENT_TARGET"],
+    "branch": os.environ["EVENT_BRANCH"],
+    "release": os.environ.get("EVENT_RELEASE", ""),
+    "releasePath": os.environ.get("EVENT_RELEASE_PATH", ""),
+    "previousRelease": os.environ.get("EVENT_PREVIOUS_RELEASE", ""),
+    "gitCommit": os.environ.get("EVENT_GIT_COMMIT", ""),
+    "summary": os.environ["EVENT_SUMMARY"],
+    "checks": checks,
+    "logPath": os.environ["EVENT_LOG_PATH"],
+    "active": {
+        "release": active_release,
+        "path": active_path,
+    },
+    "services": {
+        service: service_state,
+        "nginx": run_text(["systemctl", "is-active", "nginx"]) or "unknown",
+    },
+}
+
+registry.parent.mkdir(parents=True, exist_ok=True)
+current_file.parent.mkdir(parents=True, exist_ok=True)
+lock_path = registry.with_suffix(registry.suffix + ".lock")
+with lock_path.open("a+") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with registry.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    snapshot = {
+        "updatedAt": event["timestamp"],
+        "active": event["active"],
+        "lastEvent": event,
+    }
+    tmp = current_file.with_suffix(current_file.suffix + ".tmp")
+    tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, current_file)
+    os.chmod(registry, 0o644)
+    os.chmod(current_file, 0o644)
+PY
+}
+
+rollback_previous() {
+  if [[ "$activated" == "1" && -n "$previous_current" && -d "$previous_current" ]]; then
+    log "restoring previous release $previous_current"
+    ln -sfnT "$previous_current" "$current_link"
+    systemctl restart "$service_unit" || true
+  fi
+}
+
+on_error() {
+  local rc="$1"
+  local line="$2"
+  trap - ERR
+  log "ERROR: deploy failed at line $line with exit code $rc"
+  rollback_previous
+  record_event "failure" "Deploy failed at line $line with exit code $rc"
+  rm -rf "$build_dir"
+  if [[ -n "$release_dir" ]]; then
+    rm -rf "${release_dir}.tmp"
+  fi
+  exit "$rc"
+}
+
+trap 'on_error "$?" "$LINENO"' ERR
+
+exec 9>"$lock_path"
+flock -n 9 || {
+  log "ERROR: another GetoMerch admin deploy is already running"
+  exit 1
+}
+
+log "target=$target"
+log "branch=$branch"
+log "repo=$repo_url"
+log "log=$log_file"
+
+previous_current="$(readlink -f "$current_link" 2>/dev/null || true)"
+previous_release="$(basename "$previous_current" 2>/dev/null || true)"
+log "previous_current=${previous_current:-none}"
+
+if [[ ! -d "$source_dir/.git" ]]; then
+  log "cloning source into $source_dir"
+  rm -rf "$source_dir"
+  git clone --branch "$branch" "$repo_url" "$source_dir"
+fi
+
+cd "$source_dir"
+git remote set-url origin "$repo_url"
+git fetch --prune origin "$branch"
+git checkout -f -B "$branch" "origin/$branch"
+git reset --hard "origin/$branch"
+# Keep node_modules/.next when the first production service still points at deploy-source.
+git clean -ffd -e node_modules -e .next
+
+commit="$(git rev-parse HEAD)"
+short_commit="${commit:0:12}"
+release="${run_id}-admin-${short_commit}"
+release_dir="$releases_dir/$release"
+log "git_commit=$commit"
+log "release=$release"
+
+log "preparing disposable build dir $build_dir"
+rm -rf "$build_dir"
+install -d -m 0755 "$build_dir"
+rsync -a --delete \
+  --exclude '.git' \
+  --exclude 'node_modules' \
+  --exclude '.next' \
+  "$source_dir/" "$build_dir/"
+
+cd "$build_dir"
+log "installing dependencies"
+npm ci
+
+log "building Next.js admin"
+npm run build
+add_check "npm run build"
+
+lock_hash="$(sha256sum package-lock.json | awk '{print substr($1,1,16)}')"
+module_store="$shared_modules_dir/$lock_hash"
+if [[ ! -d "$module_store" ]]; then
+  log "creating shared node_modules store $module_store"
+  tmp_store="$module_store.tmp-$run_id"
+  rm -rf "$tmp_store"
+  install -d -m 0755 "$tmp_store"
+  rsync -a --delete node_modules/ "$tmp_store/"
+  mv "$tmp_store" "$module_store"
+else
+  log "reusing shared node_modules store $module_store"
+fi
+
+log "creating release $release_dir"
+rm -rf "${release_dir}.tmp" "$release_dir"
+install -d -m 0755 "${release_dir}.tmp"
+rsync -a --delete \
+  --exclude 'node_modules' \
+  --exclude '.git' \
+  --exclude '.next/cache' \
+  "$build_dir/" "${release_dir}.tmp/"
+ln -sfnT "$module_store" "${release_dir}.tmp/node_modules"
+mv "${release_dir}.tmp" "$release_dir"
+chown -h root:root "$release_dir" "$release_dir/node_modules"
+chown -R root:root "$release_dir"
+
+log "activating release"
+ln -sfnT "$release_dir" "$current_link"
+activated=1
+systemctl restart "$service_unit"
+
+log "waiting for service"
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet "$service_unit" && curl -fsS --max-time 3 http://127.0.0.1:3100/login >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS --max-time 5 http://127.0.0.1:3100/login >/dev/null
+add_check "local /login 200"
+
+api_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3100/api/komui/runtime)"
+[[ "$api_code" == "401" ]]
+add_check "local protected API without cookie 401"
+
+redirect_url="$(curl -sS -o /dev/null -w '%{redirect_url}' --max-time 10 https://admin.komui.ru/)"
+[[ "$redirect_url" == "https://admin.komui.ru/login?next=%2F" ]]
+add_check "public / redirects to /login"
+
+public_login_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://admin.komui.ru/login)"
+[[ "$public_login_code" == "200" ]]
+add_check "public /login 200"
+
+record_event "success" "GetoMerch admin deployed successfully"
+log "deploy complete"
+rm -rf "$build_dir"
