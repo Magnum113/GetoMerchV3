@@ -401,8 +401,8 @@ sudo /usr/local/sbin/getomerch-deploy-status
 - обновить `/var/lib/getomerch/deploy-current.json`;
 - писать полный лог запуска в `/var/log/getomerch/deploy/`.
 
-В текущем этапе Telegram-бот магазина **не менять**. После стабилизации можно
-добавить в текущий Telegram bot новые inline-кнопки:
+После стабилизации admin deploy в текущий Telegram bot магазина добавлены
+отдельные inline-кнопки для админки:
 
 ```text
 Deploy admin prod
@@ -410,10 +410,22 @@ Status admin prod
 Rollback admin prod
 ```
 
-До этого используется ручной deploy script:
+Они вызывают те же серверные команды, что и ручной режим:
 
 ```text
 /usr/local/sbin/getomerch-deploy-from-git prod main
+/usr/local/sbin/getomerch-deploy-status
+/usr/local/sbin/getomerch-rollback prod
+```
+
+Для этого unit `komui-deploy-bot.service` должен иметь доступ на запись к
+путям админки:
+
+```text
+/opt/getomerch
+/var/lib/getomerch
+/var/log/getomerch
+/var/cache/getomerch
 ```
 
 ### Этап 8. Проверка
