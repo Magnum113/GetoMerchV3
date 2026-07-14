@@ -53,6 +53,7 @@
 ```
 src/
   app/                      # Next.js App Router
+    api/auth/               # login/logout для production-админки
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
       sync-prices/          # POST → /v5/product/info/prices
       sync-orders/          # POST → /v3/posting/fbs/list + /v2/posting/fbo/list
@@ -64,6 +65,7 @@ src/
     transactions/           # /transactions — журнал движений
     designs/                # /designs — каталог дизайнов
     expenses/               # /expenses — ручные расходы и их категории
+    login/                  # /login — форма входа в production-админку
     settings/               # /settings — справочники (склады, цвета, размеры)
     page.tsx                # / — аналитический дашборд (KPI, динамика, donut, топ)
     layout.tsx              # общий layout с Sidebar
@@ -86,6 +88,14 @@ src/
     types.ts                # типы доменных сущностей и константы лейблов
     utils.ts                # cn, formatDate, formatMoney, toError
     supabase/client.ts        # browser client; route handlers используют @supabase/supabase-js напрямую
+    auth/                   # password hash + signed HttpOnly cookie session
+  middleware.ts             # защита страниц и /api/* через admin session cookie
+ops/
+  getomerch-deploy-from-git # production deploy на server release
+  getomerch-deploy-status   # status/smoke текущего admin контура
+  getomerch-rollback        # rollback на предыдущий успешный release
+scripts/
+  generate-admin-password-hash.mjs # генерация ADMIN_AUTH_PASSWORD_HASH
 supabase/
   migrations/               # SQL-миграции, имя: <YYYYMMDDHHMM>_<snake_case>.sql
 ```
@@ -603,7 +613,176 @@ UI — на русском (целевой пользователь говори
 
 ---
 
-## 11. Долги и известные ограничения
+## 11. Серверный контур и эксплуатация
+
+GetoMerchV3 теперь развёрнут на production-сервере KOMUI как отдельная
+админка `https://admin.komui.ru`. Это не часть публичного магазина `komui.ru`
+и не папка внутри `/opt/komui`.
+
+### 11.1. Границы с проектом KOMUI
+
+На сервере живут два независимых проекта:
+
+```text
+/opt/komui      # публичный магазин, backend, static frontend, PostgreSQL KOMUI
+/opt/getomerch  # эта админка Next.js
+```
+
+Нельзя:
+
+- копировать `GetoMerchV3` внутрь `/opt/komui`;
+- объединять git-репозитории;
+- писать напрямую в PostgreSQL магазина из этой админки;
+- менять deploy/status/rollback магазина ради задач админки, если явно не
+  меняется Telegram bot или общий nginx/systemd слой.
+
+Связь с магазином идёт только через server-side KOMUI API:
+
+```text
+Next.js admin route/BFF
+  -> https://komui.ru/api/admin/...
+  -> PostgreSQL магазина
+```
+
+Admin token хранится только в server-side env. В `NEXT_PUBLIC_*` можно класть
+только публичные ключи Supabase.
+
+### 11.2. Production-схема
+
+```text
+GitHub GetoMerchV3.git
+  -> /opt/getomerch/deploy-source
+  -> /opt/getomerch/releases/<timestamp>-admin-<commit>
+  -> /opt/getomerch/current
+  -> systemd: getomerch-admin.service
+  -> 127.0.0.1:3100
+  -> nginx: admin.komui.ru
+```
+
+Сервис:
+
+```text
+unit: /etc/systemd/system/getomerch-admin.service
+user: getomerch
+working dir: /opt/getomerch/current
+env: /etc/getomerch/admin-production.env
+command: npm start -- --hostname 127.0.0.1 --port 3100
+```
+
+Nginx vhost `admin.komui.ru` проксирует на `127.0.0.1:3100`, передаёт
+`Host`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port` и
+обслуживает Let's Encrypt certificate. Старой nginx Basic Auth на админке нет:
+доступ закрывает само Next.js-приложение.
+
+### 11.3. Авторизация
+
+Production-админка однопользовательская. Вход:
+
+```text
+/login
+POST /api/auth/login
+POST /api/auth/logout
+```
+
+Пароль хранится только хешем:
+
+```env
+ADMIN_AUTH_PASSWORD_HASH=pbkdf2_sha256$310000$...
+ADMIN_AUTH_COOKIE_SECRET=...
+ADMIN_AUTH_COOKIE_NAME=getomerch_admin_session
+ADMIN_AUTH_SESSION_DAYS=60
+```
+
+Хеш генерируется:
+
+```bash
+printf '%s' 'your-password' | node scripts/generate-admin-password-hash.mjs
+```
+
+После входа ставится HttpOnly Secure SameSite=Lax cookie. Значение cookie —
+подписанный HMAC-SHA256 token с `sub`, `iat`, `exp`; это не boolean-флаг.
+`src/middleware.ts` защищает все страницы и `/api/*`, кроме `/login`,
+`/api/auth/*`, `_next` и статических файлов. Route Handlers всё равно должны
+хранить секреты только на сервере.
+
+### 11.4. Deploy, status, rollback
+
+Команды на сервере:
+
+```bash
+sudo /usr/local/sbin/getomerch-deploy-from-git prod main
+sudo /usr/local/sbin/getomerch-deploy-status
+sudo /usr/local/sbin/getomerch-rollback prod
+```
+
+Deploy flow:
+
+1. Берёт `origin/<branch>` в `/opt/getomerch/deploy-source`.
+2. Собирает Next.js в одноразовой `/opt/getomerch/build-source`.
+3. Создаёт immutable release в `/opt/getomerch/releases`.
+4. Ставит production dependencies прямо внутрь release.
+5. Переключает `/opt/getomerch/current`.
+6. Рестартит `getomerch-admin.service`.
+7. Проверяет `/login`, protected API без cookie и публичный редирект
+   `admin.komui.ru -> /login`.
+8. Пишет событие в registry.
+
+Если smoke падает после активации, deploy script возвращает предыдущий active
+release. Rollback script выбирает предыдущий успешный admin release из
+`/var/lib/getomerch/deploy-registry.jsonl` или принимает конкретное имя release.
+
+Файлы состояния:
+
+```text
+/var/lib/getomerch/deploy-registry.jsonl
+/var/lib/getomerch/deploy-current.json
+/var/log/getomerch/deploy/
+/var/cache/getomerch/npm
+```
+
+После успешного deploy runtime-артефакты в `/opt/getomerch/deploy-source`
+очищаются. Работать должен active release, а не git checkout.
+
+### 11.5. Telegram deploy bot
+
+Текущий Telegram deploy bot магазина KOMUI расширен admin-кнопками:
+
+```text
+Deploy admin prod
+Status admin prod
+Rollback admin prod
+```
+
+Они вызывают `getomerch-deploy-from-git`, `getomerch-deploy-status` и
+`getomerch-rollback`. Unit `komui-deploy-bot.service` имеет `ReadWritePaths`
+на `/opt/getomerch`, `/var/lib/getomerch`, `/var/log/getomerch`,
+`/var/cache/getomerch`.
+
+Важно: кнопки магазина `Deploy stage` / `Deploy prod` по-прежнему относятся к
+KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — только к этой
+админке.
+
+### 11.6. Данные и backup
+
+Основная БД админки всё ещё Supabase. На сервере не создан отдельный Postgres
+для таблиц `merch_*`, `ozon_*`, расходов и производства. Поэтому:
+
+- серверный backup покрывает код, releases, env, deploy registry и логи;
+- данные Supabase покрываются механизмами Supabase export/backup;
+- перенос БД админки на сервер — отдельный будущий проект.
+
+В `/etc/getomerch/admin-production.env` нельзя руками менять секреты без
+понимания, какие route handlers и внешние API их используют.
+
+### 11.7. Ozon-нюанс
+
+Для всех футболок на Ozon должны использоваться габариты упаковки
+`300 x 230 x 40 мм` и вес `250 г`. Это бизнес-инвариант, который нужно
+сохранять при создании новых карточек и копировании размеров.
+
+---
+
+## 12. Долги и известные ограничения
 
 - Транзакционности нет на уровне БД. Composite-операции (производство, отгрузка)
   выполняются как серия HTTP-запросов к PostgREST. Если падение посередине —
@@ -630,7 +809,7 @@ UI — на русском (целевой пользователь говори
 
 ---
 
-## 12. Чеклист перед мерджем
+## 13. Чеклист перед мерджем
 
 - [ ] `npx tsc --noEmit` без ошибок
 - [ ] Сценарий проверен в браузере (preview server)

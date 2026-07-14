@@ -3,6 +3,15 @@
 Веб-приложение для управления складом, товарами Ozon и заказами KOMUI. Стек:
 Next.js 15, React 19, Supabase, Tailwind CSS и локальные shadcn/ui-компоненты.
 
+Проект теперь живёт в двух режимах:
+
+- локально — для разработки из этого репозитория;
+- на сервере KOMUI как отдельная production-админка `https://admin.komui.ru`.
+
+Админка на сервере развёрнута отдельно от публичного магазина `komui.ru`.
+Репозитории, systemd-сервисы, nginx vhost, deploy registry и release-папки не
+смешиваются с магазином KOMUI.
+
 ## Возможности
 
 - **Каталог SKU** — товары строятся из категории, ткани, цвета, размера,
@@ -29,6 +38,11 @@ Next.js 15, React 19, Supabase, Tailwind CSS и локальные shadcn/ui-к�
 Схема живёт в Supabase, таблицы используют префикс `merch_`, миграции лежат в
 `supabase/migrations`. Подробная модель и ограничения описаны в `DATABASE.md`,
 инварианты разработки — в `ARCHITECTURE.md`.
+
+Важно: даже после переноса админки на сервер данные админки не переехали в
+PostgreSQL сервера. Production-приложение на `admin.komui.ru` всё ещё работает
+с текущим Supabase-проектом. Сервер хранит только код, конфиги, release-артефакты,
+логи deploy и runtime-состояние, но не основную БД админки.
 
 ## Запуск
 
@@ -68,6 +82,89 @@ KOMUI_STAGE_API_BASE_URL=https://stage.komui.ru/api
 
 `KOMUI_STAGE_BASIC_AUTH` нужен только для `https://stage.komui.ru/api`; на
 production-домен этот заголовок не отправляется.
+
+Для production-сервера дополнительно используются переменные авторизации
+админки:
+
+```env
+ADMIN_AUTH_PASSWORD_HASH=pbkdf2_sha256$310000$...
+ADMIN_AUTH_COOKIE_SECRET=<long_random_secret>
+ADMIN_AUTH_COOKIE_NAME=getomerch_admin_session
+ADMIN_AUTH_SESSION_DAYS=60
+```
+
+Хеш пароля генерируется без внешних зависимостей:
+
+```bash
+printf '%s' 'your-password' | node scripts/generate-admin-password-hash.mjs
+```
+
+На сервере env лежит в `/etc/getomerch/admin-production.env`, права:
+`root:root`, `600`. Секреты не должны попадать в `NEXT_PUBLIC_*`.
+
+## Production на сервере
+
+Production-админка работает на том же сервере, где живёт KOMUI, но как
+отдельный контур:
+
+```text
+GitHub GetoMerchV3.git
+  -> /opt/getomerch/deploy-source
+  -> /opt/getomerch/releases/<timestamp>-admin-<commit>
+  -> /opt/getomerch/current
+  -> systemd: getomerch-admin.service
+  -> 127.0.0.1:3100
+  -> nginx: admin.komui.ru
+```
+
+Ключевые пути на сервере:
+
+| Путь | Назначение |
+|---|---|
+| `/opt/getomerch/deploy-source` | Git checkout `GetoMerchV3` |
+| `/opt/getomerch/releases/` | Immutable production releases |
+| `/opt/getomerch/current` | Symlink на активный release |
+| `/etc/getomerch/admin-production.env` | Production env и секреты админки |
+| `/var/lib/getomerch/deploy-registry.jsonl` | История deploy/rollback событий |
+| `/var/lib/getomerch/deploy-current.json` | Последнее active-состояние |
+| `/var/log/getomerch/deploy/` | Логи deploy/rollback |
+| `/var/cache/getomerch/npm` | npm cache для deploy-сборок |
+
+Основные команды:
+
+```bash
+sudo /usr/local/sbin/getomerch-deploy-from-git prod main
+sudo /usr/local/sbin/getomerch-deploy-status
+sudo /usr/local/sbin/getomerch-rollback prod
+```
+
+`getomerch-deploy-from-git` собирает проект в одноразовой папке, создаёт новый
+release, переключает `/opt/getomerch/current`, перезапускает
+`getomerch-admin.service`, делает smoke-check и пишет событие в registry.
+Если smoke падает, скрипт возвращает предыдущий active release.
+
+Telegram deploy bot магазина KOMUI расширен inline-кнопками:
+
+```text
+Deploy admin prod
+Status admin prod
+Rollback admin prod
+```
+
+Эти кнопки вызывают те же команды `getomerch-*`. Сам публичный магазин KOMUI
+при этом не деплоится.
+
+Важные нюансы:
+
+- `admin.komui.ru` закрыт собственной авторизацией Next.js:
+  `/login` + HttpOnly Secure cookie + HMAC-подписанный token.
+- Старую nginx Basic Auth для админки сняли после внедрения app-auth.
+- `komui.ru` и `stage.komui.ru` обслуживаются отдельным проектом
+  `/opt/komui`; этот репозиторий туда не копировать и с ним не объединять.
+- Admin UI обращается к production/stage KOMUI только через backend API, а не
+  прямым SQL в PostgreSQL магазина.
+- Для всех футболок на Ozon использовать габариты упаковки `300 x 230 x 40 мм`
+  и вес `250 г`.
 
 ## Бизнес-логика заказов в цех
 

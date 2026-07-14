@@ -14,6 +14,28 @@ ID — `uuid` с дефолтом `gen_random_uuid()`. Временные мет
 
 ---
 
+## Production и граница базы
+
+Production-админка теперь отдельно развёрнута на сервере KOMUI как
+`https://admin.komui.ru`, но рабочая база GetoMerchV3 остаётся в Supabase.
+Серверный PostgreSQL публичного магазина KOMUI не является БД этой админки.
+
+На сервере хранятся код, releases, env, deploy registry и логи:
+`/opt/getomerch`, `/etc/getomerch/admin-production.env`,
+`/var/lib/getomerch/*`, `/var/log/getomerch/*`. Таблицы `merch_*` и связанные
+Ozon-данные при этом продолжают жить в Supabase `public`.
+
+Важные правила:
+
+- не писать из админки напрямую в PostgreSQL магазина KOMUI;
+- интеграции с магазином делать только через server-side API KOMUI;
+- `service_role` и любые секретные ключи Supabase не класть в `NEXT_PUBLIC_*`;
+- изменения схемы админки по-прежнему оформлять через `supabase/migrations/`;
+- перенос БД админки на серверный Postgres — отдельный будущий проект, не часть
+  текущего deploy-контура.
+
+---
+
 ## Содержание
 
 **Справочники**
@@ -817,7 +839,7 @@ merch_expense_categories ──< merch_expenses.category_id  (SET NULL)
 Сейчас её нет на уровне БД для composite-операций (`produce` = списать
 заготовку + добавить готовое + списать принт + записать в журнал). Каждая
 операция — отдельный HTTP-запрос к PostgREST. Падение посередине →
-неконсистентность. План на будущее (см. ARCHITECTURE 11): вынести в
+неконсистентность. План на будущее (см. ARCHITECTURE 12): вынести в
 Postgres RPC (`create function ... language plpgsql`) и обернуть в
 транзакцию.
 
