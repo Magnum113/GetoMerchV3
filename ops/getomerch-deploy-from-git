@@ -45,6 +45,7 @@ current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-curren
 lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
 npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
+production_env_file="${GETOMERCH_PRODUCTION_ENV_FILE:-/etc/getomerch/admin-production.env}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
 log_file="$log_dir/${run_id}-${target}.log"
 
@@ -68,8 +69,147 @@ log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
+fail() {
+  log "ERROR: $*"
+  exit 1
+}
+
 add_check() {
   checks="${checks}${checks:+$'\n'}$*"
+}
+
+read_env_var() {
+  local key="$1"
+  node - "$production_env_file" "$key" <<'NODE'
+const fs = require("fs");
+
+const [, , file, key] = process.argv;
+const text = fs.readFileSync(file, "utf8");
+
+for (const raw of text.split(/\r?\n/)) {
+  const line = raw.trim();
+  if (!line || line.startsWith("#")) continue;
+  const idx = line.indexOf("=");
+  if (idx === -1) continue;
+  const name = line.slice(0, idx).trim().replace(/^export\s+/, "");
+  if (name !== key) continue;
+
+  let value = line.slice(idx + 1).trim();
+  const quote = value[0];
+  if ((quote === '"' || quote === "'") && value.endsWith(quote)) {
+    value = value.slice(1, -1);
+  }
+  process.stdout.write(value);
+  process.exit(0);
+}
+
+process.exit(2);
+NODE
+}
+
+load_public_build_env() {
+  [[ -r "$production_env_file" ]] || fail "production env file is not readable: $production_env_file"
+
+  local supabase_url
+  local supabase_anon_key
+  supabase_url="$(read_env_var NEXT_PUBLIC_SUPABASE_URL)" || fail "NEXT_PUBLIC_SUPABASE_URL is missing in $production_env_file"
+  supabase_anon_key="$(read_env_var NEXT_PUBLIC_SUPABASE_ANON_KEY)" || fail "NEXT_PUBLIC_SUPABASE_ANON_KEY is missing in $production_env_file"
+
+  [[ "$supabase_url" =~ ^https://[a-z0-9-]+\.supabase\.co$ ]] || fail "NEXT_PUBLIC_SUPABASE_URL has unexpected format"
+  [[ "$supabase_anon_key" =~ ^[A-Za-z0-9._-]{20,}$ ]] || fail "NEXT_PUBLIC_SUPABASE_ANON_KEY has unexpected format"
+
+  export NEXT_PUBLIC_SUPABASE_URL="$supabase_url"
+  export NEXT_PUBLIC_SUPABASE_ANON_KEY="$supabase_anon_key"
+  log "loaded public Supabase build env from $production_env_file"
+}
+
+assert_client_supabase_config() {
+  node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const root = path.join(process.cwd(), ".next", "static");
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const forbiddenNames = [
+  "ADMIN_AUTH_COOKIE_SECRET",
+  "ADMIN_AUTH_PASSWORD_HASH",
+  "KOMUI_ADMIN_API_TOKEN",
+  "KOMUI_PROD_ADMIN_API_TOKEN",
+  "KOMUI_STAGE_ADMIN_API_TOKEN",
+  "KOMUI_STAGE_BASIC_AUTH",
+  "OZON_API_KEY",
+  "PERFORMANCE_CLIENT_SECRET",
+  "GETOMERCH_SUPABASE_DATABASE_URL",
+  "SUPABASE_SERVICE_ROLE",
+];
+
+if (!url || !anon) {
+  throw new Error("public Supabase env is not loaded");
+}
+if (!fs.existsSync(root)) {
+  throw new Error(".next/static was not created");
+}
+
+let sawUrl = false;
+let sawAnon = false;
+const leakedNames = new Set();
+
+function scan(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scan(full);
+      continue;
+    }
+    if (!/\.(js|html|json|txt|css)$/.test(entry.name)) continue;
+    const content = fs.readFileSync(full, "utf8");
+    if (content.includes(url)) sawUrl = true;
+    if (content.includes(anon)) sawAnon = true;
+    for (const name of forbiddenNames) {
+      if (content.includes(name)) leakedNames.add(name);
+    }
+  }
+}
+
+scan(root);
+
+if (!sawUrl || !sawAnon) {
+  throw new Error("public Supabase config was not embedded into client assets");
+}
+if (leakedNames.size > 0) {
+  throw new Error(`server-only env names leaked into client assets: ${Array.from(leakedNames).join(", ")}`);
+}
+NODE
+}
+
+smoke_supabase_readonly() {
+  node <<'NODE'
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!url || !anon) {
+  throw new Error("public Supabase env is not loaded");
+}
+
+const endpoint = `${url.replace(/\/$/, "")}/rest/v1/merch_ozon_orders?select=id&limit=1`;
+
+fetch(endpoint, {
+  headers: {
+    apikey: anon,
+    Authorization: `Bearer ${anon}`,
+    Accept: "application/json",
+  },
+}).then(async (response) => {
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Supabase read-only smoke failed with ${response.status}: ${text.slice(0, 160)}`);
+  }
+}).catch((error) => {
+  console.error(error.message || error);
+  process.exit(1);
+});
+NODE
 }
 
 record_event() {
@@ -246,9 +386,19 @@ cd "$build_dir"
 log "installing dependencies"
 npm ci
 
+load_public_build_env
+
 log "building Next.js admin"
 npm run build
 add_check "npm run build"
+
+log "asserting client Supabase config"
+assert_client_supabase_config
+add_check "client Supabase config embedded"
+
+log "checking Supabase read-only access"
+smoke_supabase_readonly
+add_check "Supabase read-only smoke"
 
 log "creating release $release_dir"
 rm -rf "${release_dir}.tmp" "$release_dir"

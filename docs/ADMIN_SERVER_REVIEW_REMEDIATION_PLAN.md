@@ -174,6 +174,27 @@ RLS нельзя закрывать раньше шагов 4–5: текущи�
   заданы;
 - rollback остаётся рабочим.
 
+### Статус внедрения на 15 июля 2026
+
+Причина production-сбоя с заказами была в этом этапе: browser bundle был
+собран без `NEXT_PUBLIC_SUPABASE_URL` и `NEXT_PUBLIC_SUPABASE_ANON_KEY`, хотя в
+runtime env systemd эти переменные были. Поэтому `@supabase/ssr` падал в
+браузере с ошибкой `Your project's URL and API key are required`.
+
+Сделано:
+
+- `ops/getomerch-deploy-from-git` перед `npm run build` читает
+  `/etc/getomerch/admin-production.env` без `source` всего файла;
+- в build-process экспортируются только `NEXT_PUBLIC_SUPABASE_URL` и
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`;
+- перед сборкой проверяется наличие и формат обеих переменных;
+- после сборки проверяется, что public Supabase config попал в `.next/static`;
+- client assets проверяются на отсутствие имён server-only env:
+  auth secrets, Ozon keys, KOMUI tokens, Supabase DB/service-role markers;
+- добавлен read-only smoke к Supabase REST `merch_ozon_orders?select=id&limit=1`;
+- deploy должен падать до создания/активации release, если public Supabase env
+  не задан или не встроился в client assets.
+
 ---
 
 ## Этап 3. Добавить retention релизов и контроль диска
