@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  sudo /usr/local/sbin/getomerch-rollback prod [release]
+
+Rolls GetoMerch admin back to the previous successful release recorded in
+/var/lib/getomerch/deploy-registry.jsonl. If release is passed, activates that
+specific release name from /opt/getomerch/releases.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run with sudo." >&2
+  exit 1
+fi
+
+target="${1:-}"
+requested_release="${2:-}"
+case "$target" in
+  prod) ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac
+
+base_dir="${GETOMERCH_BASE_DIR:-/opt/getomerch}"
+releases_dir="${GETOMERCH_RELEASES_DIR:-$base_dir/releases}"
+current_link="${GETOMERCH_CURRENT_LINK:-$base_dir/current}"
+service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
+registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
+current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
+lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+log_file="$log_dir/${run_id}-${target}-rollback.log"
+
+install -d -m 0755 "$log_dir" "$(dirname "$registry_path")"
+exec > >(tee -a "$log_file") 2>&1
+
+previous_current="$(readlink -f "$current_link" 2>/dev/null || true)"
+previous_release="$(basename "$previous_current" 2>/dev/null || true)"
+rollback_path=""
+rollback_release=""
+checks=""
+activated=0
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+add_check() {
+  checks="${checks}${checks:+$'\n'}$*"
+}
+
+record_event() {
+  local status="$1"
+  local summary="$2"
+  EVENT_STATUS="$status" \
+  EVENT_SUMMARY="$summary" \
+  EVENT_TARGET="$target" \
+  EVENT_RELEASE="$rollback_release" \
+  EVENT_RELEASE_PATH="$rollback_path" \
+  EVENT_PREVIOUS_RELEASE="$previous_release" \
+  EVENT_LOG_PATH="$log_file" \
+  EVENT_CHECKS="$checks" \
+  EVENT_REGISTRY="$registry_path" \
+  EVENT_CURRENT="$current_state_path" \
+  EVENT_SERVICE="$service_unit" \
+  EVENT_CURRENT_LINK="$current_link" \
+  python3 - <<'PY'
+import fcntl
+import json
+import os
+import socket
+import subprocess
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def run_text(args):
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+
+
+registry = Path(os.environ["EVENT_REGISTRY"])
+current_file = Path(os.environ["EVENT_CURRENT"])
+current_link = Path(os.environ["EVENT_CURRENT_LINK"])
+service = os.environ["EVENT_SERVICE"]
+active_path = run_text(["readlink", "-f", str(current_link)])
+active_release = Path(active_path).name if active_path else ""
+checks = [line for line in os.environ.get("EVENT_CHECKS", "").splitlines() if line.strip()]
+event = {
+    "id": str(uuid.uuid4()),
+    "timestamp": utc_now(),
+    "host": socket.getfqdn() or socket.gethostname(),
+    "actor": os.environ.get("SUDO_USER") or os.environ.get("USER") or "",
+    "event": "rollback",
+    "component": "admin",
+    "status": os.environ["EVENT_STATUS"],
+    "target": os.environ["EVENT_TARGET"],
+    "release": os.environ.get("EVENT_RELEASE", ""),
+    "releasePath": os.environ.get("EVENT_RELEASE_PATH", ""),
+    "previousRelease": os.environ.get("EVENT_PREVIOUS_RELEASE", ""),
+    "gitCommit": "",
+    "summary": os.environ["EVENT_SUMMARY"],
+    "checks": checks,
+    "logPath": os.environ["EVENT_LOG_PATH"],
+    "active": {
+        "release": active_release,
+        "path": active_path,
+    },
+    "services": {
+        service: run_text(["systemctl", "is-active", service]) or "unknown",
+        "nginx": run_text(["systemctl", "is-active", "nginx"]) or "unknown",
+    },
+}
+
+registry.parent.mkdir(parents=True, exist_ok=True)
+current_file.parent.mkdir(parents=True, exist_ok=True)
+lock_path = registry.with_suffix(registry.suffix + ".lock")
+with lock_path.open("a+") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with registry.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    snapshot = {
+        "updatedAt": event["timestamp"],
+        "active": event["active"],
+        "lastEvent": event,
+    }
+    tmp = current_file.with_suffix(current_file.suffix + ".tmp")
+    tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, current_file)
+    os.chmod(registry, 0o644)
+    os.chmod(current_file, 0o644)
+PY
+}
+
+restore_previous() {
+  if [[ "$activated" == "1" && -n "$previous_current" && -d "$previous_current" ]]; then
+    log "restoring previous release $previous_current"
+    ln -sfnT "$previous_current" "$current_link"
+    systemctl restart "$service_unit" || true
+  fi
+}
+
+on_error() {
+  local rc="$1"
+  local line="$2"
+  trap - ERR
+  log "ERROR: rollback failed at line $line with exit code $rc"
+  restore_previous
+  record_event "failure" "Rollback failed at line $line with exit code $rc"
+  exit "$rc"
+}
+
+select_rollback_path() {
+  REQUESTED_RELEASE="$requested_release" \
+  CURRENT_PATH="$previous_current" \
+  RELEASES_DIR="$releases_dir" \
+  REGISTRY_PATH="$registry_path" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+requested = os.environ.get("REQUESTED_RELEASE", "").strip()
+current = Path(os.environ.get("CURRENT_PATH", "")).resolve() if os.environ.get("CURRENT_PATH") else None
+releases_dir = Path(os.environ["RELEASES_DIR"]).resolve()
+registry = Path(os.environ["REGISTRY_PATH"])
+
+
+def valid(path: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except FileNotFoundError:
+        return False
+    return (
+        resolved.is_dir()
+        and releases_dir in resolved.parents
+        and resolved != current
+        and (resolved / "package.json").exists()
+        and (resolved / ".next").is_dir()
+    )
+
+
+if requested:
+    candidate = Path(requested)
+    if not candidate.is_absolute():
+        candidate = releases_dir / requested
+    if not valid(candidate):
+        print(f"Requested release is not valid: {requested}", file=sys.stderr)
+        raise SystemExit(1)
+    print(candidate.resolve())
+    raise SystemExit(0)
+
+events = []
+if registry.exists():
+    for raw in registry.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            events.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+
+for event in reversed(events):
+    if event.get("component") != "admin" or event.get("status") != "success":
+        continue
+    path_raw = event.get("releasePath") or ""
+    if not path_raw:
+        continue
+    candidate = Path(path_raw)
+    if valid(candidate):
+        print(candidate.resolve())
+        raise SystemExit(0)
+
+fallbacks = sorted(
+    [path for path in releases_dir.iterdir() if valid(path)],
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+) if releases_dir.exists() else []
+if fallbacks:
+    print(fallbacks[0].resolve())
+    raise SystemExit(0)
+
+print("No previous successful release found", file=sys.stderr)
+raise SystemExit(1)
+PY
+}
+
+trap 'on_error "$?" "$LINENO"' ERR
+
+exec 9>"$lock_path"
+flock -n 9 || {
+  log "ERROR: another GetoMerch admin deploy/rollback is already running"
+  exit 1
+}
+
+log "target=$target"
+log "requested_release=${requested_release:-auto}"
+log "previous_current=${previous_current:-none}"
+
+rollback_path="$(select_rollback_path)"
+rollback_release="$(basename "$rollback_path")"
+
+log "rollback_release=$rollback_release"
+log "rollback_path=$rollback_path"
+
+ln -sfnT "$rollback_path" "$current_link"
+activated=1
+systemctl restart "$service_unit"
+
+log "waiting for service"
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet "$service_unit" && curl -fsS --max-time 3 http://127.0.0.1:3100/login >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS --max-time 5 http://127.0.0.1:3100/login >/dev/null
+add_check "local /login 200"
+
+api_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3100/api/komui/runtime)"
+[[ "$api_code" == "401" ]]
+add_check "local protected API without cookie 401"
+
+redirect_url="$(curl -sS -o /dev/null -w '%{redirect_url}' --max-time 10 https://admin.komui.ru/)"
+[[ "$redirect_url" == "https://admin.komui.ru/login?next=%2F" ]]
+add_check "public / redirects to /login"
+
+public_login_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://admin.komui.ru/login)"
+[[ "$public_login_code" == "200" ]]
+add_check "public /login 200"
+
+record_event "success" "GetoMerch admin rolled back successfully"
+log "rollback complete"
