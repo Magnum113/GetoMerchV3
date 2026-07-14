@@ -767,8 +767,16 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
 Основная БД админки всё ещё Supabase. На сервере не создан отдельный Postgres
 для таблиц `merch_*`, `ozon_*`, расходов и производства. Поэтому:
 
-- серверный backup покрывает код, releases, env, deploy registry и логи;
-- данные Supabase покрываются механизмами Supabase export/backup;
+- `getomerch-backup.timer` запускает `/usr/local/sbin/getomerch-backup`;
+- backup админки хранится в `/var/backups/getomerch` и выгружается в Yandex
+  Object Storage отдельным prefix `getomerch`;
+- encrypted archive включает `/etc/getomerch/admin-production.env`,
+  `getomerch-admin.service`, nginx vhost, deploy registry/current state,
+  manifest active release и свежие deploy-логи;
+- Supabase `pg_dump` выполняется только если на сервере задан
+  `GETOMERCH_SUPABASE_DATABASE_URL` в `/etc/getomerch/backup.env`;
+- пока DB URL не задан, backup остаётся инфраструктурным и кладёт marker о
+  пропущенном Supabase export;
 - перенос БД админки на сервер — отдельный будущий проект.
 
 В `/etc/getomerch/admin-production.env` нельзя руками менять секреты без

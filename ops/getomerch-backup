@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+BACKUP_ROOT="${GETOMERCH_BACKUP_ROOT:-/var/backups/getomerch}"
+KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
+EXTERNAL_ENV_FILE="${GETOMERCH_BACKUP_EXTERNAL_ENV_FILE:-/etc/komui/yandex-backup.env}"
+CONFIG_ENV_FILE="${GETOMERCH_BACKUP_ENV_FILE:-/etc/getomerch/backup.env}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
+DEPLOY_LOG_DAYS="${GETOMERCH_BACKUP_DEPLOY_LOG_DAYS:-14}"
+
+DAILY_DIR="$BACKUP_ROOT/daily"
+WEEKLY_DIR="$BACKUP_ROOT/weekly"
+LOG_DIR="$BACKUP_ROOT/logs"
+GNUPG_DIR="$BACKUP_ROOT/.gnupg"
+
+install -d -m 0700 "$BACKUP_ROOT" "$DAILY_DIR" "$WEEKLY_DIR" "$LOG_DIR" "$GNUPG_DIR"
+export GNUPGHOME="$GNUPG_DIR"
+TMP_DIR="$(mktemp -d "$BACKUP_ROOT/.tmp-${RUN_ID}.XXXXXX")"
+LOG_FILE="$LOG_DIR/getomerch-backup-${RUN_ID}.log"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+alert() {
+  local subject="$1"
+  local body="$2"
+  if command -v /usr/local/sbin/komui-alert >/dev/null 2>&1; then
+    /usr/local/sbin/komui-alert "$subject" "$body" || true
+  fi
+}
+
+on_error() {
+  local rc="$1"
+  local line="$2"
+  trap - ERR
+  alert "GetoMerch backup failure" "Backup failed at line ${line} with exit code ${rc}. Log: ${LOG_FILE}"
+  exit "$rc"
+}
+trap 'on_error "$?" "$LINENO"' ERR
+
+exec > >(tee "$LOG_FILE") 2>&1
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+load_optional_env() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    set +u
+    set -a
+    # shellcheck disable=SC1090
+    . "$file"
+    set +a
+    set -u
+  fi
+}
+
+readlink_or_empty() {
+  readlink -f "$1" 2>/dev/null || true
+}
+
+git_short() {
+  local dir="$1"
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" rev-parse --short=12 HEAD 2>/dev/null || true
+  fi
+}
+
+git_origin_main() {
+  local dir="$1"
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" ls-remote origin refs/heads/main 2>/dev/null | awk '{print substr($1,1,12)}' || true
+  fi
+}
+
+load_optional_env "$CONFIG_ENV_FILE"
+
+SUPABASE_DATABASE_URL="${GETOMERCH_SUPABASE_DATABASE_URL:-${SUPABASE_DATABASE_URL:-}}"
+SUPABASE_PROJECT_ID="${GETOMERCH_SUPABASE_PROJECT_ID:-bkxpzfnglihxpbnhtjjq}"
+SUPABASE_EXPORT_STATUS="skipped_missing_database_url"
+SUPABASE_SCHEMA_FILE="supabase-schema.sql"
+SUPABASE_DATA_FILE="supabase-merch-data.dump"
+SUPABASE_POLICIES_FILE="supabase-policies.tsv"
+
+CONFIG_ARCHIVE="$TMP_DIR/runtime-config.tar.gz"
+DEPLOY_LOGS_ARCHIVE="$TMP_DIR/deploy-logs.tar.gz"
+SUPABASE_ARCHIVE="$TMP_DIR/supabase-export.tar.gz"
+PLAIN_ARCHIVE="$TMP_DIR/getomerch-backup-${RUN_ID}.tar.gz"
+FINAL_ARCHIVE="$DAILY_DIR/getomerch-backup-${RUN_ID}.tar.gz.gpg"
+VERIFY_ARCHIVE="$TMP_DIR/verify.tar.gz"
+
+log "backup_id=$RUN_ID"
+log "host=$HOSTNAME"
+log "backup_root=$BACKUP_ROOT"
+
+if [[ ! -s "$KEY_FILE" ]]; then
+  log "creating encryption key file $KEY_FILE"
+  install -d -m 0700 "$(dirname "$KEY_FILE")"
+  openssl rand -base64 48 > "$KEY_FILE"
+  chmod 0600 "$KEY_FILE"
+fi
+
+install -d -m 0700 "$TMP_DIR/baseline" "$TMP_DIR/supabase"
+
+log "capturing admin baseline"
+{
+  echo "backup_id=$RUN_ID"
+  echo "host=$HOSTNAME"
+  echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "active_release=$(readlink_or_empty /opt/getomerch/current)"
+  echo "deploy_source_commit=$(git_short /opt/getomerch/deploy-source)"
+  echo "deploy_source_origin_main=$(git_origin_main /opt/getomerch/deploy-source)"
+  echo "admin_service=$(systemctl is-active getomerch-admin.service 2>/dev/null || true)"
+  echo "nginx_service=$(systemctl is-active nginx 2>/dev/null || true)"
+  echo
+  echo "disk:"
+  df -h / /opt /var/backups 2>/dev/null || true
+  echo
+  echo "getomerch deploy status:"
+  /usr/local/sbin/getomerch-deploy-status 2>&1 || true
+} > "$TMP_DIR/baseline/admin-status.txt"
+
+python3 - "$RUN_ID" "$SUPABASE_PROJECT_ID" "$SUPABASE_EXPORT_STATUS" "$SUPABASE_SCHEMA_FILE" "$SUPABASE_DATA_FILE" "$SUPABASE_POLICIES_FILE" <<'PY' > "$TMP_DIR/manifest.json"
+import json
+import pathlib
+import socket
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+run_id, supabase_project_id, supabase_export_status, schema_file, data_file, policies_file = sys.argv[1:7]
+
+def run(args):
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+
+active_path = run(["readlink", "-f", "/opt/getomerch/current"])
+remote_main = run(["git", "-C", "/opt/getomerch/deploy-source", "ls-remote", "origin", "refs/heads/main"]).split()
+manifest = {
+    "backupId": run_id,
+    "component": "getomerch-admin",
+    "host": socket.getfqdn() or socket.gethostname(),
+    "createdAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "activeRelease": active_path,
+    "activeReleaseName": pathlib.Path(active_path).name if active_path else "",
+    "deploySourceCommit": run(["git", "-C", "/opt/getomerch/deploy-source", "rev-parse", "HEAD"]),
+    "deploySourceOriginMain": remote_main[0] if remote_main else "",
+    "service": {
+        "getomerch-admin.service": run(["systemctl", "is-active", "getomerch-admin.service"]),
+        "nginx": run(["systemctl", "is-active", "nginx"]),
+    },
+    "supabase": {
+        "projectId": supabase_project_id,
+        "exportStatus": supabase_export_status,
+        "schemaFile": schema_file,
+        "dataFile": data_file,
+        "policiesFile": policies_file,
+    },
+    "restore": {
+        "adminConfigArchive": "runtime-config.tar.gz",
+        "deployLogsArchive": "deploy-logs.tar.gz",
+        "supabaseArchive": "supabase-export.tar.gz",
+        "note": "The active release can be restored from Git commit plus /opt/getomerch deployment scripts; the full release directory is not embedded to keep backups small.",
+    },
+}
+print(json.dumps(manifest, ensure_ascii=False, indent=2))
+PY
+
+log "packing runtime config"
+tar -C / -czf "$CONFIG_ARCHIVE" --ignore-failed-read \
+  etc/getomerch/admin-production.env \
+  etc/getomerch/backup.env \
+  etc/systemd/system/getomerch-admin.service \
+  etc/systemd/system/getomerch-backup.service \
+  etc/systemd/system/getomerch-backup.timer \
+  etc/nginx/sites-available/getomerch-admin \
+  etc/nginx/sites-enabled/getomerch-admin \
+  usr/local/sbin/getomerch-deploy-from-git \
+  usr/local/sbin/getomerch-deploy-status \
+  usr/local/sbin/getomerch-rollback \
+  usr/local/sbin/getomerch-backup \
+  var/lib/getomerch/deploy-registry.jsonl \
+  var/lib/getomerch/deploy-current.json \
+  var/lib/getomerch/audit 2>/dev/null || true
+
+log "packing recent deploy logs"
+mapfile -d '' deploy_logs < <(find /var/log/getomerch/deploy -type f -name '*.log' -mtime "-${DEPLOY_LOG_DAYS}" -print0 2>/dev/null || true)
+if [[ "${#deploy_logs[@]}" -gt 0 ]]; then
+  tar -czf "$DEPLOY_LOGS_ARCHIVE" "${deploy_logs[@]}"
+else
+  echo "No deploy logs found for the last ${DEPLOY_LOG_DAYS} days." > "$TMP_DIR/no-deploy-logs.txt"
+  tar -C "$TMP_DIR" -czf "$DEPLOY_LOGS_ARCHIVE" no-deploy-logs.txt
+fi
+
+if [[ -n "$SUPABASE_DATABASE_URL" ]]; then
+  log "exporting Supabase schema and merch data"
+  pg_dump --schema-only --no-owner --no-acl "$SUPABASE_DATABASE_URL" > "$TMP_DIR/supabase/$SUPABASE_SCHEMA_FILE"
+  pg_dump --data-only --no-owner --no-acl -Fc -t 'public.merch_*' "$SUPABASE_DATABASE_URL" > "$TMP_DIR/supabase/$SUPABASE_DATA_FILE"
+  psql "$SUPABASE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -F $'\t' -Atc \
+    "select schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check from pg_policies where schemaname = 'public' and tablename like 'merch_%' order by schemaname, tablename, policyname" \
+    > "$TMP_DIR/supabase/$SUPABASE_POLICIES_FILE"
+  SUPABASE_EXPORT_STATUS="ok"
+else
+  cat > "$TMP_DIR/supabase/README.txt" <<'README'
+Supabase export was skipped because GETOMERCH_SUPABASE_DATABASE_URL is not set.
+
+Add /etc/getomerch/backup.env with a server-side Postgres connection string:
+
+  GETOMERCH_SUPABASE_DATABASE_URL=postgresql://...
+
+Then rerun:
+
+  sudo /usr/local/sbin/getomerch-backup
+README
+fi
+
+python3 - "$TMP_DIR/manifest.json" "$SUPABASE_EXPORT_STATUS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text())
+data["supabase"]["exportStatus"] = sys.argv[2]
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
+
+tar -C "$TMP_DIR/supabase" -czf "$SUPABASE_ARCHIVE" .
+
+(
+  cd "$TMP_DIR"
+  sha256sum runtime-config.tar.gz deploy-logs.tar.gz supabase-export.tar.gz manifest.json baseline/admin-status.txt > SHA256SUMS
+)
+
+log "packing plain backup"
+tar -C "$TMP_DIR" -czf "$PLAIN_ARCHIVE" \
+  runtime-config.tar.gz \
+  deploy-logs.tar.gz \
+  supabase-export.tar.gz \
+  manifest.json \
+  baseline \
+  SHA256SUMS
+
+log "encrypting backup"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --symmetric --cipher-algo AES256 \
+  --output "$FINAL_ARCHIVE" "$PLAIN_ARCHIVE"
+
+sha256sum "$FINAL_ARCHIVE" > "$FINAL_ARCHIVE.sha256"
+chmod 0600 "$FINAL_ARCHIVE" "$FINAL_ARCHIVE.sha256"
+
+log "verifying encrypted backup"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --decrypt --output "$VERIFY_ARCHIVE" "$FINAL_ARCHIVE"
+tar -tzf "$VERIFY_ARCHIVE" >/dev/null
+sha256sum -c "$FINAL_ARCHIVE.sha256" >/dev/null
+log "verify=ok"
+
+external_status="skipped_no_env_file"
+external_destination=""
+if [[ -f "$EXTERNAL_ENV_FILE" ]]; then
+  set +u
+  set -a
+  # shellcheck disable=SC1090
+  . "$EXTERNAL_ENV_FILE"
+  set +a
+  set -u
+
+  if [[ -z "${YANDEX_S3_BUCKET:-}" || -z "${YANDEX_S3_ENDPOINT:-}" ]]; then
+    external_status="skipped_missing_bucket_or_endpoint"
+  else
+    prefix="${GETOMERCH_BACKUP_S3_PREFIX:-${YANDEX_S3_PREFIX:-}}"
+    prefix="${prefix#/}"
+    prefix="${prefix%/}"
+    if [[ -n "$prefix" ]]; then
+      prefix="${prefix}/getomerch"
+    else
+      prefix="getomerch"
+    fi
+    external_destination="s3://${YANDEX_S3_BUCKET}/${prefix}/$(basename "$FINAL_ARCHIVE")"
+
+    if command -v aws >/dev/null 2>&1; then
+      aws --endpoint-url "$YANDEX_S3_ENDPOINT" s3 cp "$FINAL_ARCHIVE" "$external_destination" --only-show-errors
+      aws --endpoint-url "$YANDEX_S3_ENDPOINT" s3 cp "$FINAL_ARCHIVE.sha256" "$external_destination.sha256" --only-show-errors
+      external_status="ok"
+    elif command -v s3cmd >/dev/null 2>&1; then
+      s3_host="${YANDEX_S3_ENDPOINT#https://}"
+      s3_host="${s3_host#http://}"
+      s3_host="${s3_host%/}"
+      s3cfg="$TMP_DIR/s3cmd.cfg"
+      cat > "$s3cfg" <<S3CFG
+[default]
+access_key = ${AWS_ACCESS_KEY_ID}
+secret_key = ${AWS_SECRET_ACCESS_KEY}
+host_base = ${s3_host}
+host_bucket = %(bucket)s.${s3_host}
+use_https = True
+signature_v2 = False
+S3CFG
+      chmod 0600 "$s3cfg"
+      s3cmd -c "$s3cfg" --no-progress put "$FINAL_ARCHIVE" "$external_destination" >/dev/null
+      s3cmd -c "$s3cfg" --no-progress put "$FINAL_ARCHIVE.sha256" "$external_destination.sha256" >/dev/null
+      external_status="ok"
+    else
+      external_status="skipped_s3_client_missing"
+    fi
+  fi
+fi
+
+log "external_upload=$external_status"
+if [[ -n "$external_destination" ]]; then
+  log "external_destination=$external_destination"
+fi
+log "supabase_export=$SUPABASE_EXPORT_STATUS"
+
+find "$DAILY_DIR" -type f -name 'getomerch-backup-*.tar.gz.gpg' -mtime +7 -delete
+find "$DAILY_DIR" -type f -name 'getomerch-backup-*.tar.gz.gpg.sha256' -mtime +7 -delete
+
+if [[ "$(date -u +%u)" == "7" ]]; then
+  cp -p "$FINAL_ARCHIVE" "$WEEKLY_DIR/"
+  cp -p "$FINAL_ARCHIVE.sha256" "$WEEKLY_DIR/"
+fi
+find "$WEEKLY_DIR" -type f -name 'getomerch-backup-*.tar.gz.gpg' -mtime +35 -delete
+find "$WEEKLY_DIR" -type f -name 'getomerch-backup-*.tar.gz.gpg.sha256' -mtime +35 -delete
+
+log "archive=$FINAL_ARCHIVE"
+log "archive_size_bytes=$(stat -c %s "$FINAL_ARCHIVE")"
+log "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [[ "$external_status" != "ok" ]]; then
+  alert "GetoMerch backup warning" "Backup finished, but external_upload=${external_status}. Log: ${LOG_FILE}"
+fi

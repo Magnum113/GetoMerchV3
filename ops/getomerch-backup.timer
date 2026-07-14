@@ -1,0 +1,10 @@
+[Unit]
+Description=Run GetoMerch admin backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:52:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

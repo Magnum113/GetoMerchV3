@@ -1,0 +1,20 @@
+[Unit]
+Description=GetoMerch admin encrypted backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/getomerch-backup
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/backups/getomerch /var/lib/getomerch /var/log/getomerch
+ReadOnlyPaths=/opt/getomerch /etc/getomerch /etc/komui /etc/nginx /etc/systemd/system /usr/local/sbin

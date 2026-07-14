@@ -129,6 +129,7 @@ GitHub GetoMerchV3.git
 | `/var/lib/getomerch/deploy-current.json` | Последнее active-состояние |
 | `/var/log/getomerch/deploy/` | Логи deploy/rollback |
 | `/var/cache/getomerch/npm` | npm cache для deploy-сборок |
+| `/var/backups/getomerch/` | Зашифрованные backup админки |
 
 Основные команды:
 
@@ -136,12 +137,21 @@ GitHub GetoMerchV3.git
 sudo /usr/local/sbin/getomerch-deploy-from-git prod main
 sudo /usr/local/sbin/getomerch-deploy-status
 sudo /usr/local/sbin/getomerch-rollback prod
+sudo /usr/local/sbin/getomerch-backup
 ```
 
 `getomerch-deploy-from-git` собирает проект в одноразовой папке, создаёт новый
 release, переключает `/opt/getomerch/current`, перезапускает
 `getomerch-admin.service`, делает smoke-check и пишет событие в registry.
 Если smoke падает, скрипт возвращает предыдущий active release.
+
+`getomerch-backup` запускается systemd timer `getomerch-backup.timer`,
+собирает env админки, systemd/nginx config, deploy registry, manifest active
+release и свежие deploy-логи в зашифрованный архив. Архив хранится локально в
+`/var/backups/getomerch` и выгружается в Yandex Object Storage через
+существующие S3 credentials. Supabase `pg_dump` подключается отдельно через
+`/etc/getomerch/backup.env` (`GETOMERCH_SUPABASE_DATABASE_URL`); без этого
+backup фиксирует marker о пропущенном Supabase export.
 
 Telegram deploy bot магазина KOMUI расширен inline-кнопками:
 
