@@ -38,7 +38,6 @@ source_dir="${GETOMERCH_DEPLOY_SOURCE_DIR:-$base_dir/deploy-source}"
 build_dir="${GETOMERCH_BUILD_DIR:-$base_dir/build-source}"
 releases_dir="${GETOMERCH_RELEASES_DIR:-$base_dir/releases}"
 current_link="${GETOMERCH_CURRENT_LINK:-$base_dir/current}"
-shared_modules_dir="${GETOMERCH_SHARED_NODE_MODULES_DIR:-$base_dir/shared/node_modules}"
 service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
 log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
@@ -49,7 +48,7 @@ deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
 log_file="$log_dir/${run_id}-${target}.log"
 
-install -d -m 0755 "$base_dir" "$releases_dir" "$log_dir" "$(dirname "$registry_path")" "$npm_cache_dir" "$deploy_home" "$shared_modules_dir"
+install -d -m 0755 "$base_dir" "$releases_dir" "$log_dir" "$(dirname "$registry_path")" "$npm_cache_dir" "$deploy_home"
 exec > >(tee -a "$log_file") 2>&1
 
 export HOME="$deploy_home"
@@ -245,19 +244,6 @@ log "building Next.js admin"
 npm run build
 add_check "npm run build"
 
-lock_hash="$(sha256sum package-lock.json | awk '{print substr($1,1,16)}')"
-module_store="$shared_modules_dir/$lock_hash"
-if [[ ! -d "$module_store" ]]; then
-  log "creating shared node_modules store $module_store"
-  tmp_store="$module_store.tmp-$run_id"
-  rm -rf "$tmp_store"
-  install -d -m 0755 "$tmp_store"
-  rsync -a --delete node_modules/ "$tmp_store/"
-  mv "$tmp_store" "$module_store"
-else
-  log "reusing shared node_modules store $module_store"
-fi
-
 log "creating release $release_dir"
 rm -rf "${release_dir}.tmp" "$release_dir"
 install -d -m 0755 "${release_dir}.tmp"
@@ -266,9 +252,11 @@ rsync -a --delete \
   --exclude '.git' \
   --exclude '.next/cache' \
   "$build_dir/" "${release_dir}.tmp/"
-ln -sfnT "$module_store" "${release_dir}.tmp/node_modules"
+
+log "installing production dependencies in release"
+npm --prefix "${release_dir}.tmp" ci --omit=dev
+
 mv "${release_dir}.tmp" "$release_dir"
-chown -h root:root "$release_dir" "$release_dir/node_modules"
 chown -R root:root "$release_dir"
 
 log "activating release"
