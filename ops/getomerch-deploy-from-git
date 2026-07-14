@@ -43,7 +43,7 @@ log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
 current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
 lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
-npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/lib/getomerch/.npm}"
+npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
 log_file="$log_dir/${run_id}-${target}.log"
@@ -54,6 +54,7 @@ exec > >(tee -a "$log_file") 2>&1
 export HOME="$deploy_home"
 export npm_config_cache="$npm_cache_dir"
 export NPM_CONFIG_CACHE="$npm_cache_dir"
+export NEXT_TELEMETRY_DISABLED=1
 
 previous_current=""
 previous_release=""
