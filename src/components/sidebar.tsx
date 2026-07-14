@@ -21,8 +21,10 @@ import {
   Shirt as ShirtIcon,
   Receipt,
   DownloadCloud,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 type NavItem = { href: string; label: string; icon: typeof LineChart };
 type NavSection = { label: string; items: NavItem[] };
@@ -116,6 +118,9 @@ export function Sidebar() {
         })}
       </nav>
 
+      <div className="border-t p-3">
+        <LogoutButton />
+      </div>
     </aside>
   );
 }
@@ -194,9 +199,39 @@ export function MobileHeader() {
                 </Link>
               );
             })}
+            <div className="border-t pt-2">
+              <LogoutButton onLogout={() => setOpen(false)} />
+            </div>
           </nav>
         </>
       )}
     </>
+  );
+}
+
+function LogoutButton({ onLogout }: { onLogout?: () => void }) {
+  const [loading, setLoading] = useState(false);
+
+  async function logout() {
+    setLoading(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      onLogout?.();
+      window.location.assign("/login");
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className="w-full justify-start text-muted-foreground hover:text-foreground"
+      onClick={logout}
+      disabled={loading}
+    >
+      <LogOut className="h-4 w-4" />
+      {loading ? "Выход..." : "Выйти"}
+    </Button>
   );
 }

@@ -330,8 +330,14 @@ server block для `admin.komui.ru`.
 3. Пароль хранить только как хеш в env:
 
 ```env
-ADMIN_AUTH_PASSWORD_HASH=$argon2id$...
-# или bcrypt hash
+ADMIN_AUTH_PASSWORD_HASH=pbkdf2_sha256$310000$...
+```
+
+В текущей реализации `GetoMerchV3` используется встроенный без зависимостей
+формат `pbkdf2_sha256$iterations$salt$hash`. Хеш можно сгенерировать так:
+
+```bash
+printf '%s' 'your-password' | node scripts/generate-admin-password-hash.mjs
 ```
 
 4. При успешном входе ставить cookie:
