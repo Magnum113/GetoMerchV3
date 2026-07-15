@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_OZON_ORDER_ITEM_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { fetchProductsByIdsViaPostgres } from "@/lib/admin/product-postgres";
 import { ADMIN_PRODUCT_SELECT_INLINE } from "@/lib/admin/selects";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, WorkshopOrder } from "@/lib/types";
@@ -124,24 +124,36 @@ async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
   const itemsByOrderId = new Map<string, OzonOrderItem[]>();
   if (orderIds.length === 0) return itemsByOrderId;
 
-  const result = await adminDbQuery<{ order_id: string; item: OzonOrderItem }>(
+  const result = await adminDbQuery<OzonOrderItem & { shipped_from_warehouse_id?: string | null }>(
     `
       SELECT
+        i.id,
         i.order_id,
-        ${ADMIN_OZON_ORDER_ITEM_JSON} AS item
+        i.offer_id,
+        i.ozon_sku,
+        i.name,
+        i.quantity,
+        i.price::float8 AS price,
+        i.product_id,
+        i.created_at,
+        i.shipped_from_warehouse_id
       FROM merch_ozon_order_items i
-      LEFT JOIN merch_products p ON p.id = i.product_id
-      ${ADMIN_PRODUCT_RELATION_JOINS}
       WHERE i.order_id = ANY($1::uuid[])
       ORDER BY i.id
     `,
     [orderIds],
   );
+  const productsById = await fetchProductsByIdsViaPostgres(
+    result.rows.map((item) => item.product_id).filter(Boolean) as string[],
+  );
 
-  for (const row of result.rows) {
-    const list = itemsByOrderId.get(row.order_id) ?? [];
-    list.push(row.item);
-    itemsByOrderId.set(row.order_id, list);
+  for (const item of result.rows) {
+    const list = itemsByOrderId.get(item.order_id) ?? [];
+    list.push({
+      ...item,
+      product: item.product_id ? productsById.get(item.product_id) ?? null : null,
+    });
+    itemsByOrderId.set(item.order_id, list);
   }
 
   return itemsByOrderId;

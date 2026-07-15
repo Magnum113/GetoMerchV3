@@ -8,7 +8,7 @@ import {
   requireUuidParam,
 } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_INVENTORY_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { fetchProductsByIdsViaPostgres } from "@/lib/admin/product-postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { Inventory, Product, Warehouse } from "@/lib/types";
@@ -18,6 +18,15 @@ export const dynamic = "force-dynamic";
 const QUERY_TIMEOUT_MS = 12_000;
 const PRODUCT_CHUNK_SIZE = 25;
 const WAREHOUSE_CHUNK_SIZE = 25;
+
+type InventoryPostgresRow = Inventory & {
+  warehouse_name: string | null;
+  warehouse_type: Warehouse["type"] | null;
+  warehouse_address: string | null;
+  warehouse_contact: string | null;
+  warehouse_notes: string | null;
+  warehouse_created_at: string | null;
+};
 
 export async function GET(request: NextRequest) {
   try {
@@ -65,12 +74,21 @@ export async function GET(request: NextRequest) {
 }
 
 async function listInventoryViaPostgres(limit: number, warehouseId: string | null) {
-  const result = await adminDbQuery<{ row: Inventory }>(
+  const result = await adminDbQuery<InventoryPostgresRow>(
     `
-      SELECT ${ADMIN_INVENTORY_JSON} AS row
+      SELECT
+        i.id,
+        i.product_id,
+        i.warehouse_id,
+        i.quantity,
+        i.updated_at,
+        w.name AS warehouse_name,
+        w.type AS warehouse_type,
+        w.address AS warehouse_address,
+        w.contact AS warehouse_contact,
+        w.notes AS warehouse_notes,
+        w.created_at AS warehouse_created_at
       FROM merch_inventory i
-      LEFT JOIN merch_products p ON p.id = i.product_id
-      ${ADMIN_PRODUCT_RELATION_JOINS}
       LEFT JOIN merch_warehouses w ON w.id = i.warehouse_id
       WHERE i.quantity > 0
         AND ($2::uuid IS NULL OR i.warehouse_id = $2)
@@ -79,8 +97,27 @@ async function listInventoryViaPostgres(limit: number, warehouseId: string | nul
     `,
     [limit, warehouseId],
   );
+  const productsById = await fetchProductsByIdsViaPostgres(result.rows.map((row) => row.product_id));
 
-  return result.rows.map((row) => row.row);
+  return result.rows.map((row) => ({
+    id: row.id,
+    product_id: row.product_id,
+    warehouse_id: row.warehouse_id,
+    quantity: row.quantity,
+    updated_at: row.updated_at,
+    product: productsById.get(row.product_id),
+    warehouse: row.warehouse_name
+      ? {
+          id: row.warehouse_id,
+          name: row.warehouse_name,
+          type: row.warehouse_type,
+          address: row.warehouse_address,
+          contact: row.warehouse_contact,
+          notes: row.warehouse_notes,
+          created_at: row.warehouse_created_at,
+        }
+      : undefined,
+  }));
 }
 
 async function fetchProductsById(ids: string[]) {

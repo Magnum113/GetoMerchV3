@@ -1,7 +1,7 @@
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { fetchProductPageViaPostgres } from "@/lib/admin/product-postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { InventoryMatrix, InventoryMatrixRow, Product } from "@/lib/types";
@@ -51,18 +51,9 @@ async function fetchProductsViaPostgres() {
   let offset = 0;
 
   while (offset < MAX_PRODUCTS) {
-    const result = await adminDbQuery<{ product: Product }>(
-      `
-        SELECT ${ADMIN_PRODUCT_JSON} AS product
-        FROM merch_products p
-        ${ADMIN_PRODUCT_RELATION_JOINS}
-        ORDER BY p.sku
-        LIMIT $1 OFFSET $2
-      `,
-      [POSTGRES_PRODUCT_PAGE_SIZE, offset],
-    );
-    out.push(...result.rows.map((row) => row.product));
-    if (result.rows.length < POSTGRES_PRODUCT_PAGE_SIZE) break;
+    const page = await fetchProductPageViaPostgres(POSTGRES_PRODUCT_PAGE_SIZE, offset);
+    out.push(...page);
+    if (page.length < POSTGRES_PRODUCT_PAGE_SIZE) break;
     offset += POSTGRES_PRODUCT_PAGE_SIZE;
   }
 

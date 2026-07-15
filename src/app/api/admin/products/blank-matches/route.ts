@@ -8,7 +8,7 @@ import {
   requireUuidParam,
 } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { ADMIN_PRODUCT_COLUMNS, hydrateProductsViaPostgres } from "@/lib/admin/product-postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { Product } from "@/lib/types";
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function fetchBlankProductsViaPostgres(keys: BlankMatchKey[]) {
-  const result = await adminDbQuery<{ product: Product }>(
+  const result = await adminDbQuery<Product>(
     `
       WITH wanted AS (
         SELECT *
@@ -56,21 +56,20 @@ async function fetchBlankProductsViaPostgres(keys: BlankMatchKey[]) {
           size_id uuid
         )
       )
-      SELECT ${ADMIN_PRODUCT_JSON} AS product
+      SELECT ${ADMIN_PRODUCT_COLUMNS}
       FROM merch_products p
       JOIN wanted w
         ON w.category_id = p.category_id
        AND w.fabric_id = p.fabric_id
        AND w.color_id = p.color_id
        AND w.size_id = p.size_id
-      ${ADMIN_PRODUCT_RELATION_JOINS}
       WHERE p.is_blank = true
       ORDER BY p.sku
     `,
     [JSON.stringify(keys)],
   );
 
-  return result.rows.map((row) => row.product);
+  return hydrateProductsViaPostgres(result.rows);
 }
 
 function parseKeys(payload: unknown): BlankMatchKey[] {
