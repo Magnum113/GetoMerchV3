@@ -22,6 +22,18 @@ import type {
 
 export const dynamic = "force-dynamic";
 
+type ProductLookups = {
+  categories: ProductCategory[];
+  fabrics: FabricType[];
+  colors: Color[];
+  sizes: Size[];
+  designs: Design[];
+  decorationTypes: DecorationType[];
+};
+
+let lookupsCache: { data: ProductLookups; expiresAt: number } | null = null;
+let lookupsInflight: Promise<ProductLookups> | null = null;
+
 export async function GET(request: NextRequest) {
   try {
     await requireAdminSession();
@@ -67,21 +79,7 @@ export async function GET(request: NextRequest) {
 async function hydrateProducts(products: Product[]) {
   if (products.length === 0) return [];
 
-  const [
-    categories,
-    fabrics,
-    colors,
-    sizes,
-    designs,
-    decorationTypes,
-  ] = await Promise.all([
-    fetchLookupTable<ProductCategory>("merch_product_categories"),
-    fetchLookupTable<FabricType>("merch_fabric_types"),
-    fetchLookupTable<Color>("merch_colors"),
-    fetchLookupTable<Size>("merch_sizes"),
-    fetchLookupTable<Design>("merch_designs"),
-    fetchLookupTable<DecorationType>("merch_decoration_types"),
-  ]);
+  const { categories, fabrics, colors, sizes, designs, decorationTypes } = await getProductLookups();
 
   const categoriesById = mapById(categories);
   const fabricsById = mapById(fabrics);
@@ -103,13 +101,65 @@ async function hydrateProducts(products: Product[]) {
   }));
 }
 
-async function fetchLookupTable<T extends { id: string }>(table: string) {
-  const { data, error } = await getAdminSupabaseClient()
-    .from(table)
-    .select("*");
+async function getProductLookups() {
+  const now = Date.now();
+  if (lookupsCache && lookupsCache.expiresAt > now) return lookupsCache.data;
+  if (lookupsInflight) return lookupsInflight;
 
-  assertNoSupabaseError(error, `Failed to load ${table}`);
-  return (data ?? []) as T[];
+  lookupsInflight = loadProductLookups()
+    .then((data) => {
+      lookupsCache = { data, expiresAt: Date.now() + 5 * 60 * 1000 };
+      return data;
+    })
+    .catch((error) => {
+      if (lookupsCache) return lookupsCache.data;
+      throw error;
+    })
+    .finally(() => {
+      lookupsInflight = null;
+    });
+
+  return lookupsInflight;
+}
+
+async function loadProductLookups(): Promise<ProductLookups> {
+  const [categories, fabrics, colors, sizes, designs, decorationTypes] = await Promise.all([
+    fetchLookupTable<ProductCategory>("merch_product_categories"),
+    fetchLookupTable<FabricType>("merch_fabric_types"),
+    fetchLookupTable<Color>("merch_colors"),
+    fetchLookupTable<Size>("merch_sizes"),
+    fetchLookupTable<Design>("merch_designs"),
+    fetchLookupTable<DecorationType>("merch_decoration_types"),
+  ]);
+
+  return { categories, fabrics, colors, sizes, designs, decorationTypes };
+}
+
+async function fetchLookupTable<T extends { id: string }>(table: string) {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const { data, error } = await getAdminSupabaseClient()
+        .from(table)
+        .select("*")
+        .abortSignal(controller.signal);
+
+      if (!error) return (data ?? []) as T[];
+      lastError = error;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt < 3) await delay(250 * attempt);
+  }
+
+  assertNoSupabaseError(lastError, `Failed to load ${table}`);
+  return [];
 }
 
 function mapById<T extends { id: string }>(rows: T[]) {
@@ -136,6 +186,10 @@ function parseProductCursor(value: string | null) {
 
 function encodeProductCursor(offset: number) {
   return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function escapeLikePattern(value: string) {
