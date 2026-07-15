@@ -235,10 +235,12 @@ export async function POST(req: Request) {
       if (p.sku) productByOffer.set(String(p.sku), p.id);
     }
 
-    // 2) UPSERT всех заказов разом. Колонки, отсутствующие в payload (shipped_at,
+    // 2) UPSERT заказов. Колонки, отсутствующие в payload (shipped_at,
     //    shipped_from_warehouse_id), при обновлении не трогаются.
     //    Из результата upsert берём id/shipped_at/created_at, чтобы не делать
     //    отдельный проблемный lookup по posting_number.
+    //    Не пишем raw: на production некоторые Ozon JSON payload зависают на
+    //    PostgREST/jsonb upsert, а обычному UI нужны нормализованные колонки.
     const now = new Date().toISOString();
     const orderPayloads = postings.map((p) => {
       const total = (p.products ?? []).reduce((s, it) => s + Number(it.price ?? 0) * (it.quantity ?? 0), 0);
@@ -256,21 +258,20 @@ export async function POST(req: Request) {
         customer_name: p.customer?.name ?? null,
         total_price: total || null,
         source: p.source ?? "fbs",
-        raw: p as unknown as Record<string, unknown>,
         synced_at: now,
       };
     });
 
     const idByPosting = new Map<string, string>();
     const stateByPosting = new Map<string, { shipped_at: string | null; created_at: string | null }>();
-    for (const ch of chunk(orderPayloads, 500)) {
+    for (const payload of orderPayloads) {
       const upserted = await supabaseQuery<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
-        "orders upsert",
+        `orders upsert ${payload.posting_number}`,
         supabase
           .from("merch_ozon_orders")
-          .upsert(ch, { onConflict: "posting_number" })
+          .upsert(payload, { onConflict: "posting_number" })
           .select("id, posting_number, shipped_at, created_at"),
-        30_000,
+        10_000,
       );
       for (const r of upserted ?? []) {
         idByPosting.set(r.posting_number, r.id);
