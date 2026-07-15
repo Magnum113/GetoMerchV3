@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireAdminSession } from "@/lib/admin/auth";
+import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
+import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +104,7 @@ async function fetchAllOperations(from: string, to: string): Promise<OzonFinance
 
 export async function POST(req: Request) {
   try {
+    await requireAdminSession();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
@@ -114,10 +117,7 @@ export async function POST(req: Request) {
       ? new Date(fromParam).toISOString()
       : new Date(Date.now() - 365 * 86400 * 1000).toISOString();
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
+    const supabase = getAdminSupabaseClient();
 
     const opsRaw = await fetchAllOperations(from, to);
     // Dedupe by operation_id — windows can overlap on boundaries and the same
@@ -170,6 +170,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, fetched: ops.length, created, updated, from, to });
   } catch (e) {
+    if (e instanceof AdminApiError) return adminErrorResponse(e);
     console.error("[sync-finance]", e);
     const msg = formatError(e);
     return NextResponse.json({ error: msg }, { status: 500 });

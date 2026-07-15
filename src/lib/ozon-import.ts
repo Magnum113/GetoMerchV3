@@ -1,4 +1,6 @@
-import { createClient } from "@supabase/supabase-js";
+import "server-only";
+
+import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 const OZON_BASE = "https://api-seller.ozon.ru";
 
@@ -190,14 +192,8 @@ type Catalog = {
   productsByOzonSku: Map<string, ProductRow>;
 };
 
-function env(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} не настроен`);
-  return value;
-}
-
 function supabase() {
-  return createClient(env("NEXT_PUBLIC_SUPABASE_URL"), env("NEXT_PUBLIC_SUPABASE_ANON_KEY"));
+  return getAdminSupabaseClient();
 }
 
 async function ozonPost<T>(path: string, body: unknown): Promise<T> {

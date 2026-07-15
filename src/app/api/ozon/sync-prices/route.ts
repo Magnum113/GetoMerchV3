@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireAdminSession } from "@/lib/admin/auth";
+import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
+import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 // Server-side route — keeps OZON keys hidden from the browser
 
@@ -51,14 +53,12 @@ async function fetchAllOzonPrices(): Promise<Record<string, OzonPriceItem["price
 
 export async function POST() {
   try {
+    await requireAdminSession();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
+    const supabase = getAdminSupabaseClient();
 
     const [{ data: products, error }, priceMap] = await Promise.all([
       supabase.from("merch_products").select("id, sku, legacy_skus, sale_price").not("sku", "is", null),
@@ -103,6 +103,7 @@ export async function POST() {
       notFoundSamples: notFoundList,
     });
   } catch (e) {
+    if (e instanceof AdminApiError) return adminErrorResponse(e);
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

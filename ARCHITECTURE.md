@@ -40,8 +40,8 @@
 | Графики | **recharts** | 2.x | Для аналитики (`PeriodChart`, `ExpenseDonut`, `Sparkline`). Обёрнуты тонким `ChartContainer`/`ChartTooltipCard` в `components/ui/chart.tsx` для подхвата CSS-переменных темы |
 | Тосты | **sonner** | — | Везде `toast.success/error(...)`, не `alert()` |
 | Формы | Локальный state + точечная валидация | — | Для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией), добавляем form/validation-библиотеки отдельным осознанным решением |
-| БД | **Supabase Postgres** | — | RLS включён везде, политика `for all using (true)` (одно-пользовательский режим) |
-| Клиент БД | `@supabase/ssr` (browser), `@supabase/supabase-js` (server) | — | На клиенте `createClient()` из `src/lib/supabase/client.ts`; на сервере (route handlers) — `createClient` из `@supabase/supabase-js` напрямую |
+| БД | **Supabase Postgres** | — | RLS включён везде; админский UI работает через server-side BFF, чтобы можно было закрыть anon-доступ |
+| Клиент БД | `@supabase/supabase-js` (server-only) | — | Браузер ходит в `/api/admin/...`; Supabase client создаётся только на сервере через `src/lib/supabase/server.ts` |
 | Дата/время | `Intl.DateTimeFormat('ru-RU')` | — | Форматирование держим в `src/lib/utils.ts`, отдельную библиотеку дат не тащим без необходимости |
 
 **Не добавлять без причины:** другие UI-киты (MUI, AntD, Mantine), CSS-фреймворки кроме Tailwind, ORM поверх Supabase (Prisma, Drizzle), state-менеджеры (Redux, Zustand, Jotai) — пока нечего шарить между страницами.
@@ -54,6 +54,7 @@
 src/
   app/                      # Next.js App Router
     api/auth/               # login/logout для production-админки
+    api/admin/              # BFF для админских Supabase-запросов
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
       sync-prices/          # POST → /v5/product/info/prices
       sync-orders/          # POST → /v3/posting/fbs/list + /v2/posting/fbo/list

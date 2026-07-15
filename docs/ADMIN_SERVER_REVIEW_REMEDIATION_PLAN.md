@@ -188,12 +188,14 @@ runtime env systemd эти переменные были. Поэтому `@supab
 - в build-process экспортируются только `NEXT_PUBLIC_SUPABASE_URL` и
   `NEXT_PUBLIC_SUPABASE_ANON_KEY`;
 - перед сборкой проверяется наличие и формат обеих переменных;
-- после сборки проверяется, что public Supabase config попал в `.next/static`;
+- после этапа 5 public Supabase config уже не обязан попадать в
+  `.next/static`, потому что UI ходит через BFF;
 - client assets проверяются на отсутствие имён server-only env:
   auth secrets, Ozon keys, KOMUI tokens, Supabase DB/service-role markers;
 - добавлен read-only smoke к Supabase REST `merch_ozon_orders?select=id&limit=1`;
 - deploy должен падать до создания/активации release, если public Supabase env
-  не задан или не встроился в client assets.
+  не задан, Supabase read-only smoke не прошёл или в client assets найдены
+  server-only env names.
 
 ---
 
@@ -403,6 +405,44 @@ RLS можно безопасно закрыть только после тог�
 - publishable key не даёт возможности выполнить административную запись;
 - все рабочие экраны проходят ручной regression-check;
 - Ozon sync и импорт продолжают работать через сервер.
+
+### Статус внедрения на 15 июля 2026
+
+Сделано:
+
+- `src/lib/api.ts` больше не создаёт browser Supabase client и не вызывает
+  `.from(...)`; это тонкий client wrapper вокруг `/api/admin/rpc`;
+- старая бизнес-логика `api` перенесена в server-only модуль
+  `src/lib/admin/supabase-api.ts`;
+- добавлен allowlist RPC endpoint `/api/admin/rpc`, который:
+  - требует `requireAdminSession()`;
+  - вызывает только явно перечисленные admin methods;
+  - возвращает единый JSON/error формат;
+  - не даёт браузеру вызвать произвольный server method;
+- Ozon sync/import routes теперь дополнительно проверяют admin session внутри
+  route handler и используют `getAdminSupabaseClient()`, а не
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`;
+- smoke `npm run check:admin-bff -- <base_url>` расширен проверками:
+  - `/api/admin/rpc` без cookie возвращает `401`;
+  - `/api/admin/rpc` с валидной cookie выполняет read-only запрос;
+  - `/api/ozon/sync-orders` без cookie возвращает `401`.
+
+Проверено локально:
+
+- `npx tsc --noEmit`;
+- `npm run build`;
+- `npm run check:admin-bff -- http://127.0.0.1:3121`;
+- поиск по клиентскому `src/lib/api.ts`, `src/app/**/*.tsx` и
+  `src/components/**/*.tsx` не находит административных browser-side
+  Supabase `.from(...)`.
+
+Что остаётся:
+
+- ручной regression-check основных экранов после production deploy;
+- на этапе 6 закрыть RLS и проверить, что publishable key больше не может
+  писать в административные таблицы;
+- отдельными итерациями заменить generic RPC mutation methods на более строгие
+  доменные endpoints с полной validation/allowlist/audit/idempotency.
 
 ---
 

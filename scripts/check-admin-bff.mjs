@@ -11,6 +11,18 @@ const checks = [
   { name: "products validation returns 400", run: () => expectStatus("/api/admin/products?limit=not-a-number", 400, authCookie()) },
   { name: "health with valid cookie returns 200", run: () => expectStatus("/api/admin/health", 200, authCookie()) },
   { name: "products read-only with valid cookie returns 200", run: () => expectStatus("/api/admin/products?limit=1", 200, authCookie()) },
+  {
+    name: "admin RPC without cookie returns 401",
+    run: () => expectStatus("/api/admin/rpc", 401, undefined, rpcInit("listWarehouses")),
+  },
+  {
+    name: "admin RPC with valid cookie returns 200",
+    run: () => expectStatus("/api/admin/rpc", 200, authCookie(), rpcInit("listWarehouses")),
+  },
+  {
+    name: "Ozon sync route without cookie returns 401",
+    run: () => expectStatus("/api/ozon/sync-orders", 401, undefined, { method: "POST" }),
+  },
 ];
 
 if (!cookieSecret) {
@@ -38,9 +50,17 @@ function authCookie() {
   return `${cookieName}=${body}.${signature}`;
 }
 
-async function expectStatus(path, expectedStatus, cookie) {
-  const headers = cookie ? { Cookie: cookie } : undefined;
-  const response = await fetch(`${baseUrl}${path}`, { headers });
+function rpcInit(action) {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, args: [] }),
+  };
+}
+
+async function expectStatus(path, expectedStatus, cookie, init = {}) {
+  const headers = { ...(init.headers || {}), ...(cookie ? { Cookie: cookie } : {}) };
+  const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
   const text = await response.text();
   if (response.status !== expectedStatus) {
     throw new Error(`Expected ${expectedStatus}, got ${response.status}: ${text.slice(0, 300)}`);

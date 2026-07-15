@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireAdminSession } from "@/lib/admin/auth";
+import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
+import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -235,6 +237,7 @@ function toError(error: unknown, label: string) {
 
 export async function POST(req: Request) {
   try {
+    await requireAdminSession();
     const startedAt = Date.now();
     const startedAtIso = new Date(startedAt).toISOString();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
@@ -244,10 +247,7 @@ export async function POST(req: Request) {
     const scope = url.searchParams.get("scope") === "all" ? "all" : "active";
     const days = Math.min(180, Math.max(1, Number(url.searchParams.get("days") ?? 60)));
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    );
+    const supabase = getAdminSupabaseClient();
 
     // 1) Параллельно тянем Ozon + каталог
     const fetcher = scope === "all"
@@ -439,6 +439,7 @@ export async function POST(req: Request) {
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {
+    if (e instanceof AdminApiError) return adminErrorResponse(e);
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[sync-orders]", msg);
     return NextResponse.json({ error: msg }, { status: 500 });

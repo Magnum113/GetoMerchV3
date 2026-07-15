@@ -257,8 +257,6 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.join(process.cwd(), ".next", "static");
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const forbiddenNames = [
   "ADMIN_AUTH_COOKIE_SECRET",
   "ADMIN_AUTH_PASSWORD_HASH",
@@ -276,15 +274,10 @@ const forbiddenNames = [
   "SUPABASE_SERVER_KEY",
 ];
 
-if (!url || !anon) {
-  throw new Error("public Supabase env is not loaded");
-}
 if (!fs.existsSync(root)) {
   throw new Error(".next/static was not created");
 }
 
-let sawUrl = false;
-let sawAnon = false;
 const leakedNames = new Set();
 
 function scan(dir) {
@@ -296,8 +289,6 @@ function scan(dir) {
     }
     if (!/\.(js|html|json|txt|css)$/.test(entry.name)) continue;
     const content = fs.readFileSync(full, "utf8");
-    if (content.includes(url)) sawUrl = true;
-    if (content.includes(anon)) sawAnon = true;
     for (const name of forbiddenNames) {
       if (content.includes(name)) leakedNames.add(name);
     }
@@ -306,9 +297,6 @@ function scan(dir) {
 
 scan(root);
 
-if (!sawUrl || !sawAnon) {
-  throw new Error("public Supabase config was not embedded into client assets");
-}
 if (leakedNames.size > 0) {
   throw new Error(`server-only env names leaked into client assets: ${Array.from(leakedNames).join(", ")}`);
 }
@@ -527,9 +515,9 @@ log "building Next.js admin"
 npm run build
 add_check "npm run build"
 
-log "asserting client Supabase config"
+log "checking client assets for server-only env leaks"
 assert_client_supabase_config
-add_check "client Supabase config embedded"
+add_check "client assets do not contain server-only env names"
 
 log "checking Supabase read-only access"
 smoke_supabase_readonly
