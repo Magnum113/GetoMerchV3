@@ -1,5 +1,7 @@
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
+import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { InventoryMatrix, InventoryMatrixRow, Product } from "@/lib/types";
@@ -23,6 +25,14 @@ export async function GET() {
   try {
     await requireAdminSession();
 
+    if (hasAdminPostgres()) {
+      const [products, inventory] = await Promise.all([
+        fetchProductsViaPostgres(),
+        fetchInventoryRowsViaPostgres(),
+      ]);
+      return adminJson({ data: buildInventoryMatrix(products, inventory) });
+    }
+
     const [products, inventory] = await Promise.all([
       fetchProducts(),
       fetchInventoryRows(),
@@ -33,6 +43,33 @@ export async function GET() {
   } catch (error) {
     return adminErrorResponse(error);
   }
+}
+
+async function fetchProductsViaPostgres() {
+  const result = await adminDbQuery<{ product: Product }>(
+    `
+      SELECT ${ADMIN_PRODUCT_JSON} AS product
+      FROM merch_products p
+      ${ADMIN_PRODUCT_RELATION_JOINS}
+      ORDER BY p.sku
+      LIMIT $1
+    `,
+    [MAX_PRODUCTS],
+  );
+  return result.rows.map((row) => row.product);
+}
+
+async function fetchInventoryRowsViaPostgres() {
+  const result = await adminDbQuery<StockRef>(
+    `
+      SELECT product_id, warehouse_id, quantity
+      FROM merch_inventory
+      WHERE quantity > 0
+      LIMIT $1
+    `,
+    [MAX_INVENTORY_ROWS],
+  );
+  return result.rows;
 }
 
 async function fetchProducts() {

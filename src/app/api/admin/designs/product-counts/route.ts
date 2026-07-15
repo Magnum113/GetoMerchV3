@@ -1,5 +1,6 @@
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,20 @@ const QUERY_TIMEOUT_MS = 12_000;
 export async function GET() {
   try {
     await requireAdminSession();
+
+    if (hasAdminPostgres()) {
+      const result = await adminDbQuery<{ design_id: string; count: number }>(
+        `
+          SELECT design_id::text, COUNT(*)::int AS count
+          FROM merch_products
+          WHERE is_blank = false
+            AND design_id IS NOT NULL
+          GROUP BY design_id
+          ORDER BY design_id
+        `,
+      );
+      return adminJson({ data: result.rows });
+    }
 
     const counts = new Map<string, number>();
     let offset = 0;

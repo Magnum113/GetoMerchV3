@@ -7,6 +7,8 @@ import {
   assertNoSupabaseError,
   requireUuidParam,
 } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
+import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { Product } from "@/lib/types";
@@ -29,6 +31,10 @@ export async function POST(request: NextRequest) {
     const keys = parseKeys(await request.json().catch(() => null));
     if (keys.length === 0) return adminJson({ data: [] });
 
+    if (hasAdminPostgres()) {
+      return adminJson({ data: await fetchBlankProductsViaPostgres(keys) });
+    }
+
     const wanted = new Set(keys.map((key) => blankKey(key)));
     const blanks = await fetchBlankProducts();
     const matched = blanks.filter((product) => wanted.has(blankKey(product)));
@@ -36,6 +42,35 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return adminErrorResponse(error);
   }
+}
+
+async function fetchBlankProductsViaPostgres(keys: BlankMatchKey[]) {
+  const result = await adminDbQuery<{ product: Product }>(
+    `
+      WITH wanted AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS x(
+          category_id uuid,
+          fabric_id uuid,
+          color_id uuid,
+          size_id uuid
+        )
+      )
+      SELECT ${ADMIN_PRODUCT_JSON} AS product
+      FROM merch_products p
+      JOIN wanted w
+        ON w.category_id = p.category_id
+       AND w.fabric_id = p.fabric_id
+       AND w.color_id = p.color_id
+       AND w.size_id = p.size_id
+      ${ADMIN_PRODUCT_RELATION_JOINS}
+      WHERE p.is_blank = true
+      ORDER BY p.sku
+    `,
+    [JSON.stringify(keys)],
+  );
+
+  return result.rows.map((row) => row.product);
 }
 
 function parseKeys(payload: unknown): BlankMatchKey[] {

@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
+import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { ADMIN_PRODUCT_SELECT_INLINE } from "@/lib/admin/selects";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, WorkshopOrder } from "@/lib/types";
@@ -18,6 +20,11 @@ export async function GET(request: NextRequest) {
     const limit = parseLimitParam(params.get("limit"), { defaultValue: 50, max: 200 });
     const status = params.get("status")?.trim();
     const source = params.get("source")?.trim();
+
+    if (hasAdminPostgres()) {
+      const data = await listOrdersViaPostgres({ limit, status: status || null, source: source || null });
+      return adminJson({ data, meta: { limit } });
+    }
 
     let query = getAdminSupabaseClient()
       .from("merch_ozon_orders")
@@ -51,6 +58,89 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return adminErrorResponse(error);
   }
+}
+
+async function listOrdersViaPostgres({
+  limit,
+  status,
+  source,
+}: {
+  limit: number;
+  status: string | null;
+  source: string | null;
+}) {
+  const ordersResult = await adminDbQuery<OzonOrder>(
+    `
+      SELECT *
+      FROM merch_ozon_orders
+      WHERE ($2::text IS NULL OR status = $2)
+        AND ($3::text IS NULL OR source::text = $3)
+      ORDER BY in_process_at DESC NULLS LAST, created_at DESC
+      LIMIT $1
+    `,
+    [limit, status, source],
+  );
+  const orders = ordersResult.rows;
+  const orderIds = orders.map((order) => order.id);
+
+  const [itemsByOrderId, workshopOrdersById] = await Promise.all([
+    fetchItemsByOrderIdViaPostgres(orderIds),
+    fetchWorkshopOrdersByIdViaPostgres(
+      orders.map((order) => order.workshop_order_id).filter(Boolean) as string[],
+    ),
+  ]);
+
+  return orders.map((order) => ({
+    ...order,
+    items: itemsByOrderId.get(order.id) ?? [],
+    workshop_order: order.workshop_order_id
+      ? workshopOrdersById.get(order.workshop_order_id) ?? null
+      : null,
+  }));
+}
+
+async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
+  const itemsByOrderId = new Map<string, OzonOrderItem[]>();
+  if (orderIds.length === 0) return itemsByOrderId;
+
+  const result = await adminDbQuery<{ order_id: string; item: OzonOrderItem }>(
+    `
+      SELECT
+        i.order_id,
+        to_jsonb(i) || jsonb_build_object('product', ${ADMIN_PRODUCT_JSON}) AS item
+      FROM merch_ozon_order_items i
+      LEFT JOIN merch_products p ON p.id = i.product_id
+      ${ADMIN_PRODUCT_RELATION_JOINS}
+      WHERE i.order_id = ANY($1::uuid[])
+      ORDER BY i.id
+    `,
+    [orderIds],
+  );
+
+  for (const row of result.rows) {
+    const list = itemsByOrderId.get(row.order_id) ?? [];
+    list.push(row.item);
+    itemsByOrderId.set(row.order_id, list);
+  }
+
+  return itemsByOrderId;
+}
+
+async function fetchWorkshopOrdersByIdViaPostgres(ids: string[]) {
+  const out = new Map<string, WorkshopOrder>();
+  const uniqueIds = Array.from(new Set(ids));
+  if (uniqueIds.length === 0) return out;
+
+  const result = await adminDbQuery<WorkshopOrder>(
+    `
+      SELECT *
+      FROM merch_workshop_orders
+      WHERE id = ANY($1::uuid[])
+    `,
+    [uniqueIds],
+  );
+  for (const row of result.rows) out.set(row.id, row);
+  return out;
 }
 
 async function fetchItemsByOrderId(orderIds: string[]) {

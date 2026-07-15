@@ -7,6 +7,8 @@ import {
   parseLimitParam,
   requireUuidParam,
 } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
+import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { Inventory, Product, Warehouse } from "@/lib/types";
@@ -23,6 +25,11 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const limit = parseLimitParam(params.get("limit"), { defaultValue: 500, max: 1000 });
     const warehouseId = requireUuidParam(params.get("warehouse_id"), "warehouse_id");
+
+    if (hasAdminPostgres()) {
+      const data = await listInventoryViaPostgres(limit, warehouseId ?? null);
+      return adminJson({ data, meta: { limit } });
+    }
 
     let query = getAdminSupabaseClient()
       .from("merch_inventory")
@@ -55,6 +62,30 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return adminErrorResponse(error);
   }
+}
+
+async function listInventoryViaPostgres(limit: number, warehouseId: string | null) {
+  const result = await adminDbQuery<{ row: Inventory }>(
+    `
+      SELECT
+        to_jsonb(i)
+          || jsonb_build_object(
+            'product', ${ADMIN_PRODUCT_JSON},
+            'warehouse', to_jsonb(w)
+          ) AS row
+      FROM merch_inventory i
+      LEFT JOIN merch_products p ON p.id = i.product_id
+      ${ADMIN_PRODUCT_RELATION_JOINS}
+      LEFT JOIN merch_warehouses w ON w.id = i.warehouse_id
+      WHERE i.quantity > 0
+        AND ($2::uuid IS NULL OR i.warehouse_id = $2)
+      ORDER BY i.updated_at DESC
+      LIMIT $1
+    `,
+    [limit, warehouseId],
+  );
+
+  return result.rows.map((row) => row.row);
 }
 
 async function fetchProductsById(ids: string[]) {

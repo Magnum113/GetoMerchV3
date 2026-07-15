@@ -23,6 +23,7 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.469.0",
     "next": "^15.5.4",
+    "pg": "^8.22.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "recharts": "^2.15.4",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.4.20",

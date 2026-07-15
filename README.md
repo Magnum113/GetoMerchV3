@@ -73,6 +73,16 @@ GETOMERCH_SUPABASE_SERVICE_ROLE_KEY=<server_only_key>
 # или GETOMERCH_SUPABASE_SERVER_KEY=<restricted_server_key>
 ```
 
+Для тяжёлых чтений админки используется прямое server-side подключение к
+Postgres Supabase. Если переменная не задана, backend продолжает работать через
+Supabase REST fallback, но большие разделы могут грузиться медленнее.
+
+```env
+GETOMERCH_SUPABASE_DATABASE_URL=postgresql://...
+GETOMERCH_POSTGRES_SSL=true
+GETOMERCH_POSTGRES_POOL_MAX=5
+```
+
 Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
 сканирует client bundle на утечки имён server-only env.
 
