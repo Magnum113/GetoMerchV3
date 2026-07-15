@@ -180,6 +180,34 @@ async function supabaseQuery<T>(
   return data as T;
 }
 
+async function supabaseQueryWithRetry<T>(
+  label: string,
+  buildQuery: () => { abortSignal(signal: AbortSignal): unknown },
+  timeoutMs = SUPABASE_TIMEOUT_MS,
+  attempts = 3,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await supabaseQuery<T>(`${label} attempt ${attempt}`, buildQuery(), timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableSupabaseError(error)) break;
+      await sleep(250 * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label}: ${String(lastError)}`);
+}
+
+function isRetryableSupabaseError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|aborted|network|fetch failed/i.test(message);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toError(error: unknown, label: string) {
   if (error instanceof Error) return error;
   if (error && typeof error === "object") {
@@ -265,13 +293,14 @@ export async function POST(req: Request) {
     const idByPosting = new Map<string, string>();
     const stateByPosting = new Map<string, { shipped_at: string | null; created_at: string | null }>();
     for (const payload of orderPayloads) {
-      const upserted = await supabaseQuery<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
+      const upserted = await supabaseQueryWithRetry<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
         `orders upsert ${payload.posting_number}`,
-        supabase
-          .from("merch_ozon_orders")
-          .upsert(payload, { onConflict: "posting_number" })
-          .select("id, posting_number, shipped_at, created_at"),
-        10_000,
+        () =>
+          supabase
+            .from("merch_ozon_orders")
+            .upsert(payload, { onConflict: "posting_number" })
+            .select("id, posting_number, shipped_at, created_at"),
+        5_000,
       );
       for (const r of upserted ?? []) {
         idByPosting.set(r.posting_number, r.id);
