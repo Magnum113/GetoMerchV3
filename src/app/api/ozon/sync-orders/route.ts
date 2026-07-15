@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 const OZON_BASE = "https://api-seller.ozon.ru";
 const OZON_TIMEOUT_MS = 15_000;
 const SUPABASE_TIMEOUT_MS = 20_000;
-const POSTING_LOOKUP_CONCURRENCY = 8;
 
 async function ozonPost<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetchWithTimeout(
@@ -197,51 +196,10 @@ function toError(error: unknown, label: string) {
   return new Error(`${label}: ${String(error)}`);
 }
 
-async function mapLimit<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>) {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await fn(items[index]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
-  return results;
-}
-
-async function loadExistingOrders(
-  supabase: { from(table: string): any },
-  postingNumbers: string[],
-) {
-  const existingByPosting = new Map<string, { id: string; shipped_at: string | null }>();
-
-  // На Supabase/PostgREST были зависания на `.in("posting_number", [...])`.
-  // Точечные eq-запросы с ограниченной конкурентностью стабильно завершаются
-  // и не держат sync route до nginx 504.
-  const uniquePostingNumbers = Array.from(new Set(postingNumbers));
-  const rows = await mapLimit(uniquePostingNumbers, POSTING_LOOKUP_CONCURRENCY, async (postingNumber) => {
-    const data = await supabaseQuery<Array<{ id: string; posting_number: string; shipped_at: string | null }>>(
-      `existing order ${postingNumber}`,
-      supabase
-        .from("merch_ozon_orders")
-        .select("id, posting_number, shipped_at")
-        .eq("posting_number", postingNumber),
-      10_000,
-    );
-    return data[0] ?? null;
-  });
-
-  for (const row of rows) {
-    if (row) existingByPosting.set(row.posting_number, { id: row.id, shipped_at: row.shipped_at });
-  }
-  return existingByPosting;
-}
-
 export async function POST(req: Request) {
   try {
     const startedAt = Date.now();
+    const startedAtIso = new Date(startedAt).toISOString();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
@@ -277,15 +235,10 @@ export async function POST(req: Request) {
       for (const ls of p.legacy_skus ?? []) productByOffer.set(String(ls), p.id);
     }
 
-    const postingNumbers = postings.map((p) => p.posting_number);
-
-    // 2) Загружаем, какие posting_number уже есть и какие из них отправлены.
-    //    shipped_at нужен, чтобы НЕ затирать позиции отправленных заказов
-    //    (там у позиций уже проставлен shipped_from_warehouse_id).
-    const existingByPosting = await loadExistingOrders(supabase, postingNumbers);
-
-    // 3) Один UPSERT всех заказов разом. Колонки, отсутствующие в payload (shipped_at,
+    // 2) UPSERT всех заказов разом. Колонки, отсутствующие в payload (shipped_at,
     //    shipped_from_warehouse_id), при обновлении не трогаются.
+    //    Из результата upsert берём id/shipped_at/created_at, чтобы не делать
+    //    отдельный проблемный lookup по posting_number.
     const now = new Date().toISOString();
     const orderPayloads = postings.map((p) => {
       const total = (p.products ?? []).reduce((s, it) => s + Number(it.price ?? 0) * (it.quantity ?? 0), 0);
@@ -309,19 +262,23 @@ export async function POST(req: Request) {
     });
 
     const idByPosting = new Map<string, string>();
+    const stateByPosting = new Map<string, { shipped_at: string | null; created_at: string | null }>();
     for (const ch of chunk(orderPayloads, 500)) {
-      const upserted = await supabaseQuery<Array<{ id: string; posting_number: string }>>(
+      const upserted = await supabaseQuery<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
         "orders upsert",
         supabase
           .from("merch_ozon_orders")
           .upsert(ch, { onConflict: "posting_number" })
-          .select("id, posting_number"),
+          .select("id, posting_number, shipped_at, created_at"),
         30_000,
       );
-      for (const r of upserted ?? []) idByPosting.set(r.posting_number, r.id);
+      for (const r of upserted ?? []) {
+        idByPosting.set(r.posting_number, r.id);
+        stateByPosting.set(r.posting_number, { shipped_at: r.shipped_at, created_at: r.created_at });
+      }
     }
 
-    // 4) Готовим позиции, но обновлять будем только у НЕотправленных заказов —
+    // 3) Готовим позиции, но обновлять будем только у НЕотправленных заказов —
     //    чтобы не потерять shipped_from_warehouse_id на позициях отправленного.
     let unmatched = 0;
     const unmatchedOffers = new Set<string>();
@@ -331,7 +288,7 @@ export async function POST(req: Request) {
     for (const p of postings) {
       const orderId = idByPosting.get(p.posting_number);
       if (!orderId) continue;
-      const wasShipped = existingByPosting.get(p.posting_number)?.shipped_at != null;
+      const wasShipped = stateByPosting.get(p.posting_number)?.shipped_at != null;
       if (wasShipped) continue;
 
       refreshableOrderIds.push(orderId);
@@ -353,7 +310,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 5) Один DELETE и один INSERT для позиций
+    // 4) Удаляем и пересоздаём позиции для неотправленных заказов.
     if (refreshableOrderIds.length > 0) {
       for (const ch of chunk(refreshableOrderIds, 500)) {
         await supabaseQuery(
@@ -376,10 +333,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 6) created / updated на основе того, что было до апсерта
+    // 5) created / updated по created_at, который вернул upsert.
     let created = 0;
-    for (const pn of idByPosting.keys()) {
-      if (!existingByPosting.has(pn)) created++;
+    for (const state of stateByPosting.values()) {
+      if (state.created_at && state.created_at >= startedAtIso) created++;
     }
     const updated = idByPosting.size - created;
 
