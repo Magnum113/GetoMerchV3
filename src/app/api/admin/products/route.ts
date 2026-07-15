@@ -66,12 +66,12 @@ async function hydrateProducts(products: Product[]) {
     designs,
     decorationTypes,
   ] = await Promise.all([
-    fetchByIds<ProductCategory>("merch_product_categories", ids(products, (product) => product.category_id)),
-    fetchByIds<FabricType>("merch_fabric_types", ids(products, (product) => product.fabric_id)),
-    fetchByIds<Color>("merch_colors", ids(products, (product) => product.color_id)),
-    fetchByIds<Size>("merch_sizes", ids(products, (product) => product.size_id)),
-    fetchByIds<Design>("merch_designs", ids(products, (product) => product.design_id)),
-    fetchByIds<DecorationType>("merch_decoration_types", ids(products, (product) => product.decoration_type_id)),
+    fetchLookupTable<ProductCategory>("merch_product_categories"),
+    fetchLookupTable<FabricType>("merch_fabric_types"),
+    fetchLookupTable<Color>("merch_colors"),
+    fetchLookupTable<Size>("merch_sizes"),
+    fetchLookupTable<Design>("merch_designs"),
+    fetchLookupTable<DecorationType>("merch_decoration_types"),
   ]);
 
   const categoriesById = mapById(categories);
@@ -94,25 +94,13 @@ async function hydrateProducts(products: Product[]) {
   }));
 }
 
-async function fetchByIds<T extends { id: string }>(table: string, values: string[]) {
-  if (values.length === 0) return [];
-
+async function fetchLookupTable<T extends { id: string }>(table: string) {
   const { data, error } = await getAdminSupabaseClient()
     .from(table)
-    .select("*")
-    .in("id", values);
+    .select("*");
 
   assertNoSupabaseError(error, `Failed to load ${table}`);
   return (data ?? []) as T[];
-}
-
-function ids<T>(rows: T[], read: (row: T) => string | null | undefined) {
-  const values = new Set<string>();
-  for (const row of rows) {
-    const value = read(row);
-    if (value) values.add(value);
-  }
-  return Array.from(values);
 }
 
 function mapById<T extends { id: string }>(rows: T[]) {
