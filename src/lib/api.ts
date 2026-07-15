@@ -57,16 +57,19 @@ async function adminGetAllProducts(filters?: { is_blank?: boolean; design_id?: s
   const pageSize = 50;
   const maxRows = 5000;
   const out: Product[] = [];
+  let beforeCreatedAt: string | undefined;
 
-  for (let offset = 0; offset < maxRows; offset += pageSize) {
+  while (out.length < maxRows) {
     const page = await adminGet<Product[]>("/api/admin/products", {
       limit: pageSize,
-      offset,
+      before_created_at: beforeCreatedAt,
       is_blank: filters?.is_blank,
       design_id: filters?.design_id,
     });
     out.push(...page);
     if (page.length < pageSize) break;
+    beforeCreatedAt = page[page.length - 1]?.created_at;
+    if (!beforeCreatedAt) break;
   }
 
   return out;

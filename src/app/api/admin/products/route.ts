@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
     const isBlank = parseBooleanParam(params.get("is_blank"), "is_blank");
     const designId = requireUuidParam(params.get("design_id"), "design_id");
     const sku = params.get("sku")?.trim();
+    const beforeCreatedAt = params.get("before_created_at")?.trim();
 
     let query = getAdminSupabaseClient()
       .from("merch_products")
@@ -33,6 +34,7 @@ export async function GET(request: NextRequest) {
     if (isBlank !== undefined) query = query.eq("is_blank", isBlank);
     if (designId) query = query.eq("design_id", designId);
     if (sku) query = query.ilike("sku", `%${escapeLikePattern(sku)}%`);
+    if (beforeCreatedAt) query = query.lt("created_at", beforeCreatedAt);
 
     const { data, error } = await query;
     assertNoSupabaseError(error);
