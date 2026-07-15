@@ -857,7 +857,7 @@ export const api = {
     await api.shipOzonOrder(args.ozonOrderId, args.ownWarehouseId);
   },
 
-  async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; durationMs?: number }> {
+  async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; failedOrders?: number; failedOrderSamples?: string[]; failedItemOrders?: number; durationMs?: number }> {
     const params = new URLSearchParams();
     if (opts.scope) params.set("scope", opts.scope);
     if (opts.days != null) params.set("days", String(opts.days));
@@ -882,7 +882,7 @@ export const api = {
         : text.slice(0, 240);
     if (!res.ok) throw new Error(errorMessage || "Sync failed");
     if (!json || typeof json !== "object") throw new Error("Sync returned invalid JSON");
-    return json as { scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; durationMs?: number };
+    return json as { scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; failedOrders?: number; failedOrderSamples?: string[]; failedItemOrders?: number; durationMs?: number };
   },
 
   // ---------- DESIGNS CRUD ----------

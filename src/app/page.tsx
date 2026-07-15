@@ -113,7 +113,7 @@ export default function AnalyticsDashboardPage() {
       ]);
       const ordMsg = "error" in ordRes
         ? `Заказы: ошибка (${ordRes.error})`
-        : `Заказы: +${ordRes.created} / обн. ${ordRes.updated}`;
+        : `Заказы: +${ordRes.created} / обн. ${ordRes.updated}${ordRes.failedOrders ? `, не обновлено ${ordRes.failedOrders}` : ""}${ordRes.failedItemOrders ? `, позиции ${ordRes.failedItemOrders}` : ""}`;
       toast.success(`Финансы: +${finRes.created} / обн. ${finRes.updated}. ${ordMsg}`);
       await reload();
     } catch (e) {

@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 const OZON_BASE = "https://api-seller.ozon.ru";
 const OZON_TIMEOUT_MS = 15_000;
 const SUPABASE_TIMEOUT_MS = 20_000;
+const ORDER_UPSERT_CONCURRENCY = 8;
+const ORDER_ITEM_CONCURRENCY = 8;
 
 async function ozonPost<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetchWithTimeout(
@@ -144,13 +146,6 @@ async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
   return all;
 }
 
-// Делит массив на чанки по N (на случай очень большого аккаунта, чтобы не упереться в лимиты PostgREST)
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number, label: string) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);
@@ -206,6 +201,20 @@ function isRetryableSupabaseError(error: unknown) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function mapLimit<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 function toError(error: unknown, label: string) {
@@ -292,20 +301,42 @@ export async function POST(req: Request) {
 
     const idByPosting = new Map<string, string>();
     const stateByPosting = new Map<string, { shipped_at: string | null; created_at: string | null }>();
-    for (const payload of orderPayloads) {
-      const upserted = await supabaseQueryWithRetry<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
-        `orders upsert ${payload.posting_number}`,
-        () =>
-          supabase
-            .from("merch_ozon_orders")
-            .upsert(payload, { onConflict: "posting_number" })
-            .select("id, posting_number, shipped_at, created_at"),
-        5_000,
-      );
-      for (const r of upserted ?? []) {
+    const failedOrderSamples: string[] = [];
+    const upsertResults = await mapLimit(orderPayloads, ORDER_UPSERT_CONCURRENCY, async (payload) => {
+      try {
+        const rows = await supabaseQueryWithRetry<Array<{ id: string; posting_number: string; shipped_at: string | null; created_at: string | null }>>(
+          `orders upsert ${payload.posting_number}`,
+          () =>
+            supabase
+              .from("merch_ozon_orders")
+              .upsert(payload, { onConflict: "posting_number" })
+              .select("id, posting_number, shipped_at, created_at"),
+          4_000,
+          2,
+        );
+        return { ok: true as const, rows };
+      } catch (error) {
+        return {
+          ok: false as const,
+          postingNumber: payload.posting_number,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    for (const result of upsertResults) {
+      if (!result.ok) {
+        failedOrderSamples.push(result.postingNumber);
+        continue;
+      }
+      for (const r of result.rows ?? []) {
         idByPosting.set(r.posting_number, r.id);
         stateByPosting.set(r.posting_number, { shipped_at: r.shipped_at, created_at: r.created_at });
       }
+    }
+
+    if (idByPosting.size === 0) {
+      throw new Error(`Не удалось обновить ни один заказ Ozon. Пример ошибки: ${failedOrderSamples[0] ?? "unknown"}`);
     }
 
     // 3) Готовим позиции, но обновлять будем только у НЕотправленных заказов —
@@ -313,7 +344,7 @@ export async function POST(req: Request) {
     let unmatched = 0;
     const unmatchedOffers = new Set<string>();
     const refreshableOrderIds: string[] = [];
-    const allItems: Array<Record<string, unknown>> = [];
+    const itemsByOrderId = new Map<string, Array<Record<string, unknown>>>();
 
     for (const p of postings) {
       const orderId = idByPosting.get(p.posting_number);
@@ -322,13 +353,14 @@ export async function POST(req: Request) {
       if (wasShipped) continue;
 
       refreshableOrderIds.push(orderId);
+      const orderItems: Array<Record<string, unknown>> = [];
       for (const it of p.products ?? []) {
         const productId = productByOffer.get(String(it.offer_id));
         if (!productId) {
           unmatched++;
           unmatchedOffers.add(String(it.offer_id));
         }
-        allItems.push({
+        orderItems.push({
           order_id: orderId,
           offer_id: String(it.offer_id),
           ozon_sku: it.sku != null ? String(it.sku) : null,
@@ -338,28 +370,51 @@ export async function POST(req: Request) {
           product_id: productId ?? null,
         });
       }
+      itemsByOrderId.set(orderId, orderItems);
     }
 
     // 4) Удаляем и пересоздаём позиции для неотправленных заказов.
+    const failedItemOrderIds = new Set<string>();
+    const deletedOrderIds = new Set<string>();
     if (refreshableOrderIds.length > 0) {
-      for (const ch of chunk(refreshableOrderIds, 500)) {
-        await supabaseQuery(
-          "order items delete",
-          supabase
-            .from("merch_ozon_order_items")
-            .delete()
-            .in("order_id", ch),
-          30_000,
-        );
+      const deleteResults = await mapLimit(refreshableOrderIds, ORDER_ITEM_CONCURRENCY, async (orderId) => {
+        try {
+          await supabaseQueryWithRetry(
+            `order items delete ${orderId}`,
+            () => supabase.from("merch_ozon_order_items").delete().eq("order_id", orderId),
+            4_000,
+            2,
+          );
+          return { ok: true as const, orderId };
+        } catch {
+          return { ok: false as const, orderId };
+        }
+      });
+      for (const result of deleteResults) {
+        if (result.ok) deletedOrderIds.add(result.orderId);
+        else failedItemOrderIds.add(result.orderId);
       }
     }
-    if (allItems.length > 0) {
-      for (const ch of chunk(allItems, 1000)) {
-        await supabaseQuery(
-          "order items insert",
-          supabase.from("merch_ozon_order_items").insert(ch),
-          30_000,
-        );
+
+    const insertTargets = Array.from(deletedOrderIds)
+      .map((orderId) => ({ orderId, items: itemsByOrderId.get(orderId) ?? [] }))
+      .filter((target) => target.items.length > 0);
+    if (insertTargets.length > 0) {
+      const insertResults = await mapLimit(insertTargets, ORDER_ITEM_CONCURRENCY, async ({ orderId, items }) => {
+        try {
+          await supabaseQueryWithRetry(
+            `order items insert ${orderId}`,
+            () => supabase.from("merch_ozon_order_items").insert(items),
+            4_000,
+            2,
+          );
+          return { ok: true as const, orderId };
+        } catch {
+          return { ok: false as const, orderId };
+        }
+      });
+      for (const result of insertResults) {
+        if (!result.ok) failedItemOrderIds.add(result.orderId);
       }
     }
 
@@ -378,6 +433,9 @@ export async function POST(req: Request) {
       updated,
       unmatchedItems: unmatched,
       unmatchedSamples: Array.from(unmatchedOffers).slice(0, 10),
+      failedOrders: failedOrderSamples.length,
+      failedOrderSamples: failedOrderSamples.slice(0, 10),
+      failedItemOrders: failedItemOrderIds.size,
       durationMs: Date.now() - startedAt,
     });
   } catch (e) {

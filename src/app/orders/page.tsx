@@ -310,7 +310,14 @@ export default function OrdersPage() {
     try {
       const r = await api.syncOzonOrders({ scope, days: 60 });
       const scopeLabel = r.scope === "active" ? "активных" : "всех";
-      toast.success(`Синхронизировано ${scopeLabel}: ${r.fetched} (новых ${r.created}, обновлено ${r.updated})${r.unmatchedItems ? `, без SKU ${r.unmatchedItems}` : ""}`);
+      const warnings = [
+        r.unmatchedItems ? `без SKU ${r.unmatchedItems}` : "",
+        r.failedOrders ? `не обновлено заказов ${r.failedOrders}` : "",
+        r.failedItemOrders ? `не обновлены позиции ${r.failedItemOrders}` : "",
+      ].filter(Boolean).join(", ");
+      const message = `Синхронизировано ${scopeLabel}: ${r.fetched} (новых ${r.created}, обновлено ${r.updated})${warnings ? `, ${warnings}` : ""}`;
+      if (r.failedOrders || r.failedItemOrders) toast.warning(message);
+      else toast.success(message);
       await reload();
     } catch (e) { toast.error(errorMessage(e)); }
     finally { setSyncing(false); }
