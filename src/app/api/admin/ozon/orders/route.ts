@@ -69,9 +69,30 @@ async function listOrdersViaPostgres({
   status: string | null;
   source: string | null;
 }) {
-  const ordersResult = await adminDbQuery<OzonOrder>(
+  const ordersResult = await adminDbQuery<{ order: OzonOrder }>(
     `
-      SELECT *
+      SELECT jsonb_build_object(
+        'id', id,
+        'posting_number', posting_number,
+        'order_id', order_id,
+        'order_number', order_number,
+        'status', status,
+        'substatus', substatus,
+        'ozon_created_at', ozon_created_at,
+        'in_process_at', in_process_at,
+        'shipment_date', shipment_date,
+        'delivery_method', delivery_method,
+        'warehouse_name', warehouse_name,
+        'customer_name', customer_name,
+        'total_price', total_price,
+        'source', source,
+        'synced_at', synced_at,
+        'shipped_at', shipped_at,
+        'shipped_from_warehouse_id', shipped_from_warehouse_id,
+        'workshop_order_id', workshop_order_id,
+        'notes', notes,
+        'created_at', created_at
+      ) AS "order"
       FROM merch_ozon_orders
       WHERE ($2::text IS NULL OR status = $2)
         AND ($3::text IS NULL OR source::text = $3)
@@ -80,7 +101,7 @@ async function listOrdersViaPostgres({
     `,
     [limit, status, source],
   );
-  const orders = ordersResult.rows;
+  const orders = ordersResult.rows.map((row) => row.order);
   const orderIds = orders.map((order) => order.id);
 
   const [itemsByOrderId, workshopOrdersById] = await Promise.all([
