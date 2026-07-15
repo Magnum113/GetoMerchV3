@@ -64,23 +64,16 @@ export async function fetchProductPageViaPostgres(limit: number, offset: number)
 export async function hydrateProductsViaPostgres(products: Product[]) {
   if (products.length === 0) return products;
 
-  const [
-    categories,
-    fabrics,
-    colors,
-    sizes,
-    designs,
-    decorationTypes,
-  ] = await Promise.all([
-    fetchCategories(unique(products.map((product) => product.category_id))),
-    fetchFabrics(unique(products.map((product) => product.fabric_id))),
-    fetchColors(unique(products.map((product) => product.color_id))),
-    fetchSizes(unique(products.map((product) => product.size_id))),
-    fetchDesigns(unique(products.map((product) => product.design_id).filter(Boolean) as string[])),
-    fetchDecorationTypes(
-      unique(products.map((product) => product.decoration_type_id).filter(Boolean) as string[]),
-    ),
-  ]);
+  const categories = await fetchCategories(unique(products.map((product) => product.category_id)));
+  const fabrics = await fetchFabrics(unique(products.map((product) => product.fabric_id)));
+  const colors = await fetchColors(unique(products.map((product) => product.color_id)));
+  const sizes = await fetchSizes(unique(products.map((product) => product.size_id)));
+  const designs = await fetchDesigns(
+    unique(products.map((product) => product.design_id).filter(Boolean) as string[]),
+  );
+  const decorationTypes = await fetchDecorationTypes(
+    unique(products.map((product) => product.decoration_type_id).filter(Boolean) as string[]),
+  );
 
   return products.map((product) => ({
     ...product,
