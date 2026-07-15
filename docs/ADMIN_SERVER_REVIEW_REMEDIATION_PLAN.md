@@ -253,12 +253,21 @@ runtime env systemd эти переменные были. Поэтому `@supab
 - добавлен блок `disk` со свободным местом, размером release-каталога,
   количеством release и размером npm cache/logs.
 
-Осталось проверить на сервере:
+Проверено на сервере:
 
-- установить обновлённые scripts;
-- выполнить deploy;
-- убедиться, что retention оставил active/rollback release;
-- выполнить rollback smoke и вернуть текущий `main`.
+- обновлённые `getomerch-deploy-from-git` и `getomerch-deploy-status`
+  установлены в `/usr/local/sbin`;
+- deploy `main` прошёл успешно, active release:
+  `20260715T101417Z-admin-94e900c02df5`;
+- retention после deploy оставил active release, rollback release и последние
+  успешные release, всего 4 директории в `/opt/getomerch/releases`;
+- rollback на предыдущий release прошёл smoke-check, затем текущий `main`
+  повторно задеплоен;
+- low-disk preflight проверен искусственным порогом
+  `GETOMERCH_MIN_FREE_MB=999999`: deploy остановился до `npm ci` с понятной
+  ошибкой;
+- `getomerch-deploy-status` показывает `disk` block: свободное место, release
+  count/size и npm cache.
 
 ---
 
