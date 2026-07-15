@@ -24,6 +24,20 @@ type ApiResponse<T> =
   | { ok: true; data: T }
   | { ok: false; error?: { code?: string; message?: string } };
 
+type ApiSuccess<T> = { ok: true; data: T; meta?: Record<string, unknown> };
+
+type ProductListFilters = {
+  is_blank?: boolean;
+  design_id?: string;
+  search?: string;
+};
+
+type ProductPage = {
+  items: Product[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
   const response = await fetch("/api/admin/rpc", {
     method: "POST",
@@ -40,36 +54,61 @@ async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
 }
 
 async function adminGet<T>(path: string, params: Record<string, string | number | boolean | null | undefined> = {}): Promise<T> {
+  const payload = await adminGetPayload<T>(path, params);
+  return payload.data as T;
+}
+
+async function adminGetPayload<T>(
+  path: string,
+  params: Record<string, string | number | boolean | null | undefined> = {},
+): Promise<ApiSuccess<T>> {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const href = search.size > 0 ? `${path}?${search.toString()}` : path;
   const response = await fetch(href);
-  const payload = await readJson<ApiResponse<T>>(response);
+  const payload = await readJson<ApiResponse<T> & { meta?: Record<string, unknown> }>(response);
   if (!response.ok || !payload?.ok) {
     throw apiError(response, payload);
   }
-  return payload.data as T;
+  return payload as ApiSuccess<T>;
 }
 
-async function adminGetAllProducts(filters?: { is_blank?: boolean; design_id?: string }) {
-  const pageSize = 50;
-  const maxRows = 50;
+async function adminGetProductsPage(
+  filters: ProductListFilters & { cursor?: string | null; limit?: number } = {},
+): Promise<ProductPage> {
+  const payload = await adminGetPayload<Product[]>("/api/admin/products", {
+    limit: filters.limit ?? 50,
+    cursor: filters.cursor ?? undefined,
+    is_blank: filters.is_blank,
+    design_id: filters.design_id,
+    search: filters.search,
+  });
+  return {
+    items: payload.data ?? [],
+    nextCursor: typeof payload.meta?.nextCursor === "string" ? payload.meta.nextCursor : null,
+    hasMore: payload.meta?.hasMore === true,
+  };
+}
+
+async function adminGetAllProducts(filters?: ProductListFilters) {
+  const pageSize = 200;
+  const maxRows = 10000;
   const out: Product[] = [];
-  let beforeCreatedAt: string | undefined;
+  let cursor: string | null = null;
 
   while (out.length < maxRows) {
-    const page = await adminGet<Product[]>("/api/admin/products", {
+    const page = await adminGetProductsPage({
       limit: pageSize,
-      before_created_at: beforeCreatedAt,
+      cursor,
       is_blank: filters?.is_blank,
       design_id: filters?.design_id,
+      search: filters?.search,
     });
-    out.push(...page);
-    if (page.length < pageSize) break;
-    beforeCreatedAt = page[page.length - 1]?.created_at;
-    if (!beforeCreatedAt) break;
+    out.push(...page.items);
+    if (!page.hasMore || !page.nextCursor) break;
+    cursor = page.nextCursor;
   }
 
   return out;
@@ -137,7 +176,10 @@ export const api = {
   listDesigns: (filters?: { type?: DesignType }) => adminRpc<Design[]>("listDesigns", [filters]),
 
   // ---------- PRODUCTS ----------
-  listProducts: (filters?: { is_blank?: boolean; design_id?: string }) => adminGetAllProducts(filters),
+  listProductsPage: (filters?: ProductListFilters & { cursor?: string | null; limit?: number }) =>
+    adminGetProductsPage(filters),
+  listAllProducts: (filters?: ProductListFilters) => adminGetAllProducts(filters),
+  listProducts: (filters?: ProductListFilters) => adminGetProductsPage(filters).then((page) => page.items),
   findOrCreateProduct: (input: {
     category_id: string;
     fabric_id: string;

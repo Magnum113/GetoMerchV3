@@ -38,7 +38,7 @@ export default function InventoryPage() {
       api.listInventory(),
       api.listPrintInventory(),
       api.listSizes(),
-      api.listProducts(),
+      api.listAllProducts(),
     ]);
     setWarehouses(w);
     setInv(i);

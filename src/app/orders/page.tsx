@@ -94,7 +94,7 @@ export default function OrdersPage() {
       api.listOzonOrders(),
       api.listWarehouses(),
       api.listInventory(),
-      api.listProducts({ is_blank: true }),
+      api.listAllProducts({ is_blank: true }),
       api.listPrintInventory(),
     ]);
     setOrders(o);

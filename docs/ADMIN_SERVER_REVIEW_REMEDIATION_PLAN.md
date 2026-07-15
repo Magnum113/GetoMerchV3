@@ -436,14 +436,19 @@ RLS можно безопасно закрыть только после тог�
   `src/components/**/*.tsx` не находит административных browser-side
   Supabase `.from(...)`.
 
-Ограничение, найденное при production smoke:
+Ограничение, найденное при production smoke, и текущий статус:
 
 - большие/следующие страницы `merch_products` через Supabase REST могут
-  отвечать десятки секунд; чтобы UI не зависал, client wrapper временно читает
-  первую страницу товаров (`50` строк) через BFF;
-- перед этапом 6 нужно отдельно сделать нормальную пагинацию товаров:
-  keyset через индексированный SQL/RPC либо прямой server Postgres connection,
-  затем выполнить ручной regression-check `/products`, `/orders`, `/designs`.
+  отвечать десятки секунд на неудачных паттернах запроса (`created_at`,
+  вложенный REST select, отдельные `.in(...)` lookup filters);
+- `/api/admin/products` переведён на явную cursor pagination по быстрым
+  страницам, сортировку по `sku`, серверную гидратацию lookup-таблицами и
+  `meta.nextCursor/meta.hasMore`;
+- client wrapper разделён на `listProductsPage()` для обычных экранов и
+  `listAllProducts()` для сценариев, где пока нужен полный справочник;
+- перед этапом 6 остаётся постепенно заменить полные загрузки в
+  `/orders`, `/designs`, `/inventory` на более точечные aggregate/resolve
+  endpoints, чтобы полная загрузка стала редким явным действием.
 
 Что остаётся:
 

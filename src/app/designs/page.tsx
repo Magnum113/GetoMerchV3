@@ -34,7 +34,7 @@ export default function DesignsPage() {
   const [openCreate, setOpenCreate] = useState(false);
 
   async function reload() {
-    const [d, p] = await Promise.all([api.listDesigns(), api.listProducts({ is_blank: false })]);
+    const [d, p] = await Promise.all([api.listDesigns(), api.listAllProducts({ is_blank: false })]);
     setDesigns(d);
     setProducts(p);
     setLoading(false);

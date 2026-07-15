@@ -25,9 +25,20 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "blank" | "finished">("all");
   const [loading, setLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [openCreate, setOpenCreate] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [syncing, setSyncing] = useState(false);
+
+  function currentFilters() {
+    return {
+      is_blank: filter === "blank" ? true : filter === "finished" ? false : undefined,
+      search: search.trim() || undefined,
+    };
+  }
 
   async function syncOzonPrices() {
     setSyncing(true);
@@ -50,22 +61,55 @@ export default function ProductsPage() {
 
   async function reload() {
     setLoading(true);
-    setProducts(await api.listProducts());
-    setLoading(false);
+    try {
+      const page = await api.listProductsPage({ ...currentFilters(), limit: 50 });
+      setProducts(page.items);
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   }
-  useEffect(() => { reload(); }, []);
 
-  const filtered = useMemo(() => {
-    return products.filter((p) => {
-      if (filter === "blank" && !p.is_blank) return false;
-      if (filter === "finished" && p.is_blank) return false;
-      if (search) {
-        const h = [p.sku, p.category?.name, p.color?.name, p.size?.name, p.fabric?.name, p.design?.name, p.decoration_type?.name].filter(Boolean).join(" ").toLowerCase();
-        if (!h.includes(search.toLowerCase())) return false;
-      }
-      return true;
-    });
-  }, [products, filter, search]);
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.listProductsPage({ ...currentFilters(), cursor: nextCursor, limit: 50 });
+      setProducts((prev) => mergeProducts(prev, page.items));
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  async function loadAll() {
+    setLoadingAll(true);
+    try {
+      const all = await api.listAllProducts(currentFilters());
+      setProducts(all);
+      setNextCursor(null);
+      setHasMore(false);
+      toast.success(`Загружено SKU: ${all.length}`);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setLoadingAll(false);
+    }
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      reload();
+    }, search.trim() ? 250 : 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, search]);
 
   return (
     <div>
@@ -94,13 +138,13 @@ export default function ProductsPage() {
         <CardContent className="p-4 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу, цвету, дизайну…" className="pl-8" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу…" className="pl-8" />
           </div>
           <Tabs value={filter} onValueChange={(v) => setFilter(v as "all" | "blank" | "finished")}>
             <TabsList>
-              <TabsTrigger value="all">Все ({products.length})</TabsTrigger>
-              <TabsTrigger value="blank">Пустые ({products.filter((p) => p.is_blank).length})</TabsTrigger>
-              <TabsTrigger value="finished">Готовые ({products.filter((p) => !p.is_blank).length})</TabsTrigger>
+              <TabsTrigger value="all">Все</TabsTrigger>
+              <TabsTrigger value="blank">Пустые</TabsTrigger>
+              <TabsTrigger value="finished">Готовые</TabsTrigger>
             </TabsList>
           </Tabs>
         </CardContent>
@@ -110,7 +154,7 @@ export default function ProductsPage() {
         <CardContent className="p-0">
           {loading ? (
             <div className="p-10 text-center text-muted-foreground">Загрузка…</div>
-          ) : filtered.length === 0 ? (
+          ) : products.length === 0 ? (
             <EmptyState
               icon={Package}
               title="Каталог пуст"
@@ -132,7 +176,7 @@ export default function ProductsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((p) => (
+                    {products.map((p) => (
                       <TableRow key={p.id}>
                         <TableCell><ProductDisplay p={p} compact /></TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{p.sku ?? "—"}</TableCell>
@@ -164,7 +208,7 @@ export default function ProductsPage() {
 
               {/* Mobile card list */}
               <div className="md:hidden divide-y">
-                {filtered.map((p) => (
+                {products.map((p) => (
                   <div key={p.id} className="p-4 space-y-2">
                     <ProductDisplay p={p} compact />
                     <div className="font-mono text-[11px] text-muted-foreground break-all">{p.sku ?? "—"}</div>
@@ -193,6 +237,24 @@ export default function ProductsPage() {
                   </div>
                 ))}
               </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t p-4">
+                <div className="text-sm text-muted-foreground">
+                  Загружено: <span className="font-medium text-foreground tabular-nums">{products.length}</span>
+                  {hasMore ? " · есть еще" : ""}
+                </div>
+                <div className="flex gap-2">
+                  {hasMore && (
+                    <Button variant="outline" onClick={loadMore} disabled={loadingMore || loadingAll}>
+                      {loadingMore ? "Загрузка…" : "Показать еще"}
+                    </Button>
+                  )}
+                  {hasMore && (
+                    <Button variant="secondary" onClick={loadAll} disabled={loadingMore || loadingAll}>
+                      {loadingAll ? "Загрузка всех…" : "Загрузить все"}
+                    </Button>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </CardContent>
@@ -202,6 +264,12 @@ export default function ProductsPage() {
       <EditProductDialog product={editing} onClose={() => setEditing(null)} onDone={reload} />
     </div>
   );
+}
+
+function mergeProducts(current: Product[], next: Product[]) {
+  const byId = new Map(current.map((product) => [product.id, product]));
+  for (const product of next) byId.set(product.id, product);
+  return Array.from(byId.values());
 }
 
 function PriceCell({ productId, field, value, onSaved }: { productId: string; field: "cost_price" | "sale_price"; value: number | null; onSaved: () => void }) {

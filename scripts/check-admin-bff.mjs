@@ -10,7 +10,7 @@ const checks = [
   { name: "catalog without cookie returns 401", run: () => expectStatus("/api/admin/catalog", 401) },
   { name: "products validation returns 400", run: () => expectStatus("/api/admin/products?limit=not-a-number", 400, authCookie()) },
   { name: "health with valid cookie returns 200", run: () => expectStatus("/api/admin/health", 200, authCookie()) },
-  { name: "products read-only with valid cookie returns 200", run: () => expectStatus("/api/admin/products?limit=50&is_blank=false", 200, authCookie()) },
+  { name: "products pagination with valid cookie returns cursor metadata", run: () => expectProductsPagination() },
   {
     name: "admin RPC without cookie returns 401",
     run: () => expectStatus("/api/admin/rpc", 401, undefined, rpcInit("listWarehouses")),
@@ -64,5 +64,44 @@ async function expectStatus(path, expectedStatus, cookie, init = {}) {
   const text = await response.text();
   if (response.status !== expectedStatus) {
     throw new Error(`Expected ${expectedStatus}, got ${response.status}: ${text.slice(0, 300)}`);
+  }
+}
+
+async function expectProductsPagination() {
+  const first = await expectJson("/api/admin/products?limit=10&is_blank=false", 200, authCookie());
+  if (!Array.isArray(first.data)) throw new Error("Expected products data array");
+  if (first.data.length === 0) throw new Error("Expected at least one finished product");
+  if (!first.meta || typeof first.meta.hasMore !== "boolean") {
+    throw new Error("Expected products pagination metadata");
+  }
+
+  if (first.meta.hasMore) {
+    if (typeof first.meta.nextCursor !== "string" || first.meta.nextCursor.length === 0) {
+      throw new Error("Expected nextCursor when hasMore is true");
+    }
+    const second = await expectJson(
+      `/api/admin/products?limit=10&is_blank=false&cursor=${encodeURIComponent(first.meta.nextCursor)}`,
+      200,
+      authCookie(),
+    );
+    if (!Array.isArray(second.data)) throw new Error("Expected second products data array");
+    if (second.data.length === 0) throw new Error("Expected second products page");
+    if (second.data[0]?.id === first.data[0]?.id) {
+      throw new Error("Expected cursor to move to a different products page");
+    }
+  }
+}
+
+async function expectJson(path, expectedStatus, cookie, init = {}) {
+  const headers = { ...(init.headers || {}), ...(cookie ? { Cookie: cookie } : {}) };
+  const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+  const text = await response.text();
+  if (response.status !== expectedStatus) {
+    throw new Error(`Expected ${expectedStatus}, got ${response.status}: ${text.slice(0, 300)}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Expected JSON response, got: ${text.slice(0, 300)}`);
   }
 }
