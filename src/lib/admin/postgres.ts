@@ -27,6 +27,7 @@ function getAdminPostgresPool() {
   pool = new Pool({
     connectionString,
     max: Number(process.env.GETOMERCH_POSTGRES_POOL_MAX ?? 5),
+    maxUses: Number(process.env.GETOMERCH_POSTGRES_POOL_MAX_USES ?? 1),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
     statement_timeout: 20_000,

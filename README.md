@@ -81,6 +81,7 @@ Supabase REST fallback, но большие разделы могут грузи
 GETOMERCH_SUPABASE_DATABASE_URL=postgresql://...
 GETOMERCH_POSTGRES_SSL=true
 GETOMERCH_POSTGRES_POOL_MAX=5
+GETOMERCH_POSTGRES_POOL_MAX_USES=1
 ```
 
 Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
