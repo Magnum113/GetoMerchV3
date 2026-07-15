@@ -90,13 +90,13 @@ export default function OrdersPage() {
 
   async function reload() {
     setLoading(true);
-    const [o, w, i, b, pr] = await Promise.all([
+    const [o, w, i, pr] = await Promise.all([
       api.listOzonOrders(),
       api.listWarehouses(),
       api.listInventory(),
-      api.listAllProducts({ is_blank: true }),
       api.listPrintInventory(),
     ]);
+    const b = await api.listMatchingBlankProducts(blankKeysFromOrders(o));
     setOrders(o);
     setWarehouses(w);
     setInv(i);
@@ -829,4 +829,22 @@ function PrintBadge({ a, need }: { a: ItemAvailability; need: number }) {
 
 function blankKey(cat: string, fab: string, col: string, sz: string) {
   return `${cat}|${fab}|${col}|${sz}`;
+}
+
+function blankKeysFromOrders(orders: OzonOrder[]) {
+  const keys = new Map<string, { category_id: string; fabric_id: string; color_id: string; size_id: string }>();
+  for (const order of orders) {
+    for (const item of order.items ?? []) {
+      const product = item.product;
+      if (!product) continue;
+      const key = {
+        category_id: product.category_id,
+        fabric_id: product.fabric_id,
+        color_id: product.color_id,
+        size_id: product.size_id,
+      };
+      keys.set(blankKey(key.category_id, key.fabric_id, key.color_id, key.size_id), key);
+    }
+  }
+  return Array.from(keys.values());
 }

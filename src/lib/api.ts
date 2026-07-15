@@ -18,6 +18,7 @@ import type {
   PrintInventory,
   Expense,
   ExpenseCategory,
+  InventoryMatrix,
 } from "@/lib/types";
 
 type ApiResponse<T> =
@@ -36,6 +37,18 @@ type ProductPage = {
   items: Product[];
   nextCursor: string | null;
   hasMore: boolean;
+};
+
+type BlankMatchKey = {
+  category_id: string;
+  fabric_id: string;
+  color_id: string;
+  size_id: string;
+};
+
+type DesignProductCount = {
+  design_id: string;
+  count: number;
 };
 
 async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
@@ -73,6 +86,19 @@ async function adminGetPayload<T>(
     throw apiError(response, payload);
   }
   return payload as ApiSuccess<T>;
+}
+
+async function adminPost<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await readJson<ApiResponse<T>>(response);
+  if (!response.ok || !payload?.ok) {
+    throw apiError(response, payload);
+  }
+  return payload.data as T;
 }
 
 async function adminGetProductsPage(
@@ -180,6 +206,9 @@ export const api = {
     adminGetProductsPage(filters),
   listAllProducts: (filters?: ProductListFilters) => adminGetAllProducts(filters),
   listProducts: (filters?: ProductListFilters) => adminGetProductsPage(filters).then((page) => page.items),
+  listProductsForDesign: (designId: string) => adminGetAllProducts({ is_blank: false, design_id: designId }),
+  listMatchingBlankProducts: (keys: BlankMatchKey[]) =>
+    adminPost<Product[]>("/api/admin/products/blank-matches", { keys }),
   findOrCreateProduct: (input: {
     category_id: string;
     fabric_id: string;
@@ -202,6 +231,7 @@ export const api = {
   // ---------- INVENTORY ----------
   listInventory: (warehouseId?: string) =>
     adminGet<Inventory[]>("/api/admin/inventory", { limit: 1000, warehouse_id: warehouseId }),
+  listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix"),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),
   adjustInventory: (productId: string, warehouseId: string, delta: number) =>
@@ -316,6 +346,7 @@ export const api = {
   },
 
   // ---------- DESIGNS CRUD ----------
+  listDesignProductCounts: () => adminGet<DesignProductCount[]>("/api/admin/designs/product-counts"),
   createDesign: (input: { name: string; type: DesignType; description?: string; image_url?: string }) =>
     adminRpc<Design>("createDesign", [input]),
   updateDesign: (id: string, input: Partial<Design>) => adminRpc<void>("updateDesign", [id, input]),

@@ -171,6 +171,26 @@ export interface PrintInventory {
   warehouse?: Warehouse;
 }
 
+export interface InventoryMatrixCell {
+  hasProduct: boolean;
+  byWh: Record<string, number>;
+}
+
+export interface InventoryMatrixRow {
+  key: string;
+  isBlank: boolean;
+  label: string;
+  subLabel: string;
+  hex: string | null;
+  designLabel: string | null;
+  cells: Record<string, InventoryMatrixCell>;
+}
+
+export interface InventoryMatrix {
+  blankRows: InventoryMatrixRow[];
+  finishedRows: InventoryMatrixRow[];
+}
+
 export type OzonPostingSource = "fbs" | "fbo";
 
 export interface OzonOrder {

@@ -11,6 +11,9 @@ const checks = [
   { name: "products validation returns 400", run: () => expectStatus("/api/admin/products?limit=not-a-number", 400, authCookie()) },
   { name: "health with valid cookie returns 200", run: () => expectStatus("/api/admin/health", 200, authCookie()) },
   { name: "products pagination with valid cookie returns cursor metadata", run: () => expectProductsPagination() },
+  { name: "design product counts with valid cookie returns array", run: () => expectDesignProductCounts() },
+  { name: "blank matches with valid cookie accepts empty key set", run: () => expectBlankMatches() },
+  { name: "inventory matrix with valid cookie returns rows", run: () => expectInventoryMatrix() },
   {
     name: "admin RPC without cookie returns 401",
     run: () => expectStatus("/api/admin/rpc", 401, undefined, rpcInit("listWarehouses")),
@@ -89,6 +92,38 @@ async function expectProductsPagination() {
     if (second.data[0]?.id === first.data[0]?.id) {
       throw new Error("Expected cursor to move to a different products page");
     }
+  }
+}
+
+async function expectDesignProductCounts() {
+  const payload = await expectJson("/api/admin/designs/product-counts", 200, authCookie());
+  if (!Array.isArray(payload.data)) throw new Error("Expected design counts data array");
+  for (const row of payload.data) {
+    if (typeof row.design_id !== "string" || typeof row.count !== "number") {
+      throw new Error("Expected design count rows with design_id and count");
+    }
+  }
+}
+
+async function expectBlankMatches() {
+  const payload = await expectJson(
+    "/api/admin/products/blank-matches",
+    200,
+    authCookie(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: [] }),
+    },
+  );
+  if (!Array.isArray(payload.data)) throw new Error("Expected blank matches data array");
+}
+
+async function expectInventoryMatrix() {
+  const payload = await expectJson("/api/admin/inventory/matrix", 200, authCookie());
+  if (!payload.data || typeof payload.data !== "object") throw new Error("Expected inventory matrix object");
+  if (!Array.isArray(payload.data.blankRows) || !Array.isArray(payload.data.finishedRows)) {
+    throw new Error("Expected inventory matrix blankRows and finishedRows arrays");
   }
 }
 

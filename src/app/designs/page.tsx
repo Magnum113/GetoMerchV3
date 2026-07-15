@@ -27,28 +27,20 @@ const DESIGN_TYPE_LABELS: Record<DesignType, string> = {
 
 export default function DesignsPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [countByDesign, setCountByDesign] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<Design | null>(null);
   const [binding, setBinding] = useState<Design | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
 
   async function reload() {
-    const [d, p] = await Promise.all([api.listDesigns(), api.listAllProducts({ is_blank: false })]);
+    if (designs.length === 0) setLoading(true);
+    const [d, counts] = await Promise.all([api.listDesigns(), api.listDesignProductCounts()]);
     setDesigns(d);
-    setProducts(p);
+    setCountByDesign(Object.fromEntries(counts.map((row) => [row.design_id, row.count])));
     setLoading(false);
   }
   useEffect(() => { reload(); }, []);
-
-  const countByDesign = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of products) {
-      if (!p.design_id) continue;
-      m.set(p.design_id, (m.get(p.design_id) ?? 0) + 1);
-    }
-    return m;
-  }, [products]);
 
   return (
     <div>
@@ -104,7 +96,7 @@ export default function DesignsPage() {
                   className="text-[11px] text-muted-foreground mt-2 inline-flex items-center gap-1 hover:text-foreground transition"
                 >
                   <Link2 className="h-3 w-3" />
-                  {countByDesign.get(d.id) ?? 0} SKU
+                  {countByDesign[d.id] ?? 0} SKU
                 </button>
                 <div className="text-[10px] text-muted-foreground mt-1">{formatDate(d.created_at)}</div>
               </CardContent>
@@ -117,7 +109,6 @@ export default function DesignsPage() {
       <DesignDialog design={edit ?? undefined} open={!!edit} onOpenChange={(v) => !v && setEdit(null)} onDone={reload} />
       <DesignSkuDialog
         design={binding}
-        products={products}
         designs={designs}
         open={!!binding}
         onOpenChange={(v) => !v && setBinding(null)}
@@ -129,46 +120,87 @@ export default function DesignsPage() {
 
 function DesignSkuDialog({
   design,
-  products,
   designs,
   open,
   onOpenChange,
   onDone,
 }: {
   design: Design | null;
-  products: Product[];
   designs: Design[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onDone: () => void;
 }) {
   const [search, setSearch] = useState("");
+  const [linked, setLinked] = useState<Product[]>([]);
+  const [candidates, setCandidates] = useState<Product[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [linkedLoading, setLinkedLoading] = useState(false);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
 
   useEffect(() => {
-    if (open) { setSearch(""); setSelected(new Set()); }
+    if (open) {
+      setSearch("");
+      setSelected(new Set());
+    } else {
+      setLinked([]);
+      setCandidates([]);
+    }
   }, [open, design]);
 
-  const linked = useMemo(
-    () => products.filter((p) => p.design_id === design?.id),
-    [products, design],
-  );
+  useEffect(() => {
+    let cancelled = false;
+    if (!open || !design) return;
 
-  // Кандидаты на привязку: готовые SKU с тем же типом украшения (принт→print,
-  // вышивка→embroidery), у которых сейчас другой дизайн. Меняем им design_id.
-  const candidates = useMemo(() => {
-    if (!design) return [];
-    const q = search.trim().toLowerCase();
-    return products.filter((p) => {
-      if (p.design_id === design.id) return false;
-      if (p.decoration_type?.slug !== design.type) return false;
-      if (!q) return true;
-      const h = [p.sku, p.category?.name, p.color?.name, p.size?.name, p.fabric?.name, p.design?.name]
-        .filter(Boolean).join(" ").toLowerCase();
-      return h.includes(q);
-    });
-  }, [products, design, search]);
+    setLinkedLoading(true);
+    api.listProductsForDesign(design.id)
+      .then((items) => {
+        if (!cancelled) setLinked(items);
+      })
+      .catch((e) => toast.error(errorMessage(e)))
+      .finally(() => {
+        if (!cancelled) setLinkedLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, design?.id]);
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [search, design?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const q = search.trim();
+    if (!open || !design || q.length < 2) {
+      setCandidates([]);
+      setCandidatesLoading(false);
+      return;
+    }
+
+    setCandidatesLoading(true);
+    const timer = window.setTimeout(() => {
+      api.listProductsPage({ is_blank: false, search: q, limit: 50 })
+        .then((page) => {
+          if (cancelled) return;
+          setCandidates(page.items.filter((p) => (
+            p.design_id !== design.id && p.decoration_type?.slug === design.type
+          )));
+        })
+        .catch((e) => toast.error(errorMessage(e)))
+        .finally(() => {
+          if (!cancelled) setCandidatesLoading(false);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, design, search]);
 
   // Дизайны того же типа — для перепривязки уже связанного SKU на другой дизайн.
   const sameTypeDesigns = useMemo(
@@ -193,6 +225,7 @@ function DesignSkuDialog({
       await Promise.all([...selected].map((id) => api.updateProduct(id, { design_id: design!.id })));
       toast.success(`Привязано SKU: ${selected.size}`);
       setSelected(new Set());
+      setLinked(await api.listProductsForDesign(design!.id));
       onDone();
     } catch (e) { toast.error(errorMessage(e)); }
     finally { setBusy(false); }
@@ -204,6 +237,7 @@ function DesignSkuDialog({
     try {
       await api.updateProduct(productId, { design_id: newDesignId });
       toast.success("SKU перепривязан");
+      setLinked(await api.listProductsForDesign(design!.id));
       onDone();
     } catch (e) { toast.error(errorMessage(e)); }
     finally { setBusy(false); }
@@ -225,7 +259,11 @@ function DesignSkuDialog({
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">
               Привязанные SKU ({linked.length})
             </Label>
-            {linked.length === 0 ? (
+            {linkedLoading ? (
+              <div className="text-sm text-muted-foreground rounded-md border border-dashed p-3">
+                Загрузка SKU…
+              </div>
+            ) : linked.length === 0 ? (
               <div className="text-sm text-muted-foreground rounded-md border border-dashed p-3">
                 Пока ни один SKU не привязан к этому дизайну.
               </div>
@@ -258,12 +296,19 @@ function DesignSkuDialog({
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Привязать SKU</Label>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу, цвету, размеру…" className="pl-8" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по артикулу…" className="pl-8" />
             </div>
-            {candidates.length === 0 ? (
+            {search.trim().length < 2 ? (
               <div className="text-sm text-muted-foreground rounded-md border border-dashed p-3">
-                Нет готовых SKU типа «{DESIGN_TYPE_LABELS[design.type].toLowerCase()}» для привязки.
-                Создайте новый SKU в каталоге товаров.
+                Введите минимум 2 символа артикула, чтобы найти SKU для привязки.
+              </div>
+            ) : candidatesLoading ? (
+              <div className="text-sm text-muted-foreground rounded-md border border-dashed p-3">
+                Поиск SKU…
+              </div>
+            ) : candidates.length === 0 ? (
+              <div className="text-sm text-muted-foreground rounded-md border border-dashed p-3">
+                SKU типа «{DESIGN_TYPE_LABELS[design.type].toLowerCase()}» по этому артикулу не найдены.
               </div>
             ) : (
               <div className="max-h-64 overflow-y-auto divide-y rounded-md border">
@@ -279,7 +324,7 @@ function DesignSkuDialog({
               </div>
             )}
             <div className="text-[11px] text-muted-foreground">
-              Показаны только готовые SKU с украшением «{DESIGN_TYPE_LABELS[design.type].toLowerCase()}» и другим дизайном. Привязка меняет дизайн SKU — историю продаж и транзакций это не затронет.
+              Поиск идет по артикулу. Показаны только готовые SKU с украшением «{DESIGN_TYPE_LABELS[design.type].toLowerCase()}» и другим дизайном. Привязка меняет дизайн SKU — историю продаж и транзакций это не затронет.
             </div>
           </div>
         </div>

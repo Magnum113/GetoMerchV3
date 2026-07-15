@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
-import type { Inventory, PrintInventory, Product, Size, Warehouse } from "@/lib/types";
+import type { InventoryMatrix, InventoryMatrixRow, PrintInventory, Size, Warehouse } from "@/lib/types";
 import {
   Package,
   Shirt,
@@ -18,80 +18,31 @@ type WarehouseFilter = "all" | string;
 const MIN_STOCK = 2;
 
 export function InventoryDashboard({
-  inv,
+  matrix,
   prints,
   warehouses,
   sizes,
-  products,
   loading,
 }: {
-  inv: Inventory[];
+  matrix: InventoryMatrix;
   prints: PrintInventory[];
   warehouses: Warehouse[];
   sizes: Size[];
-  products: Product[];
   loading: boolean;
 }) {
   const [whFilter, setWhFilter] = useState<WarehouseFilter>("all");
   const [hideEmpty, setHideEmpty] = useState(true);
-
-  // ---- Сток по продукту с учётом фильтра склада
-  const stockByProduct = useMemo(() => {
-    const m = new Map<string, { total: number; byWh: Map<string, number> }>();
-    for (const r of inv) {
-      if (whFilter !== "all" && r.warehouse_id !== whFilter) continue;
-      const e = m.get(r.product_id) ?? { total: 0, byWh: new Map() };
-      e.total += r.quantity;
-      e.byWh.set(r.warehouse_id, (e.byWh.get(r.warehouse_id) ?? 0) + r.quantity);
-      m.set(r.product_id, e);
-    }
-    return m;
-  }, [inv, whFilter]);
 
   const sortedSizes = useMemo(
     () => [...sizes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
     [sizes]
   );
 
-  // ---- Строим матрицу из каталога продуктов (а не из инвентаря).
-  // Это позволяет показать ячейки даже там, где остаток = 0.
+  // Сервер строит матрицу от каталога, чтобы здесь не грузить полный список SKU.
+  // На клиенте пересчитываем только выбранный склад и подсветку дефицитов.
   const { blankRows, finishedRows } = useMemo(() => {
-    const groups = new Map<string, MatrixRow>();
-    for (const p of products) {
-      const isBlank = !!p.is_blank;
-      // Готовые без offer_id (sku) скорее всего «внутренние» — пропускаем
-      if (!isBlank && !p.sku) continue;
-
-      const key = isBlank
-        ? `b|${p.category_id}|${p.fabric_id}|${p.color_id}`
-        : `f|${p.category_id}|${p.fabric_id}|${p.color_id}|${p.design_id}|${p.decoration_type_id}`;
-
-      let row = groups.get(key);
-      if (!row) {
-        row = {
-          key,
-          isBlank,
-          label: `${p.category?.name ?? ""} ${p.fabric?.name?.toLowerCase() ?? ""}`,
-          subLabel: p.color?.name ?? "",
-          hex: p.color?.hex_code ?? null,
-          designLabel: isBlank ? null : `${p.decoration_type?.name ?? ""}: ${p.design?.name ?? ""}`,
-          cells: {},
-          total: 0,
-          shortageCount: 0,
-          missingCount: 0,
-        };
-        groups.set(key, row);
-      }
-
-      const stock = stockByProduct.get(p.id);
-      const total = stock?.total ?? 0;
-      const byWh = stock?.byWh ?? new Map();
-      row.cells[p.size_id] = { qty: total, byWh, hasProduct: true };
-      row.total += total;
-      if (total < MIN_STOCK) row.shortageCount++;
-      if (total === 0) row.missingCount++;
-    }
-    const all = Array.from(groups.values()).sort((a, b) => {
+    const all = [...matrix.blankRows, ...matrix.finishedRows].map((row) => rowForWarehouse(row, whFilter));
+    all.sort((a, b) => {
       const al = `${a.label} ${a.designLabel ?? ""} ${a.subLabel}`;
       const bl = `${b.label} ${b.designLabel ?? ""} ${b.subLabel}`;
       return al.localeCompare(bl, "ru");
@@ -100,7 +51,7 @@ export function InventoryDashboard({
       blankRows: all.filter((r) => r.isBlank),
       finishedRows: all.filter((r) => !r.isBlank),
     };
-  }, [products, stockByProduct]);
+  }, [matrix, whFilter]);
 
   const activeWarehouse = whFilter === "all" ? null : warehouses.find((w) => w.id === whFilter) ?? null;
   // В цехе вышивки готовые не задерживаются — отправляются клиенту или на свой склад.
@@ -178,6 +129,44 @@ export function InventoryDashboard({
 }
 
 // ---------- subcomponents ----------
+
+function rowForWarehouse(row: InventoryMatrixRow, whFilter: WarehouseFilter): MatrixRow {
+  const cells: Record<string, MatrixCell> = {};
+  let total = 0;
+  let shortageCount = 0;
+  let missingCount = 0;
+
+  for (const [sizeId, cell] of Object.entries(row.cells)) {
+    const byWh = new Map<string, number>();
+    let qty = 0;
+
+    if (whFilter === "all") {
+      for (const [warehouseId, value] of Object.entries(cell.byWh)) {
+        const count = Number(value) || 0;
+        if (count <= 0) continue;
+        byWh.set(warehouseId, count);
+        qty += count;
+      }
+    } else {
+      const count = Number(cell.byWh[whFilter]) || 0;
+      if (count > 0) byWh.set(whFilter, count);
+      qty = count;
+    }
+
+    cells[sizeId] = { qty, byWh, hasProduct: cell.hasProduct };
+    total += qty;
+    if (qty < MIN_STOCK) shortageCount++;
+    if (qty === 0) missingCount++;
+  }
+
+  return {
+    ...row,
+    cells,
+    total,
+    shortageCount,
+    missingCount,
+  };
+}
 
 interface MatrixCell {
   qty: number;
