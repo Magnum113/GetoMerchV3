@@ -64,16 +64,12 @@ export async function fetchProductPageViaPostgres(limit: number, offset: number)
 export async function hydrateProductsViaPostgres(products: Product[]) {
   if (products.length === 0) return products;
 
-  const categories = await fetchCategories(unique(products.map((product) => product.category_id)));
-  const fabrics = await fetchFabrics(unique(products.map((product) => product.fabric_id)));
-  const colors = await fetchColors(unique(products.map((product) => product.color_id)));
-  const sizes = await fetchSizes(unique(products.map((product) => product.size_id)));
-  const designs = await fetchDesigns(
-    unique(products.map((product) => product.design_id).filter(Boolean) as string[]),
-  );
-  const decorationTypes = await fetchDecorationTypes(
-    unique(products.map((product) => product.decoration_type_id).filter(Boolean) as string[]),
-  );
+  const categories = await fetchCategories();
+  const fabrics = await fetchFabrics();
+  const colors = await fetchColors();
+  const sizes = await fetchSizes();
+  const designs = await fetchDesigns();
+  const decorationTypes = await fetchDecorationTypes();
 
   return products.map((product) => ({
     ...product,
@@ -88,80 +84,62 @@ export async function hydrateProductsViaPostgres(products: Product[]) {
   }));
 }
 
-async function fetchCategories(ids: string[]) {
-  if (ids.length === 0) return new Map<string, ProductCategory>();
+async function fetchCategories() {
   const result = await adminDbQuery<ProductCategory>(
     `
       SELECT id, name, slug, created_at
       FROM merch_product_categories
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
 
-async function fetchFabrics(ids: string[]) {
-  if (ids.length === 0) return new Map<string, FabricType>();
+async function fetchFabrics() {
   const result = await adminDbQuery<FabricType>(
     `
       SELECT id, name, slug, created_at
       FROM merch_fabric_types
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
 
-async function fetchColors(ids: string[]) {
-  if (ids.length === 0) return new Map<string, Color>();
+async function fetchColors() {
   const result = await adminDbQuery<Color>(
     `
       SELECT id, name, hex_code, created_at
       FROM merch_colors
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
 
-async function fetchSizes(ids: string[]) {
-  if (ids.length === 0) return new Map<string, Size>();
+async function fetchSizes() {
   const result = await adminDbQuery<Size>(
     `
       SELECT id, name, sort_order, created_at
       FROM merch_sizes
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
 
-async function fetchDesigns(ids: string[]) {
-  if (ids.length === 0) return new Map<string, Design>();
+async function fetchDesigns() {
   const result = await adminDbQuery<Design>(
     `
       SELECT id, name, type, code, description, image_url, created_at
       FROM merch_designs
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
 
-async function fetchDecorationTypes(ids: string[]) {
-  if (ids.length === 0) return new Map<string, DecorationType>();
+async function fetchDecorationTypes() {
   const result = await adminDbQuery<DecorationType>(
     `
       SELECT id, name, slug, made_at, created_at
       FROM merch_decoration_types
-      WHERE id = ANY($1::uuid[])
     `,
-    [ids],
   );
   return byId(result.rows);
 }
