@@ -12,9 +12,11 @@ type StockRef = {
   quantity: number;
 };
 
-const PAGE_SIZE = 1000;
+const PRODUCT_SELECT = "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank";
+const PAGE_SIZE = 200;
 const MAX_PRODUCTS = 20_000;
 const MAX_INVENTORY_ROWS = 20_000;
+const QUERY_TIMEOUT_MS = 15_000;
 
 export async function GET() {
   try {
@@ -37,14 +39,17 @@ async function fetchProducts() {
   let offset = 0;
 
   while (offset < MAX_PRODUCTS) {
-    const { data, error } = await getAdminSupabaseClient()
-      .from("merch_products")
-      .select("*")
-      .order("sku", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    assertNoSupabaseError(error);
+    const page = await queryWithRetry(`merch_products matrix page ${offset}`, async (signal) => {
+      const { data, error } = await getAdminSupabaseClient()
+        .from("merch_products")
+        .select(PRODUCT_SELECT)
+        .order("sku", { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)
+        .abortSignal(signal);
+      if (error) throw error;
+      return (data ?? []) as Product[];
+    });
 
-    const page = (data ?? []) as Product[];
     out.push(...page);
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
@@ -58,20 +63,48 @@ async function fetchInventoryRows() {
   let offset = 0;
 
   while (offset < MAX_INVENTORY_ROWS) {
-    const { data, error } = await getAdminSupabaseClient()
-      .from("merch_inventory")
-      .select("product_id,warehouse_id,quantity")
-      .gt("quantity", 0)
-      .range(offset, offset + PAGE_SIZE - 1);
-    assertNoSupabaseError(error);
+    const page = await queryWithRetry(`merch_inventory matrix page ${offset}`, async (signal) => {
+      const { data, error } = await getAdminSupabaseClient()
+        .from("merch_inventory")
+        .select("product_id,warehouse_id,quantity")
+        .gt("quantity", 0)
+        .range(offset, offset + PAGE_SIZE - 1)
+        .abortSignal(signal);
+      if (error) throw error;
+      return (data ?? []) as StockRef[];
+    });
 
-    const page = (data ?? []) as StockRef[];
     out.push(...page);
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
 
   return out;
+}
+
+async function queryWithRetry<T>(label: string, query: (signal: AbortSignal) => Promise<T>) {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
+    try {
+      return await query(controller.signal);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt < 3) await delay(300 * attempt);
+  }
+
+  assertNoSupabaseError(lastError, `Failed to load ${label}`);
+  throw lastError;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildInventoryMatrix(products: Product[], inventory: StockRef[]): InventoryMatrix {
