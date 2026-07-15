@@ -218,9 +218,9 @@ export async function POST(req: Request) {
       : fetchUnfulfilledPostings();
     const [postings, products] = await Promise.all([
       fetcher,
-      supabaseQuery<Array<{ id: string; sku: string | null; legacy_skus: string[] | null }>>(
+      supabaseQuery<Array<{ id: string; sku: string | null }>>(
         "products select",
-        supabase.from("merch_products").select("id, sku, legacy_skus").not("sku", "is", null),
+        supabase.from("merch_products").select("id, sku").not("sku", "is", null).limit(5000),
       ),
     ]);
 
@@ -228,11 +228,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, scope, fetched: 0, created: 0, updated: 0, unmatchedItems: 0, unmatchedSamples: [] });
     }
 
-    // Карта offer_id → product_id (включает legacy_skus для переименованных в Ozon артикулов)
+    // Карта offer_id → product_id. legacy_skus не читаем в sync route:
+    // на production PostgREST выборка этой колонки может зависать и ломать синхронизацию заказов.
     const productByOffer = new Map<string, string>();
     for (const p of products ?? []) {
       if (p.sku) productByOffer.set(String(p.sku), p.id);
-      for (const ls of p.legacy_skus ?? []) productByOffer.set(String(ls), p.id);
     }
 
     // 2) UPSERT всех заказов разом. Колонки, отсутствующие в payload (shipped_at,
