@@ -115,5 +115,13 @@ function safeErrorForLog(error: unknown) {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
   }
+  if (error && typeof error === "object") {
+    const source = error as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+    for (const key of ["name", "message", "code", "details", "hint"]) {
+      if (source[key]) output[key] = source[key];
+    }
+    if (Object.keys(output).length > 0) return output;
+  }
   return { message: String(error) };
 }

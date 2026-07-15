@@ -10,7 +10,7 @@ const checks = [
   { name: "catalog without cookie returns 401", run: () => expectStatus("/api/admin/catalog", 401) },
   { name: "products validation returns 400", run: () => expectStatus("/api/admin/products?limit=not-a-number", 400, authCookie()) },
   { name: "health with valid cookie returns 200", run: () => expectStatus("/api/admin/health", 200, authCookie()) },
-  { name: "products read-only with valid cookie returns 200", run: () => expectStatus("/api/admin/products?limit=1", 200, authCookie()) },
+  { name: "products read-only with valid cookie returns 200", run: () => expectStatus("/api/admin/products?limit=50&is_blank=false", 200, authCookie()) },
   {
     name: "admin RPC without cookie returns 401",
     run: () => expectStatus("/api/admin/rpc", 401, undefined, rpcInit("listWarehouses")),
