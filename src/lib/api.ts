@@ -39,6 +39,39 @@ async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
   return payload.data as T;
 }
 
+async function adminGet<T>(path: string, params: Record<string, string | number | boolean | null | undefined> = {}): Promise<T> {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const href = search.size > 0 ? `${path}?${search.toString()}` : path;
+  const response = await fetch(href);
+  const payload = await readJson<ApiResponse<T>>(response);
+  if (!response.ok || !payload?.ok) {
+    throw apiError(response, payload);
+  }
+  return payload.data as T;
+}
+
+async function adminGetAllProducts(filters?: { is_blank?: boolean; design_id?: string }) {
+  const pageSize = 50;
+  const maxRows = 5000;
+  const out: Product[] = [];
+
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const page = await adminGet<Product[]>("/api/admin/products", {
+      limit: pageSize,
+      offset,
+      is_blank: filters?.is_blank,
+      design_id: filters?.design_id,
+    });
+    out.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  return out;
+}
+
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
   const payload = await readJson<Record<string, unknown>>(response);
@@ -101,8 +134,7 @@ export const api = {
   listDesigns: (filters?: { type?: DesignType }) => adminRpc<Design[]>("listDesigns", [filters]),
 
   // ---------- PRODUCTS ----------
-  listProducts: (filters?: { is_blank?: boolean; design_id?: string }) =>
-    adminRpc<Product[]>("listProducts", [filters]),
+  listProducts: (filters?: { is_blank?: boolean; design_id?: string }) => adminGetAllProducts(filters),
   findOrCreateProduct: (input: {
     category_id: string;
     fabric_id: string;
@@ -123,14 +155,16 @@ export const api = {
   deleteProduct: (id: string) => adminRpc<void>("deleteProduct", [id]),
 
   // ---------- INVENTORY ----------
-  listInventory: (warehouseId?: string) => adminRpc<Inventory[]>("listInventory", [warehouseId]),
+  listInventory: (warehouseId?: string) =>
+    adminGet<Inventory[]>("/api/admin/inventory", { limit: 1000, warehouse_id: warehouseId }),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),
   adjustInventory: (productId: string, warehouseId: string, delta: number) =>
     adminRpc<void>("adjustInventory", [productId, warehouseId, delta]),
 
   // ---------- TRANSACTIONS ----------
-  listTransactions: (limit = 100) => adminRpc<Transaction[]>("listTransactions", [limit]),
+  listTransactions: (limit = 100) =>
+    adminGet<Transaction[]>("/api/admin/inventory/movements", { limit }),
   receive: (args: { productId: string; warehouseId: string; quantity: number; notes?: string }) =>
     adminRpc<void>("receive", [args]),
   transfer: (args: {
@@ -169,7 +203,7 @@ export const api = {
     adminRpc<void>("adjustPrint", [args]),
 
   // ---------- WORKSHOP ORDERS ----------
-  listWorkshopOrders: () => adminRpc<WorkshopOrder[]>("listWorkshopOrders"),
+  listWorkshopOrders: () => adminGet<WorkshopOrder[]>("/api/admin/workshop/orders", { limit: 500 }),
   createWorkshopOrder: (args: {
     workshopId: string;
     notes?: string;
@@ -190,7 +224,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminRpc<OzonOrder[]>("listOzonOrders"),
+  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 500 }),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),
@@ -268,7 +302,12 @@ export const api = {
   ) => adminRpc<void>("updateExpenseCategory", [id, patch]),
   deleteExpenseCategory: (id: string) => adminRpc<void>("deleteExpenseCategory", [id]),
   listExpenses: (filters?: { from?: string; to?: string; categoryId?: string }) =>
-    adminRpc<Expense[]>("listExpenses", [filters]),
+    adminGet<Expense[]>("/api/admin/expenses", {
+      limit: 1000,
+      from: filters?.from,
+      to: filters?.to,
+      category_id: filters?.categoryId,
+    }),
   createExpense: (input: { categoryId: string | null; amount: number; occurredAt: string; description?: string | null }) =>
     adminRpc<void>("createExpense", [input]),
   updateExpense: (
@@ -277,7 +316,11 @@ export const api = {
   ) => adminRpc<void>("updateExpense", [id, patch]),
   deleteExpense: (id: string) => adminRpc<void>("deleteExpense", [id]),
   listFinanceOperations: (filters?: { from?: string; to?: string }) =>
-    adminRpc<OzonFinanceOperation[]>("listFinanceOperations", [filters]),
+    adminGet<OzonFinanceOperation[]>("/api/admin/finance/ozon", {
+      limit: 1000,
+      from: filters?.from,
+      to: filters?.to,
+    }),
   listOzonSkuProductMap: () =>
     adminRpc<Array<{ ozon_sku: string; product: Product }>>("listOzonSkuProductMap"),
   lastFinanceSyncAt: () => adminRpc<string | null>("lastFinanceSyncAt"),

@@ -82,6 +82,20 @@ export function parseLimitParam(
   return parsed;
 }
 
+export function parseOffsetParam(value: string | null) {
+  if (!value) return 0;
+  if (!/^\d+$/.test(value)) {
+    throw new AdminApiError(400, "bad_request", "Invalid offset parameter");
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new AdminApiError(400, "bad_request", "Invalid offset parameter");
+  }
+
+  return parsed;
+}
+
 export function parseBooleanParam(value: string | null, name: string) {
   if (value == null || value === "") return undefined;
   if (value === "true") return true;
