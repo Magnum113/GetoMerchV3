@@ -8,7 +8,7 @@ import {
   requireUuidParam,
 } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { ADMIN_INVENTORY_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { Inventory, Product, Warehouse } from "@/lib/types";
@@ -67,12 +67,7 @@ export async function GET(request: NextRequest) {
 async function listInventoryViaPostgres(limit: number, warehouseId: string | null) {
   const result = await adminDbQuery<{ row: Inventory }>(
     `
-      SELECT
-        to_jsonb(i)
-          || jsonb_build_object(
-            'product', ${ADMIN_PRODUCT_JSON},
-            'warehouse', to_jsonb(w)
-          ) AS row
+      SELECT ${ADMIN_INVENTORY_JSON} AS row
       FROM merch_inventory i
       LEFT JOIN merch_products p ON p.id = i.product_id
       ${ADMIN_PRODUCT_RELATION_JOINS}

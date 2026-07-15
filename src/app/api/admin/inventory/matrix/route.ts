@@ -17,6 +17,7 @@ type StockRef = {
 const PRODUCT_SELECT = "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank";
 const PRODUCT_PAGE_SIZE = 25;
 const INVENTORY_PAGE_SIZE = 200;
+const POSTGRES_PRODUCT_PAGE_SIZE = 50;
 const MAX_PRODUCTS = 20_000;
 const MAX_INVENTORY_ROWS = 20_000;
 const QUERY_TIMEOUT_MS = 15_000;
@@ -46,17 +47,26 @@ export async function GET() {
 }
 
 async function fetchProductsViaPostgres() {
-  const result = await adminDbQuery<{ product: Product }>(
-    `
-      SELECT ${ADMIN_PRODUCT_JSON} AS product
-      FROM merch_products p
-      ${ADMIN_PRODUCT_RELATION_JOINS}
-      ORDER BY p.sku
-      LIMIT $1
-    `,
-    [MAX_PRODUCTS],
-  );
-  return result.rows.map((row) => row.product);
+  const out: Product[] = [];
+  let offset = 0;
+
+  while (offset < MAX_PRODUCTS) {
+    const result = await adminDbQuery<{ product: Product }>(
+      `
+        SELECT ${ADMIN_PRODUCT_JSON} AS product
+        FROM merch_products p
+        ${ADMIN_PRODUCT_RELATION_JOINS}
+        ORDER BY p.sku
+        LIMIT $1 OFFSET $2
+      `,
+      [POSTGRES_PRODUCT_PAGE_SIZE, offset],
+    );
+    out.push(...result.rows.map((row) => row.product));
+    if (result.rows.length < POSTGRES_PRODUCT_PAGE_SIZE) break;
+    offset += POSTGRES_PRODUCT_PAGE_SIZE;
+  }
+
+  return out;
 }
 
 async function fetchInventoryRowsViaPostgres() {

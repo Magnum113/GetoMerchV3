@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
+import { ADMIN_OZON_ORDER_ITEM_JSON, ADMIN_PRODUCT_RELATION_JOINS } from "@/lib/admin/product-sql";
 import { ADMIN_PRODUCT_SELECT_INLINE } from "@/lib/admin/selects";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, WorkshopOrder } from "@/lib/types";
@@ -107,7 +107,7 @@ async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
     `
       SELECT
         i.order_id,
-        to_jsonb(i) || jsonb_build_object('product', ${ADMIN_PRODUCT_JSON}) AS item
+        ${ADMIN_OZON_ORDER_ITEM_JSON} AS item
       FROM merch_ozon_order_items i
       LEFT JOIN merch_products p ON p.id = i.product_id
       ${ADMIN_PRODUCT_RELATION_JOINS}
