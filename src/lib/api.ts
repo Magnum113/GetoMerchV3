@@ -68,21 +68,26 @@ async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
   return payload.data as T;
 }
 
-async function adminGet<T>(path: string, params: Record<string, string | number | boolean | null | undefined> = {}): Promise<T> {
-  const payload = await adminGetPayload<T>(path, params);
+async function adminGet<T>(
+  path: string,
+  params: Record<string, string | number | boolean | null | undefined> = {},
+  timeoutMs = ADMIN_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const payload = await adminGetPayload<T>(path, params, timeoutMs);
   return payload.data as T;
 }
 
 async function adminGetPayload<T>(
   path: string,
   params: Record<string, string | number | boolean | null | undefined> = {},
+  timeoutMs = ADMIN_REQUEST_TIMEOUT_MS,
 ): Promise<ApiSuccess<T>> {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const href = search.size > 0 ? `${path}?${search.toString()}` : path;
-  const response = await adminFetch(href);
+  const response = await adminFetch(href, {}, timeoutMs);
   const payload = await readJson<ApiResponse<T> & { meta?: Record<string, unknown> }>(response);
   if (!response.ok || !payload?.ok) {
     throw apiError(response, payload);
@@ -103,15 +108,15 @@ async function adminPost<T>(path: string, body: unknown): Promise<T> {
   return payload.data as T;
 }
 
-async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = ADMIN_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ADMIN_REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Админка не получила ответ от сервера за 30 секунд. Обновите страницу или повторите действие.");
+      throw new Error(`Админка не получила ответ от сервера за ${Math.round(timeoutMs / 1000)} секунд. Обновите страницу или повторите действие.`);
     }
     throw error;
   } finally {
@@ -248,8 +253,8 @@ export const api = {
 
   // ---------- INVENTORY ----------
   listInventory: (warehouseId?: string) =>
-    adminGet<Inventory[]>("/api/admin/inventory", { limit: 500, warehouse_id: warehouseId }),
-  listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix"),
+    adminGet<Inventory[]>("/api/admin/inventory", { limit: 10, warehouse_id: warehouseId }),
+  listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix", {}, 180_000),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),
   adjustInventory: (productId: string, warehouseId: string, delta: number) =>
@@ -317,7 +322,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 50 }),
+  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 5 }),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),
