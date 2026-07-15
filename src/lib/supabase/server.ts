@@ -1,12 +1,10 @@
 import "server-only";
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { AdminApiError } from "@/lib/admin/http";
 
 type ServerSupabaseKeyMode = "service_role" | "server" | "anon_fallback";
 
-let cachedClient: SupabaseClient | null = null;
-let cachedIdentity = "";
 let cachedMode: ServerSupabaseKeyMode | null = null;
 
 export function getAdminSupabaseClient() {
@@ -15,20 +13,16 @@ export function getAdminSupabaseClient() {
     "Supabase URL is not configured",
   );
   const keyInfo = readServerKey();
-  const identity = `${url}:${keyInfo.mode}`;
 
-  if (!cachedClient || cachedIdentity !== identity) {
-    cachedClient = createClient(url, keyInfo.key, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-    cachedIdentity = identity;
-    cachedMode = keyInfo.mode;
-  }
-
-  return cachedClient;
+  return createClient(url, keyInfo.key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+    global: {
+      fetch: adminSupabaseFetch,
+    },
+  });
 }
 
 export function getAdminSupabaseKeyMode() {
@@ -78,4 +72,8 @@ function readEnv(names: string[]) {
     if (value) return value;
   }
   return "";
+}
+
+function adminSupabaseFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
 }
