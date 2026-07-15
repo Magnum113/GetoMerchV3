@@ -23,12 +23,14 @@ export function InventoryDashboard({
   warehouses,
   sizes,
   loading,
+  matrixLoading,
 }: {
   matrix: InventoryMatrix;
   prints: PrintInventory[];
   warehouses: Warehouse[];
   sizes: Size[];
   loading: boolean;
+  matrixLoading?: boolean;
 }) {
   const [whFilter, setWhFilter] = useState<WarehouseFilter>("all");
   const [hideEmpty, setHideEmpty] = useState(true);
@@ -99,7 +101,7 @@ export function InventoryDashboard({
 
       <MatrixCard
         title="Пустые по размерам"
-        description="Заготовки для нанесения принта или вышивки"
+        description={matrixLoading ? "Матрица обновляется..." : "Заготовки для нанесения принта или вышивки"}
         icon={Shirt}
         sizes={sortedSizes}
         rows={sortedBlankRows}
@@ -209,9 +211,9 @@ function MatrixCard({
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
-          <Icon className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-lg font-semibold">{title}</CardTitle>
-        </div>
+            <Icon className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-lg font-semibold">{title}</CardTitle>
+          </div>
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </CardHeader>
       <CardContent className="pt-0">

@@ -35,10 +35,15 @@ export default function DesignsPage() {
 
   async function reload() {
     if (designs.length === 0) setLoading(true);
-    const [d, counts] = await Promise.all([api.listDesigns(), api.listDesignProductCounts()]);
-    setDesigns(d);
-    setCountByDesign(Object.fromEntries(counts.map((row) => [row.design_id, row.count])));
-    setLoading(false);
+    try {
+      const [d, counts] = await Promise.all([api.listDesigns(), api.listDesignProductCounts()]);
+      setDesigns(d);
+      setCountByDesign(Object.fromEntries(counts.map((row) => [row.design_id, row.count])));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { reload(); }, []);
 

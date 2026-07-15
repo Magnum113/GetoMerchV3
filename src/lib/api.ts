@@ -51,8 +51,10 @@ type DesignProductCount = {
   count: number;
 };
 
+const ADMIN_REQUEST_TIMEOUT_MS = 30_000;
+
 async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
-  const response = await fetch("/api/admin/rpc", {
+  const response = await adminFetch("/api/admin/rpc", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, args }),
@@ -80,7 +82,7 @@ async function adminGetPayload<T>(
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const href = search.size > 0 ? `${path}?${search.toString()}` : path;
-  const response = await fetch(href);
+  const response = await adminFetch(href);
   const payload = await readJson<ApiResponse<T> & { meta?: Record<string, unknown> }>(response);
   if (!response.ok || !payload?.ok) {
     throw apiError(response, payload);
@@ -89,7 +91,7 @@ async function adminGetPayload<T>(
 }
 
 async function adminPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await adminFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -99,6 +101,22 @@ async function adminPost<T>(path: string, body: unknown): Promise<T> {
     throw apiError(response, payload);
   }
   return payload.data as T;
+}
+
+async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ADMIN_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Админка не получила ответ от сервера за 30 секунд. Обновите страницу или повторите действие.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function adminGetProductsPage(
@@ -230,7 +248,7 @@ export const api = {
 
   // ---------- INVENTORY ----------
   listInventory: (warehouseId?: string) =>
-    adminGet<Inventory[]>("/api/admin/inventory", { limit: 1000, warehouse_id: warehouseId }),
+    adminGet<Inventory[]>("/api/admin/inventory", { limit: 500, warehouse_id: warehouseId }),
   listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix"),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),
@@ -299,7 +317,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 500 }),
+  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 50 }),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),

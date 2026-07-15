@@ -90,19 +90,24 @@ export default function OrdersPage() {
 
   async function reload() {
     setLoading(true);
-    const [o, w, i, pr] = await Promise.all([
-      api.listOzonOrders(),
-      api.listWarehouses(),
-      api.listInventory(),
-      api.listPrintInventory(),
-    ]);
-    const b = await api.listMatchingBlankProducts(blankKeysFromOrders(o));
-    setOrders(o);
-    setWarehouses(w);
-    setInv(i);
-    setBlanks(b);
-    setPrints(pr);
-    setLoading(false);
+    try {
+      const [o, w, i, pr] = await Promise.all([
+        api.listOzonOrders(),
+        api.listWarehouses(),
+        api.listInventory(),
+        api.listPrintInventory(),
+      ]);
+      const b = await api.listMatchingBlankProducts(blankKeysFromOrders(o));
+      setOrders(o);
+      setWarehouses(w);
+      setInv(i);
+      setBlanks(b);
+      setPrints(pr);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { reload(); }, []);
 

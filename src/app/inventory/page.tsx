@@ -16,7 +16,8 @@ import { InventoryDashboard } from "@/components/inventory-dashboard";
 import { api } from "@/lib/api";
 import type { Inventory, InventoryMatrix, PrintInventory, Size, Warehouse } from "@/lib/types";
 import { Warehouse as WarehouseIcon, Search, Image as ImageIcon, LayoutGrid } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { formatDate, errorMessage } from "@/lib/utils";
+import { toast } from "sonner";
 
 type Mode = "dashboard" | "products" | "prints";
 
@@ -27,25 +28,40 @@ export default function InventoryPage() {
   const [prints, setPrints] = useState<PrintInventory[]>([]);
   const [sizes, setSizes] = useState<Size[]>([]);
   const [matrix, setMatrix] = useState<InventoryMatrix>({ blankRows: [], finishedRows: [] });
+  const [matrixLoading, setMatrixLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "blank" | "finished">("all");
   const [loading, setLoading] = useState(true);
 
   async function reload() {
     setLoading(true);
-    const [w, i, p, s, m] = await Promise.all([
-      api.listWarehouses(),
-      api.listInventory(),
-      api.listPrintInventory(),
-      api.listSizes(),
-      api.listInventoryMatrix(),
-    ]);
-    setWarehouses(w);
-    setInv(i);
-    setPrints(p);
-    setSizes(s);
-    setMatrix(m);
-    setLoading(false);
+    setMatrixLoading(true);
+    try {
+      const [w, i, p, s] = await Promise.all([
+        api.listWarehouses(),
+        api.listInventory(),
+        api.listPrintInventory(),
+        api.listSizes(),
+      ]);
+      setWarehouses(w);
+      setInv(i);
+      setPrints(p);
+      setSizes(s);
+    } catch (e) {
+      toast.error(errorMessage(e));
+      setMatrixLoading(false);
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    try {
+      setMatrix(await api.listInventoryMatrix());
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setMatrixLoading(false);
+    }
   }
 
   useEffect(() => { reload(); }, []);
@@ -132,7 +148,7 @@ export default function InventoryPage() {
       )}
 
       {mode === "dashboard" ? (
-        <InventoryDashboard matrix={matrix} prints={prints} warehouses={warehouses} sizes={sizes} loading={loading} />
+        <InventoryDashboard matrix={matrix} prints={prints} warehouses={warehouses} sizes={sizes} loading={loading} matrixLoading={matrixLoading} />
       ) : mode === "products" ? (
         <Tabs defaultValue="all">
           <TabsList>
