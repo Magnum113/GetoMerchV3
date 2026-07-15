@@ -13,7 +13,8 @@ type StockRef = {
 };
 
 const PRODUCT_SELECT = "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank";
-const PAGE_SIZE = 200;
+const PRODUCT_PAGE_SIZE = 25;
+const INVENTORY_PAGE_SIZE = 200;
 const MAX_PRODUCTS = 20_000;
 const MAX_INVENTORY_ROWS = 20_000;
 const QUERY_TIMEOUT_MS = 15_000;
@@ -44,15 +45,15 @@ async function fetchProducts() {
         .from("merch_products")
         .select(PRODUCT_SELECT)
         .order("sku", { ascending: true })
-        .range(offset, offset + PAGE_SIZE - 1)
+        .range(offset, offset + PRODUCT_PAGE_SIZE - 1)
         .abortSignal(signal);
       if (error) throw error;
       return (data ?? []) as Product[];
     });
 
     out.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    if (page.length < PRODUCT_PAGE_SIZE) break;
+    offset += PRODUCT_PAGE_SIZE;
   }
 
   return hydrateProducts(out);
@@ -68,15 +69,15 @@ async function fetchInventoryRows() {
         .from("merch_inventory")
         .select("product_id,warehouse_id,quantity")
         .gt("quantity", 0)
-        .range(offset, offset + PAGE_SIZE - 1)
+        .range(offset, offset + INVENTORY_PAGE_SIZE - 1)
         .abortSignal(signal);
       if (error) throw error;
       return (data ?? []) as StockRef[];
     });
 
     out.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    if (page.length < INVENTORY_PAGE_SIZE) break;
+    offset += INVENTORY_PAGE_SIZE;
   }
 
   return out;
