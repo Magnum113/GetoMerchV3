@@ -327,6 +327,48 @@ Browser
 - ошибки не раскрывают токены, SQL и env;
 - имеются тесты минимум на auth, validation и основные CRUD-операции.
 
+### Статус внедрения на 15 июля 2026
+
+Сделано:
+
+- добавлен `requireAdminSession()` для Route Handlers:
+  `src/lib/admin/auth.ts`;
+- добавлен server-only Supabase client:
+  `src/lib/supabase/server.ts`;
+- client import защищён через `import "server-only"`, ключи читаются лениво из
+  runtime env;
+- поддержаны server env:
+  `GETOMERCH_SUPABASE_URL`, `GETOMERCH_SUPABASE_SERVICE_ROLE_KEY`,
+  `GETOMERCH_SUPABASE_SERVER_KEY`, с временным `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  fallback для переходного режима;
+- добавлен единый формат ответов и sanitizing ошибок:
+  `src/lib/admin/http.ts`;
+- добавлены read-only BFF endpoints:
+  - `/api/admin/health`;
+  - `/api/admin/catalog`;
+  - `/api/admin/products`;
+  - `/api/admin/inventory`;
+  - `/api/admin/inventory/movements`;
+  - `/api/admin/ozon/orders`;
+  - `/api/admin/workshop/orders`;
+  - `/api/admin/expenses`;
+  - `/api/admin/finance/ozon`;
+  - `/api/admin/import/ozon/runs`;
+- добавлен smoke/check script `npm run check:admin-bff -- <base_url>`:
+  проверяет `401` без cookie, validation `400` и read-only запросы с валидной
+  cookie;
+- deploy scan дополнен server-only Supabase env names:
+  `GETOMERCH_SUPABASE_SERVICE_ROLE_KEY`, `GETOMERCH_SUPABASE_SERVER_KEY`,
+  `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SERVER_KEY`.
+
+Что остаётся для следующих этапов:
+
+- перевести UI со старого browser Supabase client на новые `/api/admin/...`;
+- добавить mutation endpoints только через BFF: validation, allowlist,
+  audit log, идемпотентность;
+- после миграции UI закрыть Supabase RLS для anon-записей;
+- вынести составные операции в транзакционные RPC.
+
 ---
 
 ## Этап 5. Перевести UI с прямого Supabase на BFF

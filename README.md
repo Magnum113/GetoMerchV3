@@ -62,6 +62,20 @@ NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<publishable_key>
 ```
 
+Новый server-side BFF для админских Supabase-запросов читает URL и ключи
+только из server env. В переходном режиме он может использовать anon fallback,
+но целевое состояние перед закрытием RLS — service role key или отдельный
+ограниченный серверный ключ:
+
+```env
+GETOMERCH_SUPABASE_URL=https://<ref>.supabase.co
+GETOMERCH_SUPABASE_SERVICE_ROLE_KEY=<server_only_key>
+# или GETOMERCH_SUPABASE_SERVER_KEY=<restricted_server_key>
+```
+
+Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
+сканирует client bundle на утечки имён server-only env.
+
 Для серверных Ozon-операций дополнительно используются ключи Ozon из
 `.env.local`.
 
