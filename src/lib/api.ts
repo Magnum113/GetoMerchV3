@@ -55,7 +55,7 @@ async function adminGet<T>(path: string, params: Record<string, string | number 
 
 async function adminGetAllProducts(filters?: { is_blank?: boolean; design_id?: string }) {
   const pageSize = 50;
-  const maxRows = 5000;
+  const maxRows = 50;
   const out: Product[] = [];
   let beforeCreatedAt: string | undefined;
 

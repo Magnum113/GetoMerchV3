@@ -436,6 +436,15 @@ RLS можно безопасно закрыть только после тог�
   `src/components/**/*.tsx` не находит административных browser-side
   Supabase `.from(...)`.
 
+Ограничение, найденное при production smoke:
+
+- большие/следующие страницы `merch_products` через Supabase REST могут
+  отвечать десятки секунд; чтобы UI не зависал, client wrapper временно читает
+  первую страницу товаров (`50` строк) через BFF;
+- перед этапом 6 нужно отдельно сделать нормальную пагинацию товаров:
+  keyset через индексированный SQL/RPC либо прямой server Postgres connection,
+  затем выполнить ручной regression-check `/products`, `/orders`, `/designs`.
+
 Что остаётся:
 
 - ручной regression-check основных экранов после production deploy;
