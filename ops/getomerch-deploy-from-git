@@ -46,6 +46,9 @@ lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
 npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
 production_env_file="${GETOMERCH_PRODUCTION_ENV_FILE:-/etc/getomerch/admin-production.env}"
+min_free_mb="${GETOMERCH_MIN_FREE_MB:-2048}"
+keep_recent_successful="${GETOMERCH_KEEP_RECENT_SUCCESSFUL:-2}"
+npm_cache_max_mb="${GETOMERCH_NPM_CACHE_MAX_MB:-1024}"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)"
 log_file="$log_dir/${run_id}-${target}.log"
 
@@ -76,6 +79,131 @@ fail() {
 
 add_check() {
   checks="${checks}${checks:+$'\n'}$*"
+}
+
+disk_free_mb() {
+  df -Pm "$base_dir" | awk 'NR == 2 { print $4 }'
+}
+
+dir_size_mb() {
+  local dir="$1"
+  if [[ -e "$dir" ]]; then
+    du -sm "$dir" 2>/dev/null | awk '{ print $1 }'
+  else
+    printf '0\n'
+  fi
+}
+
+assert_disk_space() {
+  local context="$1"
+  local free_mb
+  free_mb="$(disk_free_mb)"
+  log "disk free before $context: ${free_mb}MiB (min ${min_free_mb}MiB)"
+  if (( free_mb < min_free_mb )); then
+    fail "not enough disk space before $context: ${free_mb}MiB free, need at least ${min_free_mb}MiB"
+  fi
+}
+
+cleanup_stale_artifacts() {
+  log "cleaning stale deploy artifacts"
+  rm -rf "$build_dir"
+  find "$releases_dir" -maxdepth 1 -mindepth 1 -type d -name '*.tmp' -print -exec rm -rf {} +
+}
+
+cleanup_npm_cache() {
+  local cache_mb
+  cache_mb="$(dir_size_mb "$npm_cache_dir")"
+  log "npm cache size: ${cache_mb}MiB (max ${npm_cache_max_mb}MiB)"
+  find "$npm_cache_dir" "$deploy_home/.npm" -path '*/_logs/*' -type f -mtime +7 -delete 2>/dev/null || true
+  if (( cache_mb > npm_cache_max_mb )); then
+    log "cleaning npm cache because it exceeds ${npm_cache_max_mb}MiB"
+    npm --cache "$npm_cache_dir" cache clean --force
+  fi
+}
+
+cleanup_old_releases() {
+  log "cleaning old releases with retention"
+  RELEASES_DIR="$releases_dir" \
+  CURRENT_LINK="$current_link" \
+  REGISTRY_PATH="$registry_path" \
+  PREVIOUS_CURRENT="$previous_current" \
+  KEEP_RECENT_SUCCESSFUL="$keep_recent_successful" \
+  python3 - <<'PY'
+import json
+import os
+import shutil
+from pathlib import Path
+
+releases_dir = Path(os.environ["RELEASES_DIR"]).resolve()
+current_link = Path(os.environ["CURRENT_LINK"])
+registry_path = Path(os.environ["REGISTRY_PATH"])
+previous_current = os.environ.get("PREVIOUS_CURRENT", "")
+keep_recent = int(os.environ.get("KEEP_RECENT_SUCCESSFUL", "2") or "2")
+
+keep = set()
+
+def add_keep(path):
+    if not path:
+        return
+    try:
+        resolved = Path(path).resolve()
+    except FileNotFoundError:
+        return
+    if resolved.exists() and resolved.parent == releases_dir:
+        keep.add(resolved)
+
+if current_link.exists():
+    add_keep(current_link)
+add_keep(previous_current)
+
+events = []
+if registry_path.exists():
+    for raw in registry_path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if event.get("status") == "success":
+            events.append(event)
+
+for event in reversed(events):
+    add_keep(event.get("releasePath") or "")
+    if len(keep) >= keep_recent + 2:
+        break
+
+for candidate in releases_dir.iterdir():
+    if not candidate.is_dir():
+        continue
+    if (candidate / ".getomerch-keep").exists() or (candidate / "KEEP_RELEASE").exists():
+        keep.add(candidate.resolve())
+
+removed = []
+kept = []
+for candidate in sorted(releases_dir.iterdir(), key=lambda p: p.stat().st_mtime):
+    if not candidate.is_dir():
+        continue
+    resolved = candidate.resolve()
+    if resolved.parent != releases_dir:
+        print(f"skip unsafe {candidate}")
+        continue
+    if resolved in keep:
+        kept.append(candidate.name)
+        continue
+    if "-admin-" not in candidate.name:
+        print(f"skip non-admin release {candidate.name}")
+        continue
+    shutil.rmtree(candidate)
+    removed.append(candidate.name)
+
+print(f"release retention kept={len(kept)} removed={len(removed)}")
+for name in kept:
+    print(f"keep release {name}")
+for name in removed:
+    print(f"removed release {name}")
+PY
 }
 
 read_env_var() {
@@ -347,6 +475,9 @@ previous_current="$(readlink -f "$current_link" 2>/dev/null || true)"
 previous_release="$(basename "$previous_current" 2>/dev/null || true)"
 log "previous_current=${previous_current:-none}"
 
+cleanup_stale_artifacts
+assert_disk_space "source checkout and npm ci"
+
 if [[ ! -d "$source_dir/.git" ]]; then
   log "cloning source into $source_dir"
   rm -rf "$source_dir"
@@ -374,7 +505,6 @@ log "git_commit=$commit"
 log "release=$release"
 
 log "preparing disposable build dir $build_dir"
-rm -rf "$build_dir"
 install -d -m 0755 "$build_dir"
 rsync -a --delete \
   --exclude '.git' \
@@ -384,6 +514,7 @@ rsync -a --delete \
 
 cd "$build_dir"
 log "installing dependencies"
+assert_disk_space "npm ci"
 npm ci
 
 load_public_build_env
@@ -401,6 +532,7 @@ smoke_supabase_readonly
 add_check "Supabase read-only smoke"
 
 log "creating release $release_dir"
+assert_disk_space "release creation"
 rm -rf "${release_dir}.tmp" "$release_dir"
 install -d -m 0755 "${release_dir}.tmp"
 rsync -a --delete \
@@ -410,6 +542,7 @@ rsync -a --delete \
   "$build_dir/" "${release_dir}.tmp/"
 
 log "installing production dependencies in release"
+assert_disk_space "production dependency install"
 npm --prefix "${release_dir}.tmp" ci --omit=dev
 
 mv "${release_dir}.tmp" "$release_dir"
@@ -442,9 +575,29 @@ public_login_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https
 [[ "$public_login_code" == "200" ]]
 add_check "public /login 200"
 
+rm -rf "$build_dir"
+if cleanup_old_releases; then
+  add_check "release retention cleanup"
+else
+  log "WARNING: release retention cleanup failed"
+  add_check "release retention cleanup warning"
+fi
+if cleanup_npm_cache; then
+  add_check "npm cache cleanup"
+else
+  log "WARNING: npm cache cleanup failed"
+  add_check "npm cache cleanup warning"
+fi
+post_free_mb="$(disk_free_mb)"
+log "disk free after post-deploy cleanup: ${post_free_mb}MiB (min ${min_free_mb}MiB)"
+if (( post_free_mb < min_free_mb )); then
+  log "WARNING: disk free is below threshold after deploy"
+  add_check "disk free warning ${post_free_mb}MiB"
+else
+  add_check "disk free ${post_free_mb}MiB"
+fi
 record_event "success" "GetoMerch admin deployed successfully"
 log "deploy complete"
-rm -rf "$build_dir"
 current_real="$(readlink -f "$current_link")"
 if [[ "$current_real" != "$source_real" ]]; then
   log "cleaning deploy-source runtime artifacts"

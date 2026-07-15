@@ -227,6 +227,39 @@ runtime env systemd эти переменные были. Поэтому `@supab
 - при нехватке места deploy останавливается до `npm ci` и присылает понятный
   Telegram alert.
 
+### Статус внедрения на 15 июля 2026
+
+Сделано в `ops/getomerch-deploy-from-git`:
+
+- добавлена preflight-проверка свободного места до checkout/build и перед
+  `npm ci`, созданием release и production install;
+- порог свободного места задаётся через `GETOMERCH_MIN_FREE_MB`, default
+  `2048`;
+- после успешной активации и smoke запускается retention старых release;
+- всегда сохраняются active release, предыдущий release, последние успешные
+  release по registry и release с marker-файлом `.getomerch-keep` или
+  `KEEP_RELEASE`;
+- количество дополнительных успешных release задаётся через
+  `GETOMERCH_KEEP_RECENT_SUCCESSFUL`, default `2`;
+- stale `/opt/getomerch/build-source` и `*.tmp` release очищаются до сборки и
+  при ошибке;
+- npm cache/log cleanup выполняется после успешного deploy, порог задаётся
+  через `GETOMERCH_NPM_CACHE_MAX_MB`, default `1024`;
+- post-deploy cleanup не откатывает уже активированный рабочий release, если
+  сама очистка дала warning.
+
+Сделано в `ops/getomerch-deploy-status`:
+
+- добавлен блок `disk` со свободным местом, размером release-каталога,
+  количеством release и размером npm cache/logs.
+
+Осталось проверить на сервере:
+
+- установить обновлённые scripts;
+- выполнить deploy;
+- убедиться, что retention оставил active/rollback release;
+- выполнить rollback smoke и вернуть текущий `main`.
+
 ---
 
 ## Этап 4. Спроектировать server-side BFF для Supabase

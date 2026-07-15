@@ -3,9 +3,13 @@ set -Eeuo pipefail
 
 source_dir="${GETOMERCH_DEPLOY_SOURCE_DIR:-/opt/getomerch/deploy-source}"
 current_link="${GETOMERCH_CURRENT_LINK:-/opt/getomerch/current}"
+releases_dir="${GETOMERCH_RELEASES_DIR:-/opt/getomerch/releases}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
 current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
 service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
+deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
+min_free_mb="${GETOMERCH_MIN_FREE_MB:-2048}"
 
 echo "GetoMerch admin deploy status"
 echo
@@ -26,6 +30,29 @@ echo "active release: ${active_path:-none}"
 if [[ -n "$active_path" ]]; then
   echo "active name: $(basename "$active_path")"
 fi
+
+echo
+echo "disk:"
+df -h / | awk 'NR == 1 { print "filesystem: " $0 } NR == 2 { print "root:       " $0 }'
+free_mb="$(df -Pm / | awk 'NR == 2 { print $4 }')"
+if [[ -n "$free_mb" && "$free_mb" =~ ^[0-9]+$ ]]; then
+  if (( free_mb < min_free_mb )); then
+    echo "warning: free disk ${free_mb}MiB is below threshold ${min_free_mb}MiB"
+  else
+    echo "free disk: ${free_mb}MiB (threshold ${min_free_mb}MiB)"
+  fi
+fi
+if [[ -d "$releases_dir" ]]; then
+  release_count="$(find "$releases_dir" -maxdepth 1 -mindepth 1 -type d -name '*-admin-*' | wc -l | tr -d ' ')"
+  release_size="$(du -sh "$releases_dir" 2>/dev/null | awk '{ print $1 }')"
+  echo "releases: ${release_count} dirs, ${release_size:-unknown}"
+fi
+for dir in "$npm_cache_dir" "$deploy_home/.npm"; do
+  if [[ -e "$dir" ]]; then
+    size="$(du -sh "$dir" 2>/dev/null | awk '{ print $1 }')"
+    echo "$(basename "$dir") cache/logs: ${size:-unknown} ($dir)"
+  fi
+done
 
 echo
 echo "services:"
