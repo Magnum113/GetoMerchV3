@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     let query = sb
       .from("merch_products")
       .select("*")
-      .order("created_at", { ascending: false })
+      .order("sku", { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (isBlank !== undefined) query = query.eq("is_blank", isBlank);
