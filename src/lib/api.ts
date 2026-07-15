@@ -33,6 +33,14 @@ const PRODUCT_SELECT = `
   decoration_type:merch_decoration_types(*)
 `;
 
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 export const api = {
   // ---------- WAREHOUSES ----------
   async listWarehouses(): Promise<Warehouse[]> {
@@ -849,14 +857,32 @@ export const api = {
     await api.shipOzonOrder(args.ozonOrderId, args.ownWarehouseId);
   },
 
-  async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[] }> {
+  async syncOzonOrders(opts: { days?: number; scope?: "active" | "all" } = {}): Promise<{ scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; durationMs?: number }> {
     const params = new URLSearchParams();
     if (opts.scope) params.set("scope", opts.scope);
     if (opts.days != null) params.set("days", String(opts.days));
-    const res = await fetch(`/api/ozon/sync-orders?${params.toString()}`, { method: "POST" });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Sync failed");
-    return json;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 70_000);
+    let res: Response;
+    try {
+      res = await fetch(`/api/ozon/sync-orders?${params.toString()}`, { method: "POST", signal: controller.signal });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        throw new Error("Синхронизация заказов не ответила за 70 секунд. Попробуйте ещё раз или проверьте логи.");
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    const text = await res.text();
+    const json = text ? safeJson(text) : null;
+    const errorMessage =
+      json && typeof json === "object" && typeof (json as Record<string, unknown>).error === "string"
+        ? String((json as Record<string, unknown>).error)
+        : text.slice(0, 240);
+    if (!res.ok) throw new Error(errorMessage || "Sync failed");
+    if (!json || typeof json !== "object") throw new Error("Sync returned invalid JSON");
+    return json as { scope: "active" | "all"; created: number; updated: number; fetched: number; unmatchedItems: number; unmatchedSamples: string[]; durationMs?: number };
   },
 
   // ---------- DESIGNS CRUD ----------
