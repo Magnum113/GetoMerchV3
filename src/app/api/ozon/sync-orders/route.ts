@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 const OZON_BASE = "https://api-seller.ozon.ru";
 const OZON_TIMEOUT_MS = 15_000;
 const SUPABASE_TIMEOUT_MS = 20_000;
-const ORDER_UPSERT_CONCURRENCY = 8;
+const ORDER_UPSERT_CONCURRENCY = 4;
 const ORDER_ITEM_CONCURRENCY = 8;
 
 async function ozonPost<T = unknown>(path: string, body: unknown): Promise<T> {
@@ -311,8 +311,8 @@ export async function POST(req: Request) {
               .from("merch_ozon_orders")
               .upsert(payload, { onConflict: "posting_number" })
               .select("id, posting_number, shipped_at, created_at"),
-          4_000,
-          2,
+          6_000,
+          3,
         );
         return { ok: true as const, rows };
       } catch (error) {
