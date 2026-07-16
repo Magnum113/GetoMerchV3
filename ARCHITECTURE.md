@@ -41,10 +41,10 @@
 | Тосты | **sonner** | — | Везде `toast.success/error(...)`, не `alert()` |
 | Формы | Локальный state + точечная валидация | — | Для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией), добавляем form/validation-библиотеки отдельным осознанным решением |
 | БД | **Supabase Postgres** | — | RLS включён везде; админский UI работает через server-side BFF, чтобы можно было закрыть anon-доступ |
-| Клиент БД | `@supabase/supabase-js` (server-only) | — | Браузер ходит в `/api/admin/...`; Supabase client создаётся только на сервере через `src/lib/supabase/server.ts` |
+| Клиент БД | `@supabase/supabase-js` (server-only), `pg` для точечных read-path | — | Браузер ходит в `/api/admin/...`; Supabase client и прямой Postgres pool создаются только на сервере |
 | Дата/время | `Intl.DateTimeFormat('ru-RU')` | — | Форматирование держим в `src/lib/utils.ts`, отдельную библиотеку дат не тащим без необходимости |
 
-**Не добавлять без причины:** другие UI-киты (MUI, AntD, Mantine), CSS-фреймворки кроме Tailwind, ORM поверх Supabase (Prisma, Drizzle), state-менеджеры (Redux, Zustand, Jotai) — пока нечего шарить между страницами.
+**Не добавлять без причины:** другие UI-киты (MUI, AntD, Mantine), CSS-фреймворки кроме Tailwind, ORM поверх Supabase (Prisma, Drizzle), state-менеджеры (Redux, Zustand, Jotai) — пока нечего шарить между страницами. `pg` уже используется как низкоуровневый server-only read-path, это не повод добавлять ORM.
 
 ---
 
@@ -89,6 +89,9 @@ src/
     types.ts                # типы доменных сущностей и константы лейблов
     utils.ts                # cn, formatDate, formatMoney, toError
     supabase/client.ts        # browser client; route handlers используют @supabase/supabase-js напрямую
+    admin/postgres.ts       # server-only pg Pool для прямых чтений Supabase Postgres
+    admin/product-postgres.ts # server-only гидрация товаров для direct Postgres route
+    admin/supabase-api.ts   # server-side Supabase REST helper для BFF fallback
     auth/                   # password hash + signed HttpOnly cookie session
   middleware.ts             # защита страниц и /api/* через admin session cookie
 ops/
@@ -389,8 +392,8 @@ supabase/
   ресурс.
 
 Серверные роуты (`src/app/api/ozon/*`) — единственное место, где живут ключи
-Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к Ozon не
-ходим напрямую.
+Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID`; локально из `.env.local`, в production
+из `/etc/getomerch/admin-production.env`). С клиента к Ozon не ходим напрямую.
 
 ---
 
@@ -540,6 +543,56 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID` из `.env.local`). С клиента к O
 - Любой `select` с join: при двух FK на одну таблицу — обязательно `relation!fk_column(...)`,
   иначе PostgREST вернёт `PGRST201`. Пример в `api.listTransactions` (две связи на `merch_products`)
 
+#### Direct Postgres read-path
+
+Production-админка может читать часть тяжёлых списков напрямую из Supabase
+Postgres через `pg`. Это включается только на сервере, когда задан
+`GETOMERCH_SUPABASE_DATABASE_URL`; проверка в коде — `hasAdminPostgres()` из
+`src/lib/admin/postgres.ts`. Если env отсутствует, route handlers должны
+оставлять Supabase REST fallback.
+
+Текущий direct read-path используется в:
+
+- `/api/admin/ozon/orders` — список Ozon-заказов;
+- `/api/admin/inventory` — основной список остатков;
+- `/api/admin/designs/product-counts` — счётчики товаров по дизайнам;
+- `/api/admin/products/blank-matches` — подбор заготовок;
+- `/api/admin/inventory/matrix` — hybrid path: товары и справочники через
+  Supabase REST, агрегат положительных остатков через direct `pg`.
+
+Текущие production-настройки для Supabase pooler:
+
+```env
+GETOMERCH_SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<region>.pooler.supabase.com:6543/postgres
+GETOMERCH_POSTGRES_SSL=true
+GETOMERCH_POSTGRES_POOL_MAX=1
+GETOMERCH_POSTGRES_POOL_MAX_USES=1
+```
+
+Важные мелочи:
+
+- использовать transaction pooler `:6543`; прямой Supabase host `:5432` на
+  текущем VPS может падать из-за IPv6 `ENETUNREACH`, а session pooler `:5432`
+  упирался в `max clients reached in session mode`;
+- `POOL_MAX=1` и `POOL_MAX_USES=1` сохранять до отдельного нагрузочного теста;
+  pooler был нестабилен при переиспользовании соединений;
+- не делать `SELECT *` по таблицам с тяжёлыми `jsonb`, особенно
+  `merch_ozon_orders.raw`; выбирать только нужные колонки;
+- не использовать `to_jsonb(table)` и широкие join-гидрации через pooler:
+  для товаров текущий паттерн — получить базовые строки и догидрировать через
+  `hydrateProductsViaPostgres()` из `src/lib/admin/product-postgres.ts`;
+- справочники товаров маленькие, поэтому direct hydration сейчас читает их
+  целиком, а не через `WHERE id = ANY(...)`, потому что фильтрованные запросы
+  к lookup-таблицам через pooler давали случайные зависания;
+- для `/api/admin/inventory/matrix` не возвращать старую полную
+  `hydrateProductsViaPostgres()`-схему: через pooler чтение product rows и
+  широкая гидрация давали timeout/500. Текущий паттерн — товары страницами по
+  50 через Supabase REST, lookup один раз, stock aggregate через `pg`,
+  `AbortController` timeout 3 секунды и 3 попытки;
+- client-side лимиты сейчас намеренно консервативные (`orders=5`,
+  `inventory=10`). Увеличивать их надо отдельным шагом после нормальной
+  full pagination для списков, а не вместе с matrix.
+
 ### 7.5. Git
 
 - Один логически цельный коммит на одну задачу
@@ -670,6 +723,19 @@ env: /etc/getomerch/admin-production.env
 command: npm start -- --hostname 127.0.0.1 --port 3100
 ```
 
+`/etc/getomerch/admin-production.env` — единственный runtime env
+production-админки. В нём лежат auth-секреты, ключи Supabase/Ozon/KOMUI и
+direct Postgres URL для read-path. После изменения env нужен:
+
+```bash
+sudo systemctl restart getomerch-admin.service
+sudo /usr/local/sbin/getomerch-deploy-status
+```
+
+Отдельный `/etc/getomerch/backup.env` используется только для `pg_dump` в
+backup-скрипте. Наличие DB URL в backup env не включает direct Postgres в
+приложении.
+
 Nginx vhost `admin.komui.ru` проксирует на `127.0.0.1:3100`, передаёт
 `Host`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port` и
 обслуживает Let's Encrypt certificate. Старой nginx Basic Auth на админке нет:
@@ -768,6 +834,8 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
 Основная БД админки всё ещё Supabase. На сервере не создан отдельный Postgres
 для таблиц `merch_*`, `ozon_*`, расходов и производства. Поэтому:
 
+- selected BFF read-path подключается напрямую к Supabase Postgres из
+  `/etc/getomerch/admin-production.env`, но это всё равно та же Supabase-база;
 - `getomerch-backup.timer` запускает `/usr/local/sbin/getomerch-backup`;
 - backup админки хранится в `/var/backups/getomerch` и выгружается в Yandex
   Object Storage отдельным prefix `getomerch`;
@@ -776,8 +844,8 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
   manifest active release и свежие deploy-логи;
 - Supabase `pg_dump` выполняется только если на сервере задан
   `GETOMERCH_SUPABASE_DATABASE_URL` в `/etc/getomerch/backup.env`;
-- пока DB URL не задан, backup остаётся инфраструктурным и кладёт marker о
-  пропущенном Supabase export;
+- пока DB URL не задан именно в `backup.env`, backup остаётся
+  инфраструктурным и кладёт marker о пропущенном Supabase export;
 - перенос БД админки на сервер — отдельный будущий проект.
 
 В `/etc/getomerch/admin-production.env` нельзя руками менять секреты без
@@ -807,6 +875,18 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
   конкурентных вызовах с одинаковым комбо может быть race и UNIQUE violation
   на `sku`. В bulk-форме каждая ячейка уникальна (разный размер), но в общем
   случае стоит вынести в Postgres RPC
+- Direct Postgres стабилизировал основные read-path для `/orders`, списка
+  `/inventory` и stock-части `/api/admin/inventory/matrix`. Матрица сейчас
+  намеренно hybrid: товары/lookup через Supabase REST с короткими retry,
+  остатки через `pg`. Следующий отдельный шаг — нормальная full pagination для
+  списков (`orders`, `inventory`) вместо временных client-side лимитов.
+- Если каталог вырастет на порядки, matrix лучше вынести в Postgres RPC или
+  materialized summary, но текущий объём закрыт без старой полной pg-гидрации
+  товаров.
+- Текущая direct Postgres-гидрация товаров избегает широких join и `to_jsonb`.
+  Если потребуется больше связанных данных, сначала проверить query plan и
+  поведение через Supabase pooler, а не возвращать `SELECT *`/широкие JSON
+  запросы.
 - FBS + FBO заказы уже подтягиваются в `merch_ozon_orders`, поэтому COGS по
   финоперациям обычно считается через точный `posting_number`. COGS-фолбэк по
   Ozon SKU остаётся только как страховка для старых/неподтянутых отправлений:

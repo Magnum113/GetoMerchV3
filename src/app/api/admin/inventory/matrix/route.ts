@@ -1,10 +1,16 @@
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_COLUMNS, hydrateProductsViaPostgres } from "@/lib/admin/product-postgres";
-import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
-import type { InventoryMatrix, InventoryMatrixRow, Product } from "@/lib/types";
+import type {
+  Color,
+  DecorationType,
+  Design,
+  FabricType,
+  InventoryMatrix,
+  InventoryMatrixRow,
+  ProductCategory,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,30 +21,54 @@ type StockRef = {
 };
 
 const PRODUCT_SELECT = "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank";
-const PRODUCT_PAGE_SIZE = 25;
+const PRODUCT_PAGE_SIZE = 50;
 const INVENTORY_PAGE_SIZE = 200;
-const POSTGRES_PRODUCT_PAGE_SIZE = 50;
 const MAX_PRODUCTS = 20_000;
 const MAX_INVENTORY_ROWS = 20_000;
-const QUERY_TIMEOUT_MS = 15_000;
+const QUERY_TIMEOUT_MS = 3_000;
+
+type MatrixProductRow = {
+  id: string;
+  category_id: string;
+  fabric_id: string;
+  color_id: string;
+  size_id: string;
+  design_id: string | null;
+  decoration_type_id: string | null;
+  sku: string | null;
+  is_blank: boolean;
+};
+
+type MatrixLookups = {
+  categories: Map<string, ProductCategory>;
+  fabrics: Map<string, FabricType>;
+  colors: Map<string, Color>;
+  designs: Map<string, Design>;
+  decorationTypes: Map<string, DecorationType>;
+};
 
 export async function GET() {
   try {
     await requireAdminSession();
 
     if (hasAdminPostgres()) {
-      const [products, inventory] = await Promise.all([
-        fetchProductsViaPostgres(),
-        fetchInventoryRowsViaPostgres(),
+      const [products, inventory, lookups] = await Promise.all([
+        fetchProducts(),
+        fetchInventoryRowsViaPostgres().catch((error) => {
+          console.warn("[admin-api] inventory matrix postgres fallback", errorSummary(error));
+          return fetchInventoryRows();
+        }),
+        fetchMatrixLookups(),
       ]);
-      return adminJson({ data: buildInventoryMatrix(products, inventory) });
+      return adminJson({ data: buildInventoryMatrix(products, inventory, lookups) });
     }
 
-    const [products, inventory] = await Promise.all([
+    const [products, inventory, lookups] = await Promise.all([
       fetchProducts(),
       fetchInventoryRows(),
+      fetchMatrixLookups(),
     ]);
-    const matrix = buildInventoryMatrix(products, inventory);
+    const matrix = buildInventoryMatrix(products, inventory, lookups);
 
     return adminJson({ data: matrix });
   } catch (error) {
@@ -46,34 +76,13 @@ export async function GET() {
   }
 }
 
-async function fetchProductsViaPostgres() {
-  const out: Product[] = [];
-  let offset = 0;
-
-  while (offset < MAX_PRODUCTS) {
-    const result = await adminDbQuery<Product>(
-      `
-        SELECT ${ADMIN_PRODUCT_COLUMNS}
-        FROM merch_products p
-        ORDER BY p.sku
-        LIMIT $1 OFFSET $2
-      `,
-      [POSTGRES_PRODUCT_PAGE_SIZE, offset],
-    );
-    out.push(...result.rows);
-    if (result.rows.length < POSTGRES_PRODUCT_PAGE_SIZE) break;
-    offset += POSTGRES_PRODUCT_PAGE_SIZE;
-  }
-
-  return hydrateProductsViaPostgres(out);
-}
-
 async function fetchInventoryRowsViaPostgres() {
   const result = await adminDbQuery<StockRef>(
     `
-      SELECT product_id, warehouse_id, quantity
+      SELECT product_id, warehouse_id, SUM(quantity)::int AS quantity
       FROM merch_inventory
       WHERE quantity > 0
+      GROUP BY product_id, warehouse_id
       LIMIT $1
     `,
     [MAX_INVENTORY_ROWS],
@@ -82,7 +91,7 @@ async function fetchInventoryRowsViaPostgres() {
 }
 
 async function fetchProducts() {
-  const out: Product[] = [];
+  const out: MatrixProductRow[] = [];
   let offset = 0;
 
   while (offset < MAX_PRODUCTS) {
@@ -94,7 +103,7 @@ async function fetchProducts() {
         .range(offset, offset + PRODUCT_PAGE_SIZE - 1)
         .abortSignal(signal);
       if (error) throw error;
-      return (data ?? []) as Product[];
+      return (data ?? []) as MatrixProductRow[];
     });
 
     out.push(...page);
@@ -102,7 +111,7 @@ async function fetchProducts() {
     offset += PRODUCT_PAGE_SIZE;
   }
 
-  return hydrateProducts(out);
+  return out;
 }
 
 async function fetchInventoryRows() {
@@ -127,6 +136,36 @@ async function fetchInventoryRows() {
   }
 
   return out;
+}
+
+async function fetchMatrixLookups(): Promise<MatrixLookups> {
+  const [categories, fabrics, colors, designs, decorationTypes] = await Promise.all([
+    fetchLookup<ProductCategory>("merch_product_categories", "id,name,slug,created_at"),
+    fetchLookup<FabricType>("merch_fabric_types", "id,name,slug,created_at"),
+    fetchLookup<Color>("merch_colors", "id,name,hex_code,created_at"),
+    fetchLookup<Design>("merch_designs", "id,name,type,code,description,image_url,created_at"),
+    fetchLookup<DecorationType>("merch_decoration_types", "id,name,slug,made_at,created_at"),
+  ]);
+
+  return {
+    categories,
+    fabrics,
+    colors,
+    designs,
+    decorationTypes,
+  };
+}
+
+async function fetchLookup<T extends { id: string }>(table: string, select: string) {
+  const rows = await queryWithRetry(`lookup ${table}`, async (signal) => {
+    const { data, error } = await getAdminSupabaseClient()
+      .from(table)
+      .select(select)
+      .abortSignal(signal);
+    if (error) throw error;
+    return (data ?? []) as unknown as T[];
+  });
+  return new Map(rows.map((row) => [row.id, row]));
 }
 
 async function queryWithRetry<T>(label: string, query: (signal: AbortSignal) => Promise<T>) {
@@ -154,7 +193,16 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildInventoryMatrix(products: Product[], inventory: StockRef[]): InventoryMatrix {
+function errorSummary(error: unknown) {
+  if (error instanceof Error) return { name: error.name, message: error.message };
+  return { message: String(error) };
+}
+
+function buildInventoryMatrix(
+  products: MatrixProductRow[],
+  inventory: StockRef[],
+  lookups: MatrixLookups,
+): InventoryMatrix {
   const stockByProduct = new Map<string, Record<string, number>>();
   for (const row of inventory) {
     const byWh = stockByProduct.get(row.product_id) ?? {};
@@ -173,13 +221,21 @@ function buildInventoryMatrix(products: Product[], inventory: StockRef[]): Inven
 
     let row = groups.get(key);
     if (!row) {
+      const category = lookups.categories.get(product.category_id);
+      const fabric = lookups.fabrics.get(product.fabric_id);
+      const color = lookups.colors.get(product.color_id);
+      const design = product.design_id ? lookups.designs.get(product.design_id) : null;
+      const decorationType = product.decoration_type_id
+        ? lookups.decorationTypes.get(product.decoration_type_id)
+        : null;
+
       row = {
         key,
         isBlank,
-        label: `${product.category?.name ?? ""} ${product.fabric?.name?.toLowerCase() ?? ""}`,
-        subLabel: product.color?.name ?? "",
-        hex: product.color?.hex_code ?? null,
-        designLabel: isBlank ? null : `${product.decoration_type?.name ?? ""}: ${product.design?.name ?? ""}`,
+        label: `${category?.name ?? ""} ${fabric?.name?.toLowerCase() ?? ""}`,
+        subLabel: color?.name ?? "",
+        hex: color?.hex_code ?? null,
+        designLabel: isBlank ? null : `${decorationType?.name ?? ""}: ${design?.name ?? ""}`,
         cells: {},
       };
       groups.set(key, row);

@@ -44,6 +44,12 @@ PostgreSQL сервера. Production-приложение на `admin.komui.ru`
 с текущим Supabase-проектом. Сервер хранит только код, конфиги, release-артефакты,
 логи deploy и runtime-состояние, но не основную БД админки.
 
+Для части тяжёлых серверных чтений production-админка подключается напрямую к
+Postgres Supabase через server-only `pg`. Это ускоряющий read-path к той же
+Supabase-базе, а не перенос данных на VPS. Записи, синхронизации и остальные
+разделы продолжают использовать существующие server-side API/Supabase-клиенты,
+если для них не сделан отдельный прямой route.
+
 ## Запуск
 
 ```bash
@@ -78,17 +84,26 @@ Postgres Supabase. Если переменная не задана, backend пр
 Supabase REST fallback, но большие разделы могут грузиться медленнее.
 
 ```env
-GETOMERCH_SUPABASE_DATABASE_URL=postgresql://...
+GETOMERCH_SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<region>.pooler.supabase.com:6543/postgres
 GETOMERCH_POSTGRES_SSL=true
-GETOMERCH_POSTGRES_POOL_MAX=5
+GETOMERCH_POSTGRES_POOL_MAX=1
 GETOMERCH_POSTGRES_POOL_MAX_USES=1
 ```
 
-Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
-сканирует client bundle на утечки имён server-only env.
+На текущем VPS нужно использовать Supabase pooler в transaction mode
+(`pooler.supabase.com:6543`). Прямой host `db.<ref>.supabase.co:5432` может
+резолвиться в IPv6 и падать с `ENETUNREACH`, а session pooler `:5432` уже
+упирался в лимит сессий. Значения `POOL_MAX=1` и `POOL_MAX_USES=1` оставлены
+консервативно: они стабилизируют `/orders` и основной список `/inventory` через
+pooler, не раздувая число долгих сессий.
 
-Для серверных Ozon-операций дополнительно используются ключи Ozon из
-`.env.local`.
+Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
+сканирует client bundle на утечки имён server-only env. Runtime env админки
+лежит в `/etc/getomerch/admin-production.env`. Env для backup Supabase dump
+отдельный: `/etc/getomerch/backup.env`.
+
+Для серверных Ozon-операций дополнительно используются ключи Ozon:
+локально из `.env.local`, на сервере из `/etc/getomerch/admin-production.env`.
 
 Для раздела Komui админка умеет переключаться между production и stage прямо
 из UI. Значение сохраняется в cookie `komui_api_target`.
@@ -198,6 +213,13 @@ Rollback admin prod
   `/opt/komui`; этот репозиторий туда не копировать и с ним не объединять.
 - Admin UI обращается к production/stage KOMUI только через backend API, а не
   прямым SQL в PostgreSQL магазина.
+- Часть BFF-route читает Supabase напрямую через `pg`: заказы Ozon, основной
+  список остатков, счётчики дизайнов и подбор заготовок. Это только server-side
+  read-path; секретный DB URL не должен попадать в браузер.
+- Матрица остатков `/api/admin/inventory/matrix` грузится отдельным hybrid
+  path: товары и справочники читаются через Supabase REST короткими страницами
+  с retry, а положительные остатки агрегируются через direct `pg`. Это убрало
+  старый 500/timeout от полной `hydrateProductsViaPostgres()`-гидрации.
 - Для всех футболок на Ozon использовать габариты упаковки `300 x 230 x 40 мм`
   и вес `250 г`.
 

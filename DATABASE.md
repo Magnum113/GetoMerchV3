@@ -25,11 +25,28 @@ Production-админка теперь отдельно развёрнута н�
 `/var/lib/getomerch/*`, `/var/log/getomerch/*`. Таблицы `merch_*` и связанные
 Ozon-данные при этом продолжают жить в Supabase `public`.
 
+Production-приложение использует два server-side способа доступа к этой же
+Supabase-базе:
+
+- `@supabase/supabase-js`/PostgREST для большинства BFF-route, записей,
+  синхронизаций и fallback-веток;
+- прямой `pg` read-path для тяжёлых списков админки, если задан
+  `GETOMERCH_SUPABASE_DATABASE_URL` в `/etc/getomerch/admin-production.env`.
+
+Текущий прямой доступ настроен через Supabase transaction pooler
+`pooler.supabase.com:6543`, `GETOMERCH_POSTGRES_SSL=true`,
+`GETOMERCH_POSTGRES_POOL_MAX=1`, `GETOMERCH_POSTGRES_POOL_MAX_USES=1`. Это не
+означает, что база переехала на сервер: route handlers читают ту же Supabase DB.
+DB URL для runtime-приложения и DB URL для `pg_dump` backup лежат в разных
+файлах env (`admin-production.env` и `backup.env`) и не заменяют друг друга.
+
 Важные правила:
 
 - не писать из админки напрямую в PostgreSQL магазина KOMUI;
 - интеграции с магазином делать только через server-side API KOMUI;
 - `service_role` и любые секретные ключи Supabase не класть в `NEXT_PUBLIC_*`;
+- `GETOMERCH_SUPABASE_DATABASE_URL` тоже secret: не выводить в client bundle,
+  логи, screenshots и публичные документы;
 - изменения схемы админки по-прежнему оформлять через `supabase/migrations/`;
 - перенос БД админки на серверный Postgres — отдельный будущий проект, не часть
   текущего deploy-контура.
@@ -833,6 +850,32 @@ merch_expense_categories ──< merch_expenses.category_id  (SET NULL)
 Везде включён, политика открытая (`for all using (true) with check (true)`).
 Это однопользовательский режим. Если когда-то появится второй пользователь —
 переписывать политики и привязывать к `auth.uid()`.
+
+### Доступ из приложения
+
+Клиентский React-код не ходит в Supabase напрямую для админских данных. Он
+вызывает `src/lib/api.ts`, а тот ходит в `/api/admin/...`. Route handlers уже
+решают, использовать Supabase REST fallback или direct Postgres read-path.
+
+Direct Postgres правила для таблиц:
+
+- не делать `SELECT *` по `merch_ozon_orders`: колонка `raw jsonb` тяжёлая и
+  не нужна для обычного списка заказов;
+- не собирать товары через `to_jsonb(table)`/широкие join в pooler-режиме;
+- для товаров использовать явный список колонок из
+  `ADMIN_PRODUCT_COLUMNS` и догидрацию справочниками в
+  `src/lib/admin/product-postgres.ts`;
+- справочники (`merch_product_categories`, `merch_fabric_types`,
+  `merch_colors`, `merch_sizes`, `merch_designs`,
+  `merch_decoration_types`) маленькие, поэтому их можно читать целиком в
+  server-side hydration;
+- `/api/admin/inventory/matrix` не использует полную direct pg-гидрацию
+  товаров: product rows читаются через Supabase REST страницами по 50 с
+  retry, lookup-таблицы читаются один раз, а `merch_inventory` агрегируется
+  через `pg` по положительным остаткам;
+- если объём каталога сильно вырастет, matrix можно вынести в отдельную
+  Postgres RPC/materialized summary, но это уже оптимизация следующего уровня,
+  а не текущий blocker.
 
 ### Транзакционность
 
