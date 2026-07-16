@@ -72,29 +72,9 @@ async function listOrdersViaPostgres({
   status: string | null;
   source: string | null;
 }) {
-  const ordersResult = await adminDbQuery<OzonOrder>(
+  const idsResult = await adminDbQuery<{ id: string }>(
     `
-      SELECT
-        id,
-        posting_number,
-        order_id,
-        order_number,
-        status,
-        substatus,
-        ozon_created_at,
-        in_process_at,
-        shipment_date,
-        delivery_method,
-        warehouse_name,
-        customer_name,
-        total_price::float8 AS total_price,
-        source,
-        synced_at,
-        shipped_at,
-        shipped_from_warehouse_id,
-        workshop_order_id,
-        notes,
-        created_at
+      SELECT id
       FROM merch_ozon_orders
       WHERE ($2::text IS NULL OR status = $2)
         AND ($3::text IS NULL OR source::text = $3)
@@ -103,8 +83,9 @@ async function listOrdersViaPostgres({
     `,
     [limit, status, source],
   );
-  const orders = ordersResult.rows;
-  const orderIds = orders.map((order) => order.id);
+  const orderIds = idsResult.rows.map((row) => row.id);
+  const orders = await fetchOrderFieldsViaPostgres(orderIds);
+  if (orders.length === 0) return [];
 
   const [itemsByOrderId, workshopOrdersById] = await Promise.all([
     fetchItemsByOrderIdViaPostgres(orderIds),
@@ -120,6 +101,59 @@ async function listOrdersViaPostgres({
       ? workshopOrdersById.get(order.workshop_order_id) ?? null
       : null,
   }));
+}
+
+async function fetchOrderFieldsViaPostgres(orderIds: string[]) {
+  if (orderIds.length === 0) return [];
+
+  const byId = new Map<string, Partial<OzonOrder>>();
+
+  async function merge<T extends { id: string }>(query: string) {
+    const result = await adminDbQuery<T>(query, [orderIds]);
+    for (const row of result.rows) {
+      byId.set(row.id, { ...(byId.get(row.id) ?? {}), ...row });
+    }
+  }
+
+  await merge<Pick<
+    OzonOrder,
+    "id" | "posting_number" | "order_id" | "order_number" | "status" | "substatus" | "source"
+  >>(`
+    SELECT id, posting_number, order_id, order_number, status, substatus, source
+    FROM merch_ozon_orders
+    WHERE id = ANY($1::uuid[])
+  `);
+
+  await merge<Pick<
+    OzonOrder,
+    "id" | "ozon_created_at" | "in_process_at" | "shipment_date" | "synced_at" | "shipped_at" | "created_at"
+  >>(`
+    SELECT id, ozon_created_at, in_process_at, shipment_date, synced_at, shipped_at, created_at
+    FROM merch_ozon_orders
+    WHERE id = ANY($1::uuid[])
+  `);
+
+  await merge<Pick<
+    OzonOrder,
+    "id" | "delivery_method" | "warehouse_name" | "customer_name" | "notes"
+  >>(`
+    SELECT id, delivery_method, warehouse_name, customer_name, notes
+    FROM merch_ozon_orders
+    WHERE id = ANY($1::uuid[])
+  `);
+
+  await merge<Pick<
+    OzonOrder,
+    "id" | "total_price" | "shipped_from_warehouse_id" | "workshop_order_id"
+  >>(`
+    SELECT id, total_price::float8 AS total_price, shipped_from_warehouse_id, workshop_order_id
+    FROM merch_ozon_orders
+    WHERE id = ANY($1::uuid[])
+  `);
+
+  return orderIds
+    .map((id) => byId.get(id))
+    .filter(Boolean) as OzonOrder[];
 }
 
 async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
