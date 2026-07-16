@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
-import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, Product, WorkshopOrder } from "@/lib/types";
@@ -9,7 +8,8 @@ import type { OzonOrder, OzonOrderItem, Product, WorkshopOrder } from "@/lib/typ
 export const dynamic = "force-dynamic";
 
 const QUERY_TIMEOUT_MS = 12_000;
-const ORDER_ITEM_CHUNK_SIZE = 25;
+const ORDER_ITEM_TIMEOUT_MS = 4_000;
+const ORDER_ITEM_CHUNK_SIZE = 50;
 const PRODUCT_CHUNK_SIZE = 25;
 const WORKSHOP_ORDER_CHUNK_SIZE = 25;
 const ORDER_SELECT =
@@ -102,17 +102,6 @@ async function fetchItemsByOrderId(orderIds: string[]) {
   const itemsByOrderId = new Map<string, OzonOrderItem[]>();
   if (orderIds.length === 0) return itemsByOrderId;
 
-  if (hasAdminPostgres()) {
-    try {
-      const items = await fetchItemsByOrderIdViaPostgres(orderIds);
-      return buildItemsByOrderId(items);
-    } catch (error) {
-      console.warn("[admin-ozon-orders] postgres order items failed, falling back to Supabase REST", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   const allItems: Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }> = [];
 
   for (const ids of chunk(orderIds, ORDER_ITEM_CHUNK_SIZE)) {
@@ -121,40 +110,15 @@ async function fetchItemsByOrderId(orderIds: string[]) {
         .from("merch_ozon_order_items")
         .select(ORDER_ITEM_SELECT)
         .in("order_id", ids)
-        .order("id", { ascending: true })
         .abortSignal(signal);
       if (error) throw error;
       return (data ?? []) as Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }>;
-    });
+    }, ORDER_ITEM_TIMEOUT_MS);
 
     allItems.push(...items);
   }
 
   return buildItemsByOrderId(allItems);
-}
-
-async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
-  const result = await adminDbQuery<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }>(
-    `
-      SELECT
-        id,
-        order_id,
-        offer_id,
-        ozon_sku,
-        name,
-        quantity,
-        price::float8 AS price,
-        product_id,
-        created_at,
-        shipped_from_warehouse_id
-      FROM merch_ozon_order_items
-      WHERE order_id = ANY($1::uuid[])
-      ORDER BY id
-    `,
-    [orderIds],
-  );
-
-  return result.rows;
 }
 
 async function buildItemsByOrderId(
@@ -198,12 +162,16 @@ async function fetchWorkshopOrdersById(ids: string[]) {
   return out;
 }
 
-async function queryWithRetry<T>(label: string, query: (signal: AbortSignal) => Promise<T>) {
+async function queryWithRetry<T>(
+  label: string,
+  query: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = QUERY_TIMEOUT_MS,
+) {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await query(controller.signal);
     } catch (error) {
