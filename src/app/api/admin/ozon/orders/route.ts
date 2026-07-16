@@ -1,20 +1,24 @@
 import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
-import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
-import { ADMIN_PRODUCT_SELECT_INLINE } from "@/lib/admin/selects";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, Product, WorkshopOrder } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const QUERY_TIMEOUT_MS = 12_000;
-const ORDER_ITEM_CHUNK_SIZE = 5;
+const ORDER_ITEM_CHUNK_SIZE = 25;
 const PRODUCT_CHUNK_SIZE = 25;
 const WORKSHOP_ORDER_CHUNK_SIZE = 25;
+const ORDER_SELECT =
+  "id,posting_number,order_id,order_number,status,substatus,ozon_created_at,in_process_at,shipment_date,delivery_method,warehouse_name,customer_name,total_price,source,synced_at,shipped_at,shipped_from_warehouse_id,workshop_order_id,notes,created_at";
+const ORDER_ITEM_SELECT =
+  "id,order_id,offer_id,ozon_sku,name,quantity,price,product_id,created_at,shipped_from_warehouse_id";
 const PRODUCT_SELECT =
   "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,ozon_sku,legacy_skus,design_version,hoodie_fit,hoodie_fabric,is_blank,cost_price,sale_price,created_at";
+const WORKSHOP_ORDER_SELECT =
+  "id,order_number,workshop_id,status,notes,created_at,sent_at,completed_at,received_at";
 
 export async function GET(request: NextRequest) {
   try {
@@ -24,46 +28,14 @@ export async function GET(request: NextRequest) {
     const status = params.get("status")?.trim();
     const source = params.get("source")?.trim();
 
-    if (hasAdminPostgres()) {
-      const data = await listOrdersViaPostgres({ limit, status: status || null, source: source || null });
-      return adminJson({ data, meta: { limit } });
-    }
-
-    let query = getAdminSupabaseClient()
-      .from("merch_ozon_orders")
-      .select("*")
-      .order("in_process_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(limit);
-
-    if (status) query = query.eq("status", status);
-    if (source) query = query.eq("source", source);
-
-    const orders = await queryWithRetry("ozon orders", async (signal) => {
-      const { data, error } = await query.abortSignal(signal);
-      if (error) throw error;
-      return (data ?? []) as OzonOrder[];
-    });
-
-    const [itemsByOrderId, workshopOrdersById] = await Promise.all([
-      fetchItemsByOrderId(orders.map((order) => order.id)),
-      fetchWorkshopOrdersById(orders.map((order) => order.workshop_order_id).filter(Boolean) as string[]),
-    ]);
-
-    return adminJson({
-      data: orders.map((order) => ({
-        ...order,
-        items: itemsByOrderId.get(order.id) ?? [],
-        workshop_order: order.workshop_order_id ? workshopOrdersById.get(order.workshop_order_id) ?? null : null,
-      })),
-      meta: { limit },
-    });
+    const data = await listOrdersViaSupabase({ limit, status: status || null, source: source || null });
+    return adminJson({ data, meta: { limit } });
   } catch (error) {
     return adminErrorResponse(error);
   }
 }
 
-async function listOrdersViaPostgres({
+async function listOrdersViaSupabase({
   limit,
   status,
   source,
@@ -72,26 +44,27 @@ async function listOrdersViaPostgres({
   status: string | null;
   source: string | null;
 }) {
-  const idsResult = await adminDbQuery<{ id: string }>(
-    `
-      SELECT id
-      FROM merch_ozon_orders
-      WHERE ($2::text IS NULL OR status = $2)
-        AND ($3::text IS NULL OR source::text = $3)
-      ORDER BY in_process_at DESC NULLS LAST, created_at DESC
-      LIMIT $1
-    `,
-    [limit, status, source],
-  );
-  const orderIds = idsResult.rows.map((row) => row.id);
-  const orders = await fetchOrderFieldsViaPostgres(orderIds);
-  if (orders.length === 0) return [];
+  let query = getAdminSupabaseClient()
+    .from("merch_ozon_orders")
+    .select(ORDER_SELECT)
+    .order("in_process_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (status) query = query.eq("status", status);
+  if (source) query = query.eq("source", source);
+
+  const orders = await queryWithRetry("ozon orders", async (signal) => {
+    const { data, error } = await query.abortSignal(signal);
+    if (error) throw error;
+    return (data ?? []) as OzonOrder[];
+  });
+
+  const orderIds = orders.map((order) => order.id);
 
   const [itemsByOrderId, workshopOrdersById] = await Promise.all([
-    fetchItemsByOrderIdViaPostgres(orderIds),
-    fetchWorkshopOrdersByIdViaPostgres(
-      orders.map((order) => order.workshop_order_id).filter(Boolean) as string[],
-    ),
+    fetchItemsByOrderId(orderIds),
+    fetchWorkshopOrdersById(orders.map((order) => order.workshop_order_id).filter(Boolean) as string[]),
   ]);
 
   return orders.map((order) => ({
@@ -101,98 +74,6 @@ async function listOrdersViaPostgres({
       ? workshopOrdersById.get(order.workshop_order_id) ?? null
       : null,
   }));
-}
-
-async function fetchOrderFieldsViaPostgres(orderIds: string[]) {
-  if (orderIds.length === 0) return [];
-
-  const byId = new Map<string, Partial<OzonOrder>>();
-
-  async function merge<T extends { id: string }>(query: string) {
-    const result = await adminDbQuery<T>(query, [orderIds]);
-    for (const row of result.rows) {
-      byId.set(row.id, { ...(byId.get(row.id) ?? {}), ...row });
-    }
-  }
-
-  await merge<Pick<
-    OzonOrder,
-    "id" | "posting_number" | "order_id" | "order_number" | "status" | "substatus" | "source"
-  >>(`
-    SELECT id, posting_number, order_id, order_number, status, substatus, source
-    FROM merch_ozon_orders
-    WHERE id = ANY($1::uuid[])
-  `);
-
-  await merge<Pick<
-    OzonOrder,
-    "id" | "ozon_created_at" | "in_process_at" | "shipment_date" | "synced_at" | "shipped_at" | "created_at"
-  >>(`
-    SELECT id, ozon_created_at, in_process_at, shipment_date, synced_at, shipped_at, created_at
-    FROM merch_ozon_orders
-    WHERE id = ANY($1::uuid[])
-  `);
-
-  await merge<Pick<
-    OzonOrder,
-    "id" | "delivery_method" | "warehouse_name" | "customer_name" | "notes"
-  >>(`
-    SELECT id, delivery_method, warehouse_name, customer_name, notes
-    FROM merch_ozon_orders
-    WHERE id = ANY($1::uuid[])
-  `);
-
-  await merge<Pick<
-    OzonOrder,
-    "id" | "total_price" | "shipped_from_warehouse_id" | "workshop_order_id"
-  >>(`
-    SELECT id, total_price::float8 AS total_price, shipped_from_warehouse_id, workshop_order_id
-    FROM merch_ozon_orders
-    WHERE id = ANY($1::uuid[])
-  `);
-
-  return orderIds
-    .map((id) => byId.get(id))
-    .filter(Boolean) as OzonOrder[];
-}
-
-async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
-  const itemsByOrderId = new Map<string, OzonOrderItem[]>();
-  if (orderIds.length === 0) return itemsByOrderId;
-
-  const result = await adminDbQuery<OzonOrderItem & { shipped_from_warehouse_id?: string | null }>(
-    `
-      SELECT
-        i.id,
-        i.order_id,
-        i.offer_id,
-        i.ozon_sku,
-        i.name,
-        i.quantity,
-        i.price::float8 AS price,
-        i.product_id,
-        i.created_at,
-        i.shipped_from_warehouse_id
-      FROM merch_ozon_order_items i
-      WHERE i.order_id = ANY($1::uuid[])
-      ORDER BY i.id
-    `,
-    [orderIds],
-  );
-  const productsById = await fetchProductsByIdsViaSupabase(
-    result.rows.map((item) => item.product_id).filter(Boolean) as string[],
-  );
-
-  for (const item of result.rows) {
-    const list = itemsByOrderId.get(item.order_id) ?? [];
-    list.push({
-      ...item,
-      product: item.product_id ? productsById.get(item.product_id) ?? null : null,
-    });
-    itemsByOrderId.set(item.order_id, list);
-  }
-
-  return itemsByOrderId;
 }
 
 async function fetchProductsByIdsViaSupabase(ids: string[]) {
@@ -216,43 +97,38 @@ async function fetchProductsByIdsViaSupabase(ids: string[]) {
   return out;
 }
 
-async function fetchWorkshopOrdersByIdViaPostgres(ids: string[]) {
-  const out = new Map<string, WorkshopOrder>();
-  const uniqueIds = Array.from(new Set(ids));
-  if (uniqueIds.length === 0) return out;
-
-  const result = await adminDbQuery<WorkshopOrder>(
-    `
-      SELECT *
-      FROM merch_workshop_orders
-      WHERE id = ANY($1::uuid[])
-    `,
-    [uniqueIds],
-  );
-  for (const row of result.rows) out.set(row.id, row);
-  return out;
-}
-
 async function fetchItemsByOrderId(orderIds: string[]) {
   const itemsByOrderId = new Map<string, OzonOrderItem[]>();
   if (orderIds.length === 0) return itemsByOrderId;
+
+  const allItems: Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }> = [];
 
   for (const ids of chunk(orderIds, ORDER_ITEM_CHUNK_SIZE)) {
     const items = await queryWithRetry(`ozon order items ${ids[0]}`, async (signal) => {
       const { data, error } = await getAdminSupabaseClient()
         .from("merch_ozon_order_items")
-        .select(`*, product:merch_products(${ADMIN_PRODUCT_SELECT_INLINE})`)
+        .select(ORDER_ITEM_SELECT)
         .in("order_id", ids)
+        .order("id", { ascending: true })
         .abortSignal(signal);
       if (error) throw error;
-      return ((data ?? []) as unknown) as OzonOrderItem[];
+      return (data ?? []) as Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }>;
     });
 
-    for (const item of items) {
-      const list = itemsByOrderId.get(item.order_id) ?? [];
-      list.push(item);
-      itemsByOrderId.set(item.order_id, list);
-    }
+    allItems.push(...items);
+  }
+
+  const productsById = await fetchProductsByIdsViaSupabase(
+    allItems.map((item) => item.product_id).filter(Boolean) as string[],
+  );
+
+  for (const item of allItems) {
+    const list = itemsByOrderId.get(item.order_id) ?? [];
+    list.push({
+      ...item,
+      product: item.product_id ? productsById.get(item.product_id) ?? null : null,
+    });
+    itemsByOrderId.set(item.order_id, list);
   }
 
   return itemsByOrderId;
@@ -267,7 +143,7 @@ async function fetchWorkshopOrdersById(ids: string[]) {
     const rows = await queryWithRetry(`workshop orders ${chunkIds[0]}`, async (signal) => {
       const { data, error } = await getAdminSupabaseClient()
         .from("merch_workshop_orders")
-        .select("*")
+        .select(WORKSHOP_ORDER_SELECT)
         .in("id", chunkIds)
         .abortSignal(signal);
       if (error) throw error;
