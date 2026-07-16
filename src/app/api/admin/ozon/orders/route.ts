@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import type { OzonOrder, OzonOrderItem, Product, WorkshopOrder } from "@/lib/types";
@@ -101,6 +102,17 @@ async function fetchItemsByOrderId(orderIds: string[]) {
   const itemsByOrderId = new Map<string, OzonOrderItem[]>();
   if (orderIds.length === 0) return itemsByOrderId;
 
+  if (hasAdminPostgres()) {
+    try {
+      const items = await fetchItemsByOrderIdViaPostgres(orderIds);
+      return buildItemsByOrderId(items);
+    } catch (error) {
+      console.warn("[admin-ozon-orders] postgres order items failed, falling back to Supabase REST", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const allItems: Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }> = [];
 
   for (const ids of chunk(orderIds, ORDER_ITEM_CHUNK_SIZE)) {
@@ -118,6 +130,37 @@ async function fetchItemsByOrderId(orderIds: string[]) {
     allItems.push(...items);
   }
 
+  return buildItemsByOrderId(allItems);
+}
+
+async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
+  const result = await adminDbQuery<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }>(
+    `
+      SELECT
+        id,
+        order_id,
+        offer_id,
+        ozon_sku,
+        name,
+        quantity,
+        price::float8 AS price,
+        product_id,
+        created_at,
+        shipped_from_warehouse_id
+      FROM merch_ozon_order_items
+      WHERE order_id = ANY($1::uuid[])
+      ORDER BY id
+    `,
+    [orderIds],
+  );
+
+  return result.rows;
+}
+
+async function buildItemsByOrderId(
+  allItems: Array<OzonOrderItem & { created_at?: string; shipped_from_warehouse_id?: string | null }>,
+) {
+  const itemsByOrderId = new Map<string, OzonOrderItem[]>();
   const productsById = await fetchProductsByIdsViaSupabase(
     allItems.map((item) => item.product_id).filter(Boolean) as string[],
   );

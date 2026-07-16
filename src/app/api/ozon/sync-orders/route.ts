@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
+import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ const SUPABASE_TIMEOUT_MS = 20_000;
 const ORDER_UPSERT_CONCURRENCY = 4;
 const ORDER_ITEM_CONCURRENCY = 8;
 const ACTIVE_STALE_REFRESH_CONCURRENCY = 4;
+const PRODUCT_OFFER_CHUNK_SIZE = 100;
+const PRODUCT_OFFER_REST_CHUNK_SIZE = 10;
 const TERMINAL_FBS_STATUSES = [
   "delivering",
   "delivered",
@@ -316,21 +319,19 @@ export async function POST(req: Request) {
 
     const supabase = getAdminSupabaseClient();
 
-    // 1) Параллельно тянем Ozon + каталог
+    // 1) Тянем Ozon. Каталог читаем ниже только по offer_id из этих заказов,
+    //    а не целиком: полный merch_products(id, sku) на production может
+    //    упираться в таймауты Supabase/PostgREST.
     const fetcher = scope === "all"
       ? Promise.all([fetchAllFbsPostings(days), fetchAllFboPostings(days)]).then(([fbs, fbo]) => [...fbs, ...fbo])
       : fetchActiveFbsPostingsWithStaleRefresh(supabase);
-    const [postings, products] = await Promise.all([
-      fetcher,
-      supabaseQuery<Array<{ id: string; sku: string | null }>>(
-        "products select",
-        supabase.from("merch_products").select("id, sku").not("sku", "is", null).limit(5000),
-      ),
-    ]);
+    const postings = await fetcher;
 
     if (postings.length === 0) {
       return NextResponse.json({ ok: true, scope, fetched: 0, created: 0, updated: 0, unmatchedItems: 0, unmatchedSamples: [] });
     }
+
+    const products = await fetchProductsByOfferIds(supabase, collectOfferIds(postings));
 
     // Карта offer_id → product_id. legacy_skus не читаем в sync route:
     // на production PostgREST выборка этой колонки может зависать и ломать синхронизацию заказов.
@@ -511,4 +512,63 @@ export async function POST(req: Request) {
     console.error("[sync-orders]", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+function collectOfferIds(postings: OzonPosting[]) {
+  const offers = new Set<string>();
+  for (const posting of postings) {
+    for (const product of posting.products ?? []) {
+      if (product.offer_id) offers.add(String(product.offer_id));
+    }
+  }
+  return Array.from(offers);
+}
+
+async function fetchProductsByOfferIds(
+  supabase: ReturnType<typeof getAdminSupabaseClient>,
+  offerIds: string[],
+) {
+  if (offerIds.length === 0) return [] as Array<{ id: string; sku: string | null }>;
+
+  if (hasAdminPostgres()) {
+    try {
+      const rows: Array<{ id: string; sku: string | null }> = [];
+      for (const offers of chunk(offerIds, PRODUCT_OFFER_CHUNK_SIZE)) {
+        const result = await adminDbQuery<{ id: string; sku: string | null }>(
+          "SELECT id, sku FROM merch_products WHERE sku = ANY($1::text[])",
+          [offers],
+        );
+        rows.push(...result.rows);
+      }
+      return rows;
+    } catch (error) {
+      console.warn("[sync-orders] postgres products by offer failed, falling back to Supabase REST", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const rows: Array<{ id: string; sku: string | null }> = [];
+  for (const offers of chunk(offerIds, PRODUCT_OFFER_REST_CHUNK_SIZE)) {
+    const filter = offers.map((offer) => `sku.eq.${postgrestOrValue(offer)}`).join(",");
+    const data = await supabaseQueryWithRetry<Array<{ id: string; sku: string | null }>>(
+      `products by offer ${offers[0]}`,
+      () => supabase.from("merch_products").select("id, sku").or(filter),
+      6_000,
+      4,
+    );
+    rows.push(...(data ?? []));
+  }
+  return rows;
+}
+
+function postgrestOrValue(value: string) {
+  if (/^[A-Za-z0-9_.~:-]+$/.test(value)) return value;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function chunk<T>(items: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
