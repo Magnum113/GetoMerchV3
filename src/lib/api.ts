@@ -322,7 +322,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 5 }),
+  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 50 }),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),

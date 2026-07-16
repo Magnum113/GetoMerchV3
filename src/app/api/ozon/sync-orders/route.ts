@@ -10,6 +10,17 @@ const OZON_TIMEOUT_MS = 15_000;
 const SUPABASE_TIMEOUT_MS = 20_000;
 const ORDER_UPSERT_CONCURRENCY = 4;
 const ORDER_ITEM_CONCURRENCY = 8;
+const ACTIVE_STALE_REFRESH_CONCURRENCY = 4;
+const TERMINAL_FBS_STATUSES = [
+  "delivering",
+  "delivered",
+  "driver_pickup",
+  "sent_by_seller",
+  "arbitration",
+  "client_arbitration",
+  "not_accepted",
+  "cancelled",
+];
 
 async function ozonPost<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetchWithTimeout(
@@ -116,9 +127,9 @@ async function fetchAllFboPostings(sinceDays: number): Promise<OzonPosting[]> {
   return all;
 }
 
-// Активные — /v3/posting/fbs/unfulfilled/list. Только то, что требует действий
-// продавца (awaiting_packaging / awaiting_deliver и т.п.). Доставленные, отменённые,
-// доставляющиеся пропускаем — для них статус в нашей БД не обновляем, экономя время.
+// Активные — /v3/posting/fbs/unfulfilled/list. Он не возвращает отменённые
+// заказы, поэтому после него отдельно перепроверяем ранее активные отправления,
+// которые пропали из списка, через /v3/posting/fbs/get.
 async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
   // cutoff — дедлайн упаковки/отгрузки. Берём широкое окно вокруг "сейчас"
   // (на случай просроченных и далёких будущих).
@@ -146,6 +157,62 @@ async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
     if (offset > 10000) break;
   }
   return all;
+}
+
+async function fetchFbsPosting(postingNumber: string): Promise<OzonPosting | null> {
+  const r = await ozonPost<{ result?: OzonPosting }>("/v3/posting/fbs/get", {
+    posting_number: postingNumber,
+    with: { analytics_data: true, financial_data: false },
+  });
+  return r.result ? { ...r.result, source: "fbs" as const } : null;
+}
+
+async function fetchActiveFbsPostingsWithStaleRefresh(
+  supabase: ReturnType<typeof getAdminSupabaseClient>,
+) {
+  const active = await fetchUnfulfilledPostings();
+  const activePostingNumbers = new Set(active.map((posting) => posting.posting_number));
+
+  const staleActiveRows = await supabaseQueryWithRetry<Array<{ posting_number: string }>>(
+    "stale active fbs select",
+    () =>
+      supabase
+        .from("merch_ozon_orders")
+        .select("posting_number")
+        .eq("source", "fbs")
+        .is("shipped_at", null)
+        .not("status", "in", `(${TERMINAL_FBS_STATUSES.join(",")})`)
+        .limit(500),
+    6_000,
+    3,
+  );
+
+  const missingPostings = (staleActiveRows ?? [])
+    .map((row) => row.posting_number)
+    .filter((postingNumber) => !activePostingNumbers.has(postingNumber));
+
+  if (missingPostings.length === 0) return active;
+
+  const refreshed = await mapLimit(missingPostings, ACTIVE_STALE_REFRESH_CONCURRENCY, async (postingNumber) => {
+    try {
+      return await fetchFbsPosting(postingNumber);
+    } catch (error) {
+      console.warn("[sync-orders] stale active refresh failed", {
+        postingNumber,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  });
+
+  const refreshedPostings = refreshed.filter((posting): posting is OzonPosting => Boolean(posting));
+  return mergePostings([...active, ...refreshedPostings]);
+}
+
+function mergePostings(postings: OzonPosting[]) {
+  const byPostingNumber = new Map<string, OzonPosting>();
+  for (const posting of postings) byPostingNumber.set(posting.posting_number, posting);
+  return Array.from(byPostingNumber.values());
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number, label: string) {
@@ -252,7 +319,7 @@ export async function POST(req: Request) {
     // 1) Параллельно тянем Ozon + каталог
     const fetcher = scope === "all"
       ? Promise.all([fetchAllFbsPostings(days), fetchAllFboPostings(days)]).then(([fbs, fbo]) => [...fbs, ...fbo])
-      : fetchUnfulfilledPostings();
+      : fetchActiveFbsPostingsWithStaleRefresh(supabase);
     const [postings, products] = await Promise.all([
       fetcher,
       supabaseQuery<Array<{ id: string; sku: string | null }>>(
@@ -350,7 +417,7 @@ export async function POST(req: Request) {
       const orderId = idByPosting.get(p.posting_number);
       if (!orderId) continue;
       const wasShipped = stateByPosting.get(p.posting_number)?.shipped_at != null;
-      if (wasShipped) continue;
+      if (wasShipped || TERMINAL_FBS_STATUSES.includes(p.status)) continue;
 
       refreshableOrderIds.push(orderId);
       const orderItems: Array<Record<string, unknown>> = [];

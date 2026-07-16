@@ -585,7 +585,10 @@ COGS-матчинга по `posting_number`.
 **Источник записей**
 
 - Кнопка «Синхронизировать» (`scope=active`) → `POST /v3/posting/fbs/unfulfilled/list`
-  тянет только не-отгруженные FBS. FBO в этом сценарии НЕ обновляются
+  тянет не-отгруженные FBS. Так как Ozon не возвращает отменённые отправления
+  в `unfulfilled/list`, sync дополнительно берёт ранее активные FBS из БД,
+  которых уже нет в unfulfilled, и точечно обновляет их через
+  `POST /v3/posting/fbs/get`. FBO в этом сценарии НЕ обновляются
 - Кнопка «Полная» (`scope=all`, дефолт 60 дней) → параллельно `/v3/posting/fbs/list`
   и `/v2/posting/fbo/list`, упсерт по `posting_number`
 - При синхронизации позиций (`merch_ozon_order_items`) **уже отгруженные**

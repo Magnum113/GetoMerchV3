@@ -589,9 +589,9 @@ GETOMERCH_POSTGRES_POOL_MAX_USES=1
   широкая гидрация давали timeout/500. Текущий паттерн — товары страницами по
   50 через Supabase REST, lookup один раз, stock aggregate через `pg`,
   `AbortController` timeout 3 секунды и 3 попытки;
-- client-side лимиты сейчас намеренно консервативные (`orders=5`,
-  `inventory=10`). Увеличивать их надо отдельным шагом после нормальной
-  full pagination для списков, а не вместе с matrix.
+- client-side лимиты всё ещё консервативные, но не аварийные:
+  `orders=50`, `inventory=10`. Увеличивать их надо отдельным шагом после
+  нормальной full pagination для списков, а не вместе с matrix.
 
 ### 7.5. Git
 
@@ -636,6 +636,8 @@ UI — на русском (целевой пользователь говори
 - Используемые методы:
   - `POST /v5/product/info/prices` — синхронизация цен (`/api/ozon/sync-prices`)
   - `POST /v3/posting/fbs/list` — синхронизация FBS-заказов (`/api/ozon/sync-orders`)
+  - `POST /v3/posting/fbs/get` — точечное обновление ранее активных FBS,
+    которые пропали из `unfulfilled/list` (например, были отменены)
   - `POST /v2/posting/fbo/list` — синхронизация FBO-заказов для аналитики
     заказов и точного COGS по FBO-финоперациям (`/api/ozon/sync-orders`,
     только при `scope=all`)

@@ -2,16 +2,19 @@ import { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { adminErrorResponse, adminJson, assertNoSupabaseError, parseLimitParam } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { fetchProductsByIdsViaPostgres } from "@/lib/admin/product-postgres";
+import { hydrateProducts } from "@/lib/admin/product-hydration";
 import { ADMIN_PRODUCT_SELECT_INLINE } from "@/lib/admin/selects";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
-import type { OzonOrder, OzonOrderItem, WorkshopOrder } from "@/lib/types";
+import type { OzonOrder, OzonOrderItem, Product, WorkshopOrder } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const QUERY_TIMEOUT_MS = 12_000;
 const ORDER_ITEM_CHUNK_SIZE = 5;
+const PRODUCT_CHUNK_SIZE = 25;
 const WORKSHOP_ORDER_CHUNK_SIZE = 25;
+const PRODUCT_SELECT =
+  "id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,ozon_sku,legacy_skus,design_version,hoodie_fit,hoodie_fabric,is_blank,cost_price,sale_price,created_at";
 
 export async function GET(request: NextRequest) {
   try {
@@ -143,7 +146,7 @@ async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
     `,
     [orderIds],
   );
-  const productsById = await fetchProductsByIdsViaPostgres(
+  const productsById = await fetchProductsByIdsViaSupabase(
     result.rows.map((item) => item.product_id).filter(Boolean) as string[],
   );
 
@@ -157,6 +160,27 @@ async function fetchItemsByOrderIdViaPostgres(orderIds: string[]) {
   }
 
   return itemsByOrderId;
+}
+
+async function fetchProductsByIdsViaSupabase(ids: string[]) {
+  const out = new Map<string, Product>();
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) return out;
+
+  for (const chunkIds of chunk(uniqueIds, PRODUCT_CHUNK_SIZE)) {
+    const products = await queryWithRetry(`ozon order products ${chunkIds[0]}`, async (signal) => {
+      const { data, error } = await getAdminSupabaseClient()
+        .from("merch_products")
+        .select(PRODUCT_SELECT)
+        .in("id", chunkIds)
+        .abortSignal(signal);
+      if (error) throw error;
+      return (data ?? []) as Product[];
+    });
+    for (const product of await hydrateProducts(products)) out.set(product.id, product);
+  }
+
+  return out;
 }
 
 async function fetchWorkshopOrdersByIdViaPostgres(ids: string[]) {
