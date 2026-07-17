@@ -217,7 +217,7 @@ if [[ -f "$EXTERNAL_ENV" ]]; then
   set +a
   [[ -n "${YANDEX_S3_BUCKET:-}" && -n "${YANDEX_S3_ENDPOINT:-}" ]] || \
     fail "off-site backup bucket or endpoint is missing"
-  prefix="${GETOMERCH_DATABASE_BACKUP_S3_PREFIX:-${YANDEX_S3_PREFIX:-}/getomerch/database/hourly}"
+  prefix="${GETOMERCH_DATABASE_BACKUP_S3_PREFIX:-getomerch/database/hourly}"
   prefix="${prefix#/}"
   prefix="${prefix%/}"
   external_destination="s3://${YANDEX_S3_BUCKET}/${prefix}/$(basename "$FINAL_ARCHIVE")"
