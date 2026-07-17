@@ -261,9 +261,13 @@ database_guard_snapshot() {
   fail "$OTHER_DB is missing"
 TARGET_TABLES_BEFORE="$(psql_admin -d "$TARGET_DB" -Atc \
   "select count(*) from pg_tables where schemaname='public'")"
-[[ "$TARGET_TABLES_BEFORE" == 0 ]] || fail "$TARGET_DB is not empty"
 OTHER_TABLES_BEFORE="$(psql_admin -d "$OTHER_DB" -Atc \
   "select count(*) from pg_tables where schemaname='public'")"
+if [[ "$TARGET_MODE" == production ]]; then
+  [[ "$TARGET_TABLES_BEFORE" == 0 ]] || fail "$TARGET_DB is not empty"
+else
+  [[ "$OTHER_TABLES_BEFORE" == 0 ]] || fail "$OTHER_DB is not empty"
+fi
 [[ "$(psql_admin -d postgres -Atc "select count(*) from pg_hba_file_rules where error is not null")" == 0 ]] || \
   fail "PostgreSQL HBA has errors"
 if admin_uses_local_target; then
