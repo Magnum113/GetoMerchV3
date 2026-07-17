@@ -449,12 +449,15 @@ abort_cutover() {
 }
 
 show_status() {
-  printf 'phase=%s\n' "$(state_field phase)"
+  local phase maintenance
+  phase="$(state_field phase)"
+  maintenance="$(env_value "$ADMIN_ENV" GETOMERCH_MAINTENANCE_MODE || true)"
+  printf 'phase=%s\n' "${phase:-idle}"
   printf 'updated_at=%s\n' "$(state_field updatedAt)"
   printf 'writes_opened_at=%s\n' "$(state_field writesOpenedAt)"
   printf 'read_source=%s\n' "$(runtime_source GETOMERCH_DB_READ_SOURCE)"
   printf 'write_source=%s\n' "$(runtime_source GETOMERCH_DB_WRITE_SOURCE)"
-  printf 'maintenance=%s\n' "$(env_value "$ADMIN_ENV" GETOMERCH_MAINTENANCE_MODE || true)"
+  printf 'maintenance=%s\n' "${maintenance:-off}"
   printf 'admin_service=%s\n' "$(systemctl is-active "$SERVICE_UNIT" 2>/dev/null || true)"
   printf 'worker_service=%s\n' "$(systemctl is-active "$WORKER_UNIT" 2>/dev/null || true)"
   printf 'source_backup_timer=%s\n' "$(systemctl is-active "$SOURCE_BACKUP_TIMER" 2>/dev/null || true)"
