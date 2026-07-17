@@ -35,19 +35,17 @@ Next.js 15, React 19, Supabase, Tailwind CSS и локальные shadcn/ui-к�
 
 ## База данных
 
-Рабочая production-схема пока живёт в Supabase, таблицы используют префикс
-`merch_`. Для полного переноса на сервер добавлен воспроизводимый PostgreSQL
-baseline и migration runner в `db/`; команды и правила описаны в
+С `2026-07-17 13:08 UTC` рабочая production-схема живёт в локальной PostgreSQL
+БД `getomerch_production` на VPS; таблицы используют префикс `merch_`.
+Воспроизводимый baseline и migration runner находятся в `db/`; команды и правила описаны в
 `db/README.md`. Подробная модель и ограничения описаны в `DATABASE.md`,
 инварианты разработки — в `ARCHITECTURE.md`.
 
-Важно: production-приложение на `admin.komui.ru` всё ещё работает с текущим
-Supabase-проектом. На VPS уже подготовлен отдельный изолированный PostgreSQL-
-контур: `getomerch_rehearsal` с migrations `0001`–`0003`, проверенной копией
-6 621 строки из 20 рабочих таблиц, audit/idempotency и private job schemas, а
-также пустая `getomerch_production`. Rehearsal не синхронизируется
-автоматически, DB env не подключен к `getomerch-admin.service`, поэтому
-production source of truth не менялся.
+Production-приложение на `admin.komui.ru` читает и пишет локальную БД через
+роль `getomerch_app`; `getomerch-worker.service` обрабатывает durable Ozon jobs.
+Supabase зафиксирован на момент финального export и сохраняется минимум 30 дней
+как rollback/archive source, но больше не является production writer.
+`getomerch_rehearsal` остаётся отдельной проверочной БД и не является replica.
 
 Этапы 6–9 server migration завершены: read-only контур, admin RPC mutations и
 server-side Ozon sync/import проходят через независимые service layers.
@@ -56,16 +54,15 @@ server-side Ozon sync/import проходят через независимые 
 Supabase; её постоянный write-source остаётся Supabase. Server writes отдельно
 проверены на одноразовой изолированной БД: 12/12 групп, включая concurrency,
 idempotency и fault rollback, плюс 10/10 групп durable queue/Ozon integration.
-Production release, default Supabase source и production worker не
-переключались. Управление rehearsal-процессом:
+До cutover эти проверки выполнялись изолированно. Управление rehearsal-процессом:
 `sudo /usr/local/sbin/getomerch-admin-rehearsal {start|stop|restart|status|test}`.
 Два полных pre-production цикла проверили fresh export/import, все UI/KOMUI
 sections, mutations/jobs/Ozon, native PostgreSQL restore и rollback-runtime на
 Supabase. Подробности этапа 9:
 `docs/ADMIN_MIGRATION_STAGE_9_REPORT_2026-07-17.md`.
 
-Для этапа 10 подготовлен Release E, но production source of truth пока не
-переключен. Новый `GETOMERCH_MAINTENANCE_MODE=read_only` оставляет страницы,
+Этап 10 выполнен. Release E переключил production source of truth на
+`getomerch_production`. `GETOMERCH_MAINTENANCE_MODE=read_only` оставляет страницы,
 health и read API доступными, показывает плашку в UI и возвращает `503` на
 mutation/job routes. Переключение управляется только через:
 
@@ -77,19 +74,17 @@ sudo /usr/local/sbin/getomerch-cutover abort --confirm-abort
 sudo /usr/local/sbin/getomerch-cutover status
 ```
 
-`prepare` оставляет запись закрытой. После `go` простой abort на Supabase
-запрещен, потому что в локальной БД уже могли появиться новые операции.
+`prepare` оставляет запись закрытой. `go` выполнен `2026-07-17 13:08 UTC`;
+простой abort на Supabase теперь запрещен, потому что в локальной БД уже есть
+новые операции. Текущий статус проверяется командой `getomerch-cutover status`.
 
-Для части тяжёлых серверных чтений production-админка подключается напрямую к
-Postgres Supabase через server-only `pg`. Это ускоряющий read-path к той же
-Supabase-базе, а не перенос данных на VPS. Записи, синхронизации и остальные
-разделы продолжают использовать существующие server-side API/Supabase-клиенты,
-если для них не сделан отдельный прямой route.
+Основные чтения, записи и синхронизации production теперь используют локальный
+PostgreSQL service/repository layer. Старые Supabase REST/direct adapters пока
+сохраняются только на период стабилизации и не должны получать новые записи.
 
-До cutover любое новое DDL-изменение должно быть оформлено и для текущего
-Supabase production, и следующей forward-only миграцией в `db/migrations`.
-Файл `0001_getomerch_baseline.sql` неизменяем; production не применяет новый
-runner автоматически при запуске приложения.
+Любое новое DDL-изменение оформляется следующей forward-only миграцией в
+`db/migrations`. Файл `0001_getomerch_baseline.sql` неизменяем; production не
+применяет migration runner автоматически при запуске приложения.
 
 ## Запуск
 
@@ -120,9 +115,9 @@ GETOMERCH_SUPABASE_SERVICE_ROLE_KEY=<server_only_key>
 # или GETOMERCH_SUPABASE_SERVER_KEY=<restricted_server_key>
 ```
 
-Для тяжёлых чтений админки используется прямое server-side подключение к
-Postgres Supabase. Если переменная не задана, backend продолжает работать через
-Supabase REST fallback, но большие разделы могут грузиться медленнее.
+Во время стабилизации старые Supabase fallback/diagnostic paths могут
+использовать прямое server-side подключение. Production `server/server` runtime
+от этой переменной не зависит.
 
 ```env
 GETOMERCH_SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<region>.pooler.supabase.com:6543/postgres
@@ -131,29 +126,27 @@ GETOMERCH_POSTGRES_POOL_MAX=1
 GETOMERCH_POSTGRES_POOL_MAX_USES=1
 ```
 
-На текущем VPS нужно использовать Supabase pooler в transaction mode
+Если legacy Supabase path временно запускается на VPS, нужно использовать pooler в transaction mode
 (`pooler.supabase.com:6543`). Прямой host `db.<ref>.supabase.co:5432` может
 резолвиться в IPv6 и падать с `ENETUNREACH`, а session pooler `:5432` уже
 упирался в лимит сессий. Значения `POOL_MAX=1` и `POOL_MAX_USES=1` оставлены
 консервативно: они стабилизируют `/orders` и основной список `/inventory` через
 pooler, не раздувая число долгих сессий.
 
-Для целевой локальной БД используется другой server-only URL и отдельные
-feature flags. В production они остаются `supabase/supabase/false` до cutover:
+Для рабочей локальной БД используется отдельный server-only URL. Текущие
+production flags после cutover:
 
 ```env
 GETOMERCH_DATABASE_URL=postgresql://getomerch_app:<password>@127.0.0.1:5432/getomerch_production
-GETOMERCH_DB_READ_SOURCE=supabase
-GETOMERCH_DB_WRITE_SOURCE=supabase
+GETOMERCH_DB_READ_SOURCE=server
+GETOMERCH_DB_WRITE_SOURCE=server
 GETOMERCH_DB_SHADOW_COMPARE=false
 GETOMERCH_DB_SHADOW_COMPARE_STRICT=false
 ```
 
 В постоянном rehearsal read-source равен `server`, shadow compare и strict
-включены, а write-source остаётся `supabase`. Значение
-`GETOMERCH_DB_WRITE_SOURCE=server` поддерживается транзакционным mutation layer,
-но до cutover разрешено только в изолированных test/candidate process с
-локальной `GETOMERCH_DATABASE_URL`.
+включены, а write-source остаётся `supabase`. Production server write-source
+защищён транзакционным mutation layer, idempotency ledger и audit log.
 
 Эти переменные нельзя добавлять в `NEXT_PUBLIC_*`; deploy дополнительно
 сканирует client bundle на утечки имён server-only env. Runtime env админки
@@ -175,9 +168,10 @@ GETOMERCH_JOB_RETENTION_DAYS=30
 ```
 
 Token разрешён только для пяти точных Ozon sync/import route. UI использует
-admin session, а остальные API token не принимают. Production worker нельзя
-устанавливать или включать до server DB cutover; сейчас подготовлены только
-unit templates.
+admin session, а остальные API token не принимают. Production worker установлен,
+включён и работает только с локальной БД. Автоматические Ozon timers первые
+24 часа после cutover остаются выключенными; ручные синхронизации ставят jobs
+в durable queue.
 
 Для раздела Komui админка умеет переключаться между production и stage прямо
 из UI. Значение сохраняется в cookie `komui_api_target`.
@@ -336,30 +330,26 @@ Rollback admin prod
 - Admin UI обращается к production/stage KOMUI только через backend API, а не
   прямым SQL в PostgreSQL магазина.
 - Новый BFF read-path выбирает источник единым
-  `GETOMERCH_DB_READ_SOURCE=supabase|server`. Production пока использует
-  Supabase, а rehearsal — локальный PostgreSQL с strict Supabase shadow.
+  `GETOMERCH_DB_READ_SOURCE=supabase|server`. Production использует локальный
+  PostgreSQL, а rehearsal — отдельную локальную БД с strict Supabase shadow.
 - Матрица остатков больше не использует старый hybrid route: server adapter
   читает явные product columns и один SQL aggregate остатков, Supabase adapter
   использует ограниченную пагинацию. Оба возвращают один API contract.
-- Локальные `getomerch_rehearsal` и `getomerch_production` не являются текущим
-  runtime источником. Первая содержит проверенную point-in-time копию данных,
-  вторая намеренно пустая;
-  подключать `/etc/getomerch/database.env` к сервису до этапа cutover нельзя.
+- `getomerch_production` является текущим runtime source of truth;
+  `/etc/getomerch/database.env` подключён к web и worker systemd units.
+  `getomerch_rehearsal` остаётся изолированной проверочной копией.
 - Runtime-only `getomerch-admin-rehearsal.service` слушает только
   `127.0.0.1:3101`, не имеет nginx route и не включен при загрузке. Он использует
   только `/etc/getomerch/database-rehearsal.env`; strict shadow mismatch
   проваливает repository contract test.
 - Текущий rehearsal release выбирается symlink
   `/opt/getomerch/rehearsals/current`; production symlink от него независим.
-- `GETOMERCH_DB_WRITE_SOURCE=server` реализован и проверен, но до cutover
-  включается только в изолированном candidate/test process. Наличие server
-  mutation layer не означает выполненный production write-cutover.
-- Private queue `getomerch_jobs.jobs` и worker реализованы, но production
-  Ozon routes до cutover используют прежний Supabase fallback. Наличие unit
-  template не означает, что worker установлен или запущен.
-- Stage-9 release слушает только `127.0.0.1:3101`. Два полных rehearsal цикла
-  пройдены, но это не является разрешением на cutover: этап 10 требует
-  отдельного maintenance window и явного Go/No-Go.
+- `GETOMERCH_DB_WRITE_SOURCE=server` включён в production; mutation layer
+  использует локальные транзакции, блокировки, idempotency и audit.
+- Private queue `getomerch_jobs.jobs` и production worker активны. Ozon routes
+  ставят sync/import operations в durable queue.
+- Stage-9 rehearsal остаётся исторической контрольной точкой на
+  `127.0.0.1:3101`; production cutover выполнен отдельной командой Go.
 - Роли `getomerch_app`, `getomerch_migrator`, `getomerch_backup` ограничены
   локальными HBA-правилами и не могут подключаться к базам KOMUI. В обратную
   сторону роли KOMUI не допускаются к БД GetoMerch.

@@ -1,5 +1,8 @@
 # Review
 
+Historical preparation review. The deferred production cutover was later
+completed; see `.ai/stage-10-production-cutover/`.
+
 ## Result
 
 No blocking defect remains in the cutover preparation after server rehearsal.

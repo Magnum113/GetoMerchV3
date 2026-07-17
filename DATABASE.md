@@ -3,50 +3,47 @@
 Полная справка по каждой таблице: назначение, колонки, ограничения,
 внешние ключи, индексы и где это используется в коде. Все 20 бизнес-таблиц
 живут в схеме `public` с префиксом `merch_`; служебные audit/jobs объекты
-целевого PostgreSQL вынесены в приватные схемы. В текущем Supabase production RLS включён
-с открытой политикой `for all using (true) with check (true)`. В целевом
-локальном PostgreSQL эти policies не переносятся: доступ будет только через
-server-side роли.
+PostgreSQL вынесены в приватные схемы. В замороженном Supabase snapshot RLS
+остаётся с исторической открытой policy. В рабочем локальном PostgreSQL эти
+policies не используются: доступ разрешён только server-side ролям.
 
 ID — `uuid` с дефолтом `gen_random_uuid()`. Временные метки — `timestamptz`
 с дефолтом `now()`. Денежные суммы — `numeric` (без масштаба, чтобы не
 терять копейки).
 
-Текущий Supabase production сохраняет исторические миграции в
-`supabase/migrations/`. Воспроизводимый baseline будущего серверного PostgreSQL
-и новый migration runner находятся в `db/`; подробности — в `db/README.md`.
+Supabase сохраняет исторические миграции в `supabase/migrations/` как архивный
+источник. Воспроизводимый baseline рабочего серверного PostgreSQL и migration
+runner находятся в `db/`; подробности — в `db/README.md`.
 
 ---
 
 ## Production и граница базы
 
 Production-админка теперь отдельно развёрнута на сервере KOMUI как
-`https://admin.komui.ru`, но рабочая база GetoMerchV3 остаётся в Supabase.
+`https://admin.komui.ru`; её рабочая БД — локальная `getomerch_production`.
 Серверный PostgreSQL публичного магазина KOMUI не является БД этой админки.
 
 На сервере хранятся код, releases, env, deploy registry и логи:
 `/opt/getomerch`, `/etc/getomerch/admin-production.env`,
-`/var/lib/getomerch/*`, `/var/log/getomerch/*`. Также уже созданы изолированные
-`getomerch_rehearsal` и `getomerch_production`. Rehearsal содержит migrations
-`0001`–`0003`, проверенную point-in-time копию 6 621 строки,
-`getomerch_audit` и `getomerch_jobs`, но активные `merch_*` и Ozon-данные
-по-прежнему изменяются только в Supabase `public`; локальная копия не является
-live replica.
+`/var/lib/getomerch/*`, `/var/log/getomerch/*`. `getomerch_production` содержит
+migrations `0001`–`0003`, 20 бизнес-таблиц и приватные `getomerch_audit`/
+`getomerch_jobs`; это единственный production writer после cutover.
+`getomerch_rehearsal` содержит отдельную проверочную point-in-time копию и не
+является live replica.
 
-Production-приложение использует два server-side способа доступа к этой же
-Supabase-базе:
+Production-приложение использует локальный `GETOMERCH_DATABASE_URL` через
+repository/service layer для чтения и транзакционных записей. Supabase adapters
+временно сохранены как стабилизационный fallback и архивный инструмент:
 
-- `@supabase/supabase-js`/PostgREST для большинства BFF-route, записей,
-  синхронизаций и fallback-веток;
-- прямой `pg` read-path для тяжёлых списков админки, если задан
+- `@supabase/supabase-js`/PostgREST для явно оставшихся fallback-веток;
+- прямой `pg` read-path для legacy diagnostics, если задан
   `GETOMERCH_SUPABASE_DATABASE_URL` в `/etc/getomerch/admin-production.env`.
 
-Текущий прямой доступ настроен через Supabase transaction pooler
+Старый прямой доступ к Supabase настроен через transaction pooler
 `pooler.supabase.com:6543`, `GETOMERCH_POSTGRES_SSL=true`,
-`GETOMERCH_POSTGRES_POOL_MAX=1`, `GETOMERCH_POSTGRES_POOL_MAX_USES=1`. Это не
-означает, что база переехала на сервер: route handlers читают ту же Supabase DB.
-DB URL для runtime-приложения и DB URL для `pg_dump` backup лежат в разных
-файлах env (`admin-production.env` и `backup.env`) и не заменяют друг друга.
+`GETOMERCH_POSTGRES_POOL_MAX=1`, `GETOMERCH_POSTGRES_POOL_MAX_USES=1`. Он не
+является production source of truth. Локальные app/migrator/backup URL лежат
+в отдельных root-only env в `/etc/getomerch`.
 
 Важные правила:
 
@@ -55,17 +52,15 @@ DB URL для runtime-приложения и DB URL для `pg_dump` backup л�
 - `service_role` и любые секретные ключи Supabase не класть в `NEXT_PUBLIC_*`;
 - `GETOMERCH_SUPABASE_DATABASE_URL` тоже secret: не выводить в client bundle,
   логи, screenshots и публичные документы;
-- до cutover каждое новое DDL-изменение оформлять одновременно миграцией
-  текущего Supabase и следующей forward-only миграцией в `db/migrations`;
+- каждое новое DDL-изменение оформлять следующей forward-only миграцией в
+  `db/migrations`;
 - не изменять зафиксированный `db/migrations/0001_getomerch_baseline.sql`;
 - server migration runner не запускается автоматически при старте приложения;
-- локальные DB env разделены по app/migrator/backup и не подключаются к
-  production systemd unit до cutover;
+- локальные DB env разделены по app/migrator/backup; app env подключён только к
+  GetoMerch web/worker units;
 - роли GetoMerch ограничены HBA и не имеют доступа к базам KOMUI;
-- перенос БД идет по `docs/ADMIN_FULL_SERVER_MIGRATION_PLAN.md`; этапы 3–9 уже
-  создали контур, проверили два полных import cycle, read/mutation paths, Ozon,
-  durable jobs, native restore и Supabase rollback, но production runtime и
-  worker не переключены.
+- перенос БД идет по `docs/ADMIN_FULL_SERVER_MIGRATION_PLAN.md`; этап 10
+  переключил production runtime и worker, этап 11 отвечает за стабилизацию.
 
 ---
 
@@ -903,10 +898,10 @@ Direct Postgres правила для таблиц:
 `SELECT ... FOR UPDATE`; retry выполняется только для `40001`/`40P01` и имеет
 жёсткий лимит.
 
-Production пока использует Supabase write-source, поэтому эти гарантии начнут
-защищать реальные операции только после отдельного cutover. На server write-
-source фактические Ozon sync/import routes уже используют эти primitives через
-durable queue; current Supabase production сохраняет прежний fallback.
+Production использует server write-source, поэтому эти гарантии защищают
+реальные операции после cutover. Ozon sync/import routes используют эти
+primitives через durable queue; Supabase fallback хранится только на период
+стабилизации и не должен получать новые записи.
 
 ### Idempotency и audit
 
@@ -942,13 +937,13 @@ Migration `0003_background_jobs.sql` добавляет приватную сх�
   `getomerch_backup` — read-only, `PUBLIC` не имеет доступа к схеме.
 
 Worker не хранит network secrets в job payload/result и ретраит только
-временные Ozon/network ошибки. Production worker до cutover не установлен.
+временные Ozon/network ошибки. Production worker установлен и активен.
 Проверки: `db/checks/0003_background_jobs.sql` и
 `scripts/check-db-jobs.mjs`.
 
 ### Production cutover и backup локальной БД
 
-Подготовленный этап 10 не использует dual-write. До команды Go приложение
+Выполненный этап 10 не использует dual-write. До команды Go приложение было
 переводится в `GETOMERCH_MAINTENANCE_MODE=read_only`: чтение работает, а
 mutation RPC, durable queue, Ozon/KOMUI apply routes и worker не могут писать.
 Финальный snapshot загружается через тот же проверенный candidate-import с
@@ -970,12 +965,9 @@ counts всех таблиц `public/getomerch_meta/getomerch_audit/getomerch_jo
 
 ### Миграции
 
-Пока source of truth — Supabase, DDL оформляется в двух потоках:
-
-- `supabase/migrations/<YYYYMMDDHHMM>_<snake_case>.sql` — изменение текущего
-  production Supabase;
-- `db/migrations/<NNNN>_<snake_case>.sql` — forward-only изменение целевого
-  server PostgreSQL.
+После cutover DDL оформляется только следующей forward-only миграцией
+`db/migrations/<NNNN>_<snake_case>.sql`. `supabase/migrations/` хранится как
+исторический архив и не является активной production migration chain.
 
 Baseline `db/migrations/0001_getomerch_baseline.sql` неизменяем. Server-
 миграции применяются только отдельным runner под `getomerch_migrator`:
@@ -1017,9 +1009,8 @@ GETOMERCH_DB_SHADOW_COMPARE=false|true
 GETOMERCH_DB_SHADOW_COMPARE_STRICT=false|true
 ```
 
-Production defaults остаются `supabase/supabase/false`. Server writes разрешены
-только при наличии локальной `GETOMERCH_DATABASE_URL`; до cutover их включают
-только в изолированном candidate/test process. Strict shadow применяется к
+Production defaults после cutover — `server/server/false`. Server writes
+разрешены только при наличии локальной `GETOMERCH_DATABASE_URL`. Strict shadow применяется к
 rehearsal: полные canonical results сравниваются по SHA-256, но строки, SQL и
 credentials в log не выводятся.
 

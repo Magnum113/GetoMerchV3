@@ -943,13 +943,13 @@ artifacts удалены. Подробности:
 
 ### Этап 10. Production cutover
 
-**Фактический статус на 2026-07-17: подготовка выполнена, production cutover не
-выполнен.** Release E развернут на VPS; maintenance, оба target-режима импорта,
-production-format encrypted backup/off-site upload/restore и итоговый preflight
-проверены. После теста `getomerch_production` возвращена в пустое состояние,
-worker и local backup timer оставлены disabled, production runtime продолжает
-работать с Supabase. Подробности:
-`docs/ADMIN_MIGRATION_STAGE_10_PREPARATION_REPORT_2026-07-17.md`.
+**Фактический статус на 2026-07-17: выполнен.** Go зафиксирован
+`2026-07-17 13:08:27 UTC`: production web и worker используют локальную
+`getomerch_production`, maintenance выключен, hourly encrypted backup активен,
+старый Supabase backup timer остановлен. Первый production orders sync и
+post-write backup/restore прошли успешно. Supabase сохранён frozen минимум на
+30 дней; простой rollback после первого write запрещён. Подробности:
+`docs/ADMIN_MIGRATION_STAGE_10_CUTOVER_REPORT_2026-07-17.md`.
 
 **Операционные параметры согласованы 2026-07-17:**
 

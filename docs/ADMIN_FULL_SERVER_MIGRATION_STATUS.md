@@ -16,7 +16,8 @@
 - `docs/ADMIN_MIGRATION_STAGE_7_REPORT_2026-07-17.md`;
 - `docs/ADMIN_MIGRATION_STAGE_8_REPORT_2026-07-17.md`;
 - `docs/ADMIN_MIGRATION_STAGE_9_REPORT_2026-07-17.md`;
-- `docs/ADMIN_MIGRATION_STAGE_10_PREPARATION_REPORT_2026-07-17.md`.
+- `docs/ADMIN_MIGRATION_STAGE_10_PREPARATION_REPORT_2026-07-17.md`;
+- `docs/ADMIN_MIGRATION_STAGE_10_CUTOVER_REPORT_2026-07-17.md`.
 
 ## 1. Назначение документа
 
@@ -41,13 +42,13 @@ GetoMerch Admin с Supabase на PostgreSQL сервера. Основной п�
 
 | Параметр | Состояние |
 |---|---|
-| Выполнено | `10 из 12` этапов |
-| Текущий этап | этап 10 — Release E готов и проверен; `prepare`/`go` только в отдельное окно |
-| Production БД админки | Supabase, без переключения |
+| Выполнено | `11 из 12` этапов |
+| Текущий этап | этап 11 — стабилизация после production cutover |
+| Production БД админки | локальная `getomerch_production` на VPS |
 | Production приложение | `/opt/getomerch/current`, `getomerch-admin.service` |
-| Целевая БД | `getomerch_production` создана на VPS и намеренно пустая |
-| Cutover выполнен | нет |
-| Следующий production-риск | критический: этап 10 переключает source of truth; требуется maintenance window и явное подтверждение владельца |
+| Production source | `GETOMERCH_DB_READ_SOURCE=server`, `GETOMERCH_DB_WRITE_SOURCE=server` |
+| Cutover выполнен | да, `2026-07-17 13:08:27 UTC` |
+| Следующий production-риск | простой rollback на Supabase запрещён; требуются monitoring и проверенные local backups |
 
 Обозначения статусов:
 
@@ -70,8 +71,8 @@ GetoMerch Admin с Supabase на PostgreSQL сервера. Основной п�
 | 7. Mutation-path | выполнен | `2026-07-17` | 12/12 mutation test groups, idempotency, audit и fault rollback проверены |
 | 8. Ozon sync/import и workers | выполнен | `2026-07-17` | Durable queue, worker, pagination/retry и Ozon dry-run проверены |
 | 9. Pre-production репетиция | выполнен | `2026-07-17` | Два полных цикла, backup/restore/rollback и все regression gates прошли |
-| 10. Production cutover | в работе | `2026-07-17` | Release E и безопасная репетиция готовы; production `prepare`/`go` не запускались |
-| 11. Стабилизация | не начат | — | Наблюдение, удаление Supabase runtime и финальная приемка |
+| 10. Production cutover | выполнен | `2026-07-17` | Local DB live, worker/timer active, первый sync и post-write restore успешны |
+| 11. Стабилизация | в работе | `2026-07-17` | Наблюдение, daily invariants и последующее удаление Supabase runtime |
 
 ## 4. Выполнено на этапе 0
 
@@ -268,83 +269,75 @@ Forensic archive является прикладным архивом данны
   пустая `getomerch_production` и production worker не менялись.
 - Подробности: `docs/ADMIN_MIGRATION_STAGE_9_REPORT_2026-07-17.md`.
 
-## 14. Этап 10 в работе
+## 14. Этап 10 выполнен, этап 11 начат
 
-Цель — выполнить production cutover только в согласованное maintenance window.
+Production cutover выполнен `2026-07-17`:
 
-Подготовительный Release E уже реализован, развернут и проверен:
-
-- maintenance/read-only блокирует HTTP mutations, server mutation layer,
-  очередь и worker; UI показывает актуальный режим;
-- установлен root-only state machine `preflight -> prepare -> go`, а простой
-  `abort` разрешен только до отметки первого write;
-- установлен hourly encrypted local backup с обязательным off-site upload,
-  retention tiers и отдельным restore drill;
-- worker и новый backup timer установлены, но остаются disabled до Go;
-- оба режима импорта проверены на `6 621` строках с точным fingerprint;
-- production-format backup выгружен off-site и успешно восстановлен;
-- после проверки `getomerch_production` возвращена в пустое состояние;
-- повторный preflight, admin/KOMUI HTTP и service gates прошли.
+- writer scan не выявил запущенных `GetoMerchV4`, SKU scripts, Ozon cron или
+  второго server writer;
+- финальный Supabase snapshot: `6 621` строк, 20/20 tables, 164 checks и точный
+  fingerprint без расхождений;
+- `getomerch_production` построена из migrations `0001`–`0003` и подключена к
+  web/worker через отдельные root-only env;
+- `writesOpenedAt=2026-07-17T13:08:27Z`; простой Supabase abort запрещён;
+- post-cutover UI/KOMUI/Ozon smoke пройден, p95 `71 ms`, matrix `27 ms`;
+- первый orders job завершён за одну попытку: fetched `66`, created `8`,
+  updated `58`, unmatched `0`;
+- post-write encrypted backup выгружен в отдельный off-site namespace и
+  успешно восстановлен;
+- web, worker и local backup timer активны; Supabase backup timer остановлен.
 
 Подробный отчет:
-`docs/ADMIN_MIGRATION_STAGE_10_PREPARATION_REPORT_2026-07-17.md`.
+`docs/ADMIN_MIGRATION_STAGE_10_CUTOVER_REPORT_2026-07-17.md`.
 
-До начала нужны отдельное подтверждение владельца и Go/No-Go checklist:
-
-1. Зафиксировать окно, ответственного, критерии abort и запрет параллельных
-   ручных/legacy writers.
-2. Повторить consumer scan и ротировать ранее засвеченный Supabase DB password.
-3. Сделать финальные Supabase/GetoMerch/KOMUI/config backups.
-4. Включить maintenance/read-only только для админки, остановить jobs/timers и
-   дождаться отсутствия активных операций.
-5. Выполнить финальный frozen export/import/checks до первого production write.
-6. Переключить app, провести read/transaction/Ozon/KOMUI smoke и принять
-   отдельное решение Go/No-Go до снятия maintenance.
-7. Worker включать только после Go и отдельно от web runtime.
+Этап 11 уже идёт. Первые 24 часа автоматические Ozon timers остаются
+выключенными; выполняются monitoring, ручные sync и контроль hourly backup.
+Supabase сохраняется frozen минимум 30 дней и не получает production writes.
 
 ## 15. Текущие риски и обязательные гейты
 
 | Риск / действие | Когда закрыть | Состояние |
 |---|---|---|
-| Сменить пароль Supabase DB после ранней диагностики process list | до cutover | открыто |
-| Заморозить credentials локального `GetoMerchV4` | перед write cutover | открыто |
-| Запретить ручной запуск legacy SKU scripts | на окно cutover | открыто |
-| Повторить consumer/writer scan | непосредственно перед cutover | открыто |
-| Устранить `500` у `/api/admin/inventory?limit=10` | до приемки read-path | закрыто в stage-6 candidate; production получит исправление только с новым release |
+| Сменить пароль Supabase DB после ранней диагностики process list | в период стабилизации после consumer scan | открыто; local production от него не зависит |
+| Заморозить запущенные процессы `GetoMerchV4` | перед write cutover | закрыто: процесс не был запущен |
+| Запретить ручной запуск legacy SKU scripts | на окно cutover | закрыто; scripts не запускались |
+| Повторить consumer/writer scan | непосредственно перед cutover | закрыто; второй writer не найден |
+| Устранить `500` у `/api/admin/inventory?limit=10` | до приемки read-path | закрыто; production smoke успешен |
 | Добавить неинтерактивную ESLint-конфигурацию | до полного CI gate | открыто |
 | Расширить диск перед WAL/PITR или существенным ростом данных | до включения PITR | открыто |
 
-Native `pg_dump` через текущий Supabase Supavisor не используется как основа
-RPO: соединение зависает после служебной настройки сессии. Рабочий backup
-использует Supabase REST, keyset pagination, точные counts и restore drill.
+Рабочий RPO теперь обеспечивается native `pg_dump -Fc` локальной БД каждый час,
+encrypted off-site upload и отдельным restore drill. Supabase REST export
+сохранён как финальный frozen pre-cutover archive.
 
 ## 16. Последняя проверенная серверная точка
 
 | Компонент | Проверенное состояние |
 |---|---|
-| `getomerch-admin.service` | production runtime продолжает работать с Supabase |
+| `getomerch-admin.service` | active; local PostgreSQL read/write source |
 | `getomerch-admin-rehearsal.service` | active, disabled, `127.0.0.1:3101`, local PostgreSQL read + strict Supabase shadow; persistent write-source `supabase` |
 | Rehearsal app release | `/opt/getomerch/rehearsals/stage9-20260717T104528Z` |
 | Repository contract tests | два цикла 8/8; persistent p95 `373/144` и `380/107 ms` |
 | Mutation/job tests | два цикла mutation 12/12 и queue/Ozon integration 10/10; disposable artifacts removed |
 | Ozon dry-run | оба цикла: orders `66`, prices `154`, finance `86`, import `154` |
 | Full UI/KOMUI/load | оба цикла пройдены; concurrency 4 p95 `489` и `457 ms` |
-| Production BFF | production release не менялся; queue-path запускался только на disposable server-write candidate |
-| Production worker | установлен, `inactive/disabled`; запускается только командой Go |
-| `getomerch-backup.timer` | enabled, active |
-| Последний полный Supabase backup | `getomerch-backup-20260717T124802Z.tar.gz.gpg`, encrypted и uploaded off-site |
-| Последний native DB backup | `getomerch-database-backup-20260717T125149Z.tar.gz.gpg`, encrypted и uploaded off-site |
-| Последний native DB restore | `20260717T125200Z`, migrations/counts/integrity/roles успешно |
+| Production BFF | `server/server`, все UI/KOMUI/load checks прошли после Go |
+| Production worker | `active/enabled`; первый orders job `succeeded` за 1 attempt |
+| `getomerch-backup.timer` | inactive; Supabase frozen archive сохранён |
+| Последний полный Supabase backup | `getomerch-backup-20260717T130637Z.tar.gz.gpg`, encrypted и uploaded off-site |
+| Последний native DB backup | `getomerch-database-backup-20260717T131251Z.tar.gz.gpg`, encrypted и uploaded off-site |
+| Последний native DB restore | `20260717T131254Z`, migrations/counts/integrity/roles успешно |
 | Постоянная rehearsal БД | migrations `0001`–`0003`, 20 business tables, 6 621 source rows, audit/jobs schemas, fingerprints совпали |
-| Data rehearsal report | `/var/lib/getomerch/rehearsals/20260717T124930Z/`, status success |
+| Final production import report | `/var/lib/getomerch/cutover/imports/20260717T130717Z/`, status success |
 | `komui_production` | не изменялась |
 | `komui_staging` | не изменялась |
-| Новая `getomerch_production` | создана, 0 пользовательских таблиц, migration version `none` |
+| `getomerch_production` | production source of truth, 20 business / 25 total runtime tables, migration `0003` |
 | Cross-DB isolation | GetoMerch <-> KOMUI реальные подключения заблокированы |
 | Временные stage-9 artifacts | DB `0`, HBA rules `0`, units `0`, listeners `3102/3103` закрыты |
-| Новый local DB backup timer | установлен, `inactive/disabled` до Go |
-| Cutover preflight | `ok`, phase `idle`, production target пустой |
-| Диск после cleanup | около `74%` занято, свободно около `5.0 GiB` |
+| Local DB backup timer | `active/enabled`, hourly, отдельный `getomerch/database/hourly` prefix |
+| Cutover state | `live`, writes opened `2026-07-17T13:08:27Z` |
+| Первый post-cutover sync | active orders: fetched `66`, created `8`, updated `58`, unmatched `0` |
+| Диск после cutover | около `77%` занято, свободно около `4.5 GiB` |
 
 ## 17. Журнал изменений
 
@@ -362,3 +355,4 @@ RPO: соединение зависает после служебной нас�
 | `2026-07-17` | Этап 8 завершен: durable jobs, worker, Ozon pagination/retry/import и 10 integration test groups проверены без production cutover |
 | `2026-07-17` | Этап 9 завершен: два полных pre-production цикла, native backup/restore и Supabase rollback прошли без production cutover |
 | `2026-07-17` | Подготовка этапа 10 завершена: Release E установлен, maintenance/cutover/backup проверены, production target возвращен пустым; `prepare` и `go` не запускались |
+| `2026-07-17` | Этап 10 завершен: local PostgreSQL live, первый Ozon job и post-write backup/restore успешны; начат этап 11 |

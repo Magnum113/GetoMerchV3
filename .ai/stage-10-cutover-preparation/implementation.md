@@ -1,5 +1,8 @@
 # Implementation
 
+Historical preparation record. The production cutover was later completed;
+see `.ai/stage-10-production-cutover/`.
+
 - Added runtime read-only maintenance state, API enforcement, a visible admin
   banner and an operational enable/disable/status command.
 - Added an encrypted hourly local PostgreSQL backup, mandatory off-site upload,

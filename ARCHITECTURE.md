@@ -112,7 +112,7 @@ ops/
   getomerch-server-write-rehearsal # disposable mutation/jobs/Ozon regression
   getomerch-local-db-restore-drill # encrypted native pg_dump/restore check
   getomerch-supabase-rollback-rehearsal # pre-write rollback runtime
-  systemd/                  # worker unit templates; production пока не включён
+  systemd/                  # production worker и hourly DB backup units
 db/
   migrations/               # целевые server PostgreSQL migrations
   checks/                    # read-only проверки фактической схемы
@@ -564,8 +564,8 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID`; локально из `.env.local`, в pr
 
 ### 7.4. Бэкенд / миграции БД
 
-- Пока production работает с Supabase, новое DDL оформляется миграцией в
-  `supabase/migrations/` и отдельной следующей миграцией в `db/migrations/`.
+- После cutover новое DDL оформляется следующей forward-only миграцией в
+  `db/migrations/`; `supabase/migrations/` остаётся историческим архивом.
 - `db/migrations/0001_getomerch_baseline.sql` неизменяем; исправления и новые
   объекты добавляются только миграцией с большим номером.
 - Server PostgreSQL migrations применяются отдельной deploy-командой
@@ -584,9 +584,9 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID`; локально из `.env.local`, в pr
 #### Переходный read-path
 
 Все admin read-route и read-only RPC используют `src/lib/db`. Один runtime flag
-выбирает Supabase adapter либо локальный PostgreSQL adapter. Production до
-cutover использует Supabase; отдельный rehearsal process использует локальную
-БД и одновременно сравнивает полный результат с Supabase.
+выбирает Supabase adapter либо локальный PostgreSQL adapter. Production после
+cutover использует локальную БД; rehearsal process использует отдельную БД и
+может сравнивать полный результат с frozen Supabase snapshot.
 
 ```env
 GETOMERCH_DB_READ_SOURCE=supabase|server
@@ -596,14 +596,13 @@ GETOMERCH_DB_SHADOW_COMPARE_STRICT=false|true
 ```
 
 Server write-source разрешён только при наличии локальной
-`GETOMERCH_DATABASE_URL` и использует транзакционный mutation layer. До
-production cutover его включают только в изолированных rehearsal/candidate
-process; production defaults остаются `supabase/supabase/false`. Read
+`GETOMERCH_DATABASE_URL` и использует транзакционный mutation layer. Production
+defaults после cutover — `server/server/false`. Read
 repositories обязаны использовать явные колонки, параметризованные фильтры,
 детерминированный порядок, batch hydration и pagination.
 
-Старый direct доступ к той же Supabase DB пока остается для ограниченных
-legacy/sync веток и использует transaction pooler:
+Старый direct доступ к Supabase DB временно остаётся только для ограниченных
+legacy/diagnostic веток периода стабилизации и использует transaction pooler:
 
 ```env
 GETOMERCH_SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<region>.pooler.supabase.com:6543/postgres
@@ -897,31 +896,29 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
 - bootstrap использует `pg_reload_conf()`, не перезапускает PostgreSQL и
   проверяет неизменность ролей/БД `komui_*`.
 
-Текущий runtime и backup при этом устроены так:
+Текущий runtime и backup после cutover устроены так:
 
-- selected BFF read-path подключается напрямую к Supabase Postgres из
-  `/etc/getomerch/admin-production.env`, но это всё равно та же Supabase-база;
-- `getomerch-backup.timer` запускает `/usr/local/sbin/getomerch-backup`;
-- backup админки хранится в `/var/backups/getomerch` и выгружается в Yandex
-  Object Storage под prefix `getomerch/admin-production`;
-- encrypted archive включает `/etc/getomerch/admin-production.env`, root-only
-  DB env, HBA/config, migration bundle, bootstrap/healthcheck,
-  `getomerch-admin.service`, nginx vhost, deploy registry/current state,
-  manifest active release и свежие deploy-логи;
-- daily backup читает ровно 20 рабочих таблиц через server-side Supabase REST,
-  используя URL и server key только из production env;
-- архив содержит reviewed DDL snapshot, policies, counts и manifest; URL и
-  server key не попадают в process arguments или manifest;
-- `/usr/local/sbin/getomerch-restore-drill` восстанавливает архив во временную
-  локальную БД, сверяет counts и business invariants и удаляет эту БД;
-- forensic-режим дополнительно сохраняет 31 текущую `public`-таблицу, catalog,
-  OpenAPI и Auth users, но не заменяет managed backup внутренних схем Supabase.
+- web и worker используют `/etc/getomerch/database.env` и локальную
+  `getomerch_production`;
+- `getomerch-database-backup.timer` запускает hourly encrypted local backup;
+- старый `getomerch-backup.timer` остановлен, а финальный Supabase archive
+  хранится неизменённым минимум 30 дней;
+- hourly local backup хранится в `/var/backups/getomerch/database` и
+  выгружается под prefix `getomerch/database/hourly`;
+- local archive содержит `pg_dump -Fc`, counts, migration version, checksums и
+  encrypted runtime config; `/usr/local/sbin/getomerch-database-restore-drill`
+  проверяет его во временной БД;
+- финальный frozen Supabase archive хранится отдельно под prefix
+  `getomerch/admin-production`; он содержит exact export 20 working tables,
+  reviewed DDL/policies/counts и runtime/deploy config;
+- Supabase URL и server key не попадают в process arguments или manifest;
+- forensic Supabase archive дополнительно сохраняет 31 историческую
+  `public`-таблицу, catalog, OpenAPI и Auth users, но не заменяет managed backup
+  внутренних схем Supabase.
 
-Этапы 3 и 4 полного переноса завершены. Первый проверенный snapshot импортирован
-только в `getomerch_rehearsal`; `getomerch_production` и systemd runtime не
-изменены. Working REST export использует exact counts и второй полный проход с
-SHA-256, но до production cutover всё равно требуется writer freeze либо
-transaction-consistent direct dump. Подробности:
+Этапы 3 и 4 полного переноса создали и проверили rehearsal-контур. Финальный
+frozen REST export с exact counts и SHA-256 был использован этапом 10 для
+production cutover. Подробности ранней репетиции:
 `docs/ADMIN_MIGRATION_STAGE_4_REPORT_2026-07-16.md`.
 
 Этапы 5–9 завершены. Новый `src/lib/db` задает нейтральную границу:
@@ -937,14 +934,14 @@ transaction-consistent direct dump. Подробности:
 
 На эту границу переведены все admin read-route и read-only RPC: каталог,
 товары, остатки, матрица, движения, цех, Ozon, расходы, финансы и история
-импорта. Текущие admin RPC mutations также имеют server implementation, но
-production default остаётся Supabase. Отдельный runtime-only
+импорта. Текущие admin RPC mutations используют server implementation;
+production default — local PostgreSQL. Отдельный runtime-only
 `getomerch-admin-rehearsal.service` использует `getomerch_rehearsal`, strict
 Supabase shadow и `127.0.0.1:3101`; nginx к нему не подключен, а persistent
-write-source оставлен Supabase. Server writes проверены на disposable БД 12/12
+write-source оставлен Supabase. До cutover server writes были проверены на disposable БД 12/12
 группами concurrency/idempotency/fault tests. Ozon services и durable queue
-проверены ещё 10/10 integration groups; реальный Ozon smoke выполнялся только
-в dry-run, production worker не устанавливался. Проверки и метрики:
+проверены ещё 10/10 integration groups; после Go production worker активирован,
+а первая реальная orders sync прошла через durable queue. Проверки и метрики:
 `docs/ADMIN_MIGRATION_STAGE_6_REPORT_2026-07-16.md` и
 `docs/ADMIN_MIGRATION_STAGE_7_REPORT_2026-07-17.md` и
 `docs/ADMIN_MIGRATION_STAGE_8_REPORT_2026-07-17.md`.
@@ -953,7 +950,7 @@ write-source оставлен Supabase. Server writes проверены на di
 Отдельные root-only scripts проверяют disposable server writes, native
 PostgreSQL backup/restore и возврат приложения на Supabase до открытия записей.
 Candidate release `/opt/getomerch/rehearsals/stage9-20260717T104528Z` слушает
-только `127.0.0.1:3101`; production cutover и worker не выполнялись.
+только `127.0.0.1:3101`; это историческая pre-cutover контрольная точка.
 Результаты: `docs/ADMIN_MIGRATION_STAGE_9_REPORT_2026-07-17.md`.
 
 ### 11.7. Управляемый production cutover
@@ -982,8 +979,9 @@ Supabase production
 Локальный backup отделен от финального Supabase archive и backup магазина:
 `getomerch-database-backup.timer` работает hourly с read-only DB role и
 off-site prefix `getomerch/database/hourly`. Worker и этот timer устанавливаются
-заранее disabled; worker включается только после Go. Ozon sync timers первые
-24 часа не включаются.
+заранее disabled и включаются только после Go. Сейчас оба активны; старый
+Supabase backup timer остановлен. Автоматические Ozon sync timers первые 24 часа
+не включаются, ручные sync выполняются через durable queue.
 
 В `/etc/getomerch/admin-production.env` нельзя руками менять секреты без
 понимания, какие route handlers и внешние API их используют.
@@ -998,10 +996,9 @@ off-site prefix `getomerch/database/hourly`. Worker и этот timer устан
 
 ## 12. Долги и известные ограничения
 
-- Production пока пишет через исторический Supabase mutation-path, поэтому
-  транзакционные гарантии этапа 7 начнут защищать реальные операции только
-  после write cutover. Server implementation уже проверена на rollback, locks,
-  idempotency и audit в изолированной PostgreSQL БД.
+- Production пишет через локальный transaction mutation-path; простой rollback
+  на Supabase после первого write запрещён. Нужен forward-fix либо отдельный
+  data replay с учётом audit/idempotency ledger.
 - Транзакционные primitives для Ozon order snapshot и import run готовы, но
   фактические sync/import routes, pagination, locks и run lifecycle относятся
   к этапу 8.
@@ -1019,9 +1016,8 @@ off-site prefix `getomerch/database/hourly`. Worker и этот timer устан
   Server `findOrCreateProduct` использует transaction advisory lock и
   `UNIQUE(sku/ozon_sku)`; исторические дубли требуют отдельного data
   remediation после подтверждения владельцем.
-- Новый repository layer стабилизировал `/orders`, `/inventory` и matrix в
-  rehearsal; старый hybrid route удален. Production получит этот код отдельным
-  release, но источник данных до cutover останется Supabase.
+- Новый repository layer обслуживает production `/orders`, `/inventory` и
+  matrix из локальной БД; старый hybrid route удалён.
 - Если каталог вырастет на порядки, matrix лучше вынести в Postgres RPC или
   materialized summary, но текущий объём закрыт без старой полной pg-гидрации
   товаров.
