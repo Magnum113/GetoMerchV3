@@ -64,6 +64,7 @@ set_admin_runtime() {
   local maintenance="$3"
   python3 - "$ADMIN_ENV" "$read_source" "$write_source" "$maintenance" <<'PY'
 import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -81,7 +82,7 @@ lines = [line for line in path.read_text().splitlines() if not any(line.startswi
 lines.extend(f"{key}={value}" for key, value in values.items())
 if values["GETOMERCH_MAINTENANCE_MODE"] == "read_only":
     lines = [line for line in lines if not line.startswith("GETOMERCH_MAINTENANCE_REASON=")]
-    lines.append("GETOMERCH_MAINTENANCE_REASON=Перенос рабочей базы данных")
+    lines.append(f"GETOMERCH_MAINTENANCE_REASON={shlex.quote('Перенос рабочей базы данных')}")
 else:
     lines = [line for line in lines if not line.startswith("GETOMERCH_MAINTENANCE_REASON=")]
 

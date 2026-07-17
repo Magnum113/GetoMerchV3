@@ -41,6 +41,7 @@ write_mode() {
   cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date -u +%Y%m%dT%H%M%SZ)"
   python3 - "$ENV_FILE" "$mode" "$reason" <<'PY'
 import os
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -54,7 +55,7 @@ lines = [
 ]
 lines.append(f"GETOMERCH_MAINTENANCE_MODE={mode}")
 if mode == "read_only":
-    lines.append(f"GETOMERCH_MAINTENANCE_REASON={reason}")
+    lines.append(f"GETOMERCH_MAINTENANCE_REASON={shlex.quote(reason)}")
 
 fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
 try:
