@@ -1,0 +1,435 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+ENV_DIR="${GETOMERCH_ENV_DIR:-/etc/getomerch}"
+CREDENTIALS_FILE="$ENV_DIR/database-credentials.env"
+APP_PRODUCTION_ENV="$ENV_DIR/database.env"
+APP_REHEARSAL_ENV="$ENV_DIR/database-rehearsal.env"
+MIGRATOR_PRODUCTION_ENV="$ENV_DIR/migrator-production.env"
+MIGRATOR_REHEARSAL_ENV="$ENV_DIR/migrator-rehearsal.env"
+BACKUP_PRODUCTION_ENV="$ENV_DIR/database-backup.env"
+BACKUP_REHEARSAL_ENV="$ENV_DIR/database-backup-rehearsal.env"
+if [[ -n "${GETOMERCH_MIGRATION_RUNNER:-}" ]]; then
+  MIGRATION_RUNNER="$GETOMERCH_MIGRATION_RUNNER"
+elif [[ -r /usr/local/lib/getomerch/database/db/scripts/migrate.mjs ]]; then
+  MIGRATION_RUNNER=/usr/local/lib/getomerch/database/db/scripts/migrate.mjs
+else
+  MIGRATION_RUNNER=/opt/getomerch/current/db/scripts/migrate.mjs
+fi
+HEALTHCHECK_BIN="${GETOMERCH_DB_HEALTHCHECK_BIN:-/usr/local/sbin/getomerch-db-healthcheck}"
+HBA_INCLUDE_FILE="${GETOMERCH_HBA_INCLUDE_FILE:-/etc/postgresql/17/main/pg_hba_getomerch.conf}"
+ROTATE_PASSWORDS="${GETOMERCH_ROTATE_DATABASE_PASSWORDS:-false}"
+
+REHEARSAL_DB="getomerch_rehearsal"
+PRODUCTION_DB="getomerch_production"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in awk cmp createdb grep install node openssl psql runuser; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ -r "$MIGRATION_RUNNER" ]] || fail "migration runner is missing: $MIGRATION_RUNNER"
+[[ -x "$HEALTHCHECK_BIN" ]] || fail "healthcheck is missing: $HEALTHCHECK_BIN"
+[[ "$ROTATE_PASSWORDS" == true || "$ROTATE_PASSWORDS" == false ]] || \
+  fail "GETOMERCH_ROTATE_DATABASE_PASSWORDS must be true or false"
+
+install -d -m 0700 -o root -g root "$ENV_DIR"
+
+psql_admin() {
+  runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 "$@"
+}
+
+database_exists() {
+  psql_admin -d postgres -Atc \
+    "select exists(select 1 from pg_database where datname = '$1')" | grep -qx t
+}
+
+role_count="$(psql_admin -d postgres -Atc "
+  select count(*)
+  from pg_roles
+  where rolname in (
+    'getomerch_owner',
+    'getomerch_migrator',
+    'getomerch_app',
+    'getomerch_backup'
+  )
+")"
+
+write_credentials() {
+  GETOMERCH_APP_DB_PASSWORD="$(openssl rand -hex 32)"
+  GETOMERCH_MIGRATOR_DB_PASSWORD="$(openssl rand -hex 32)"
+  GETOMERCH_BACKUP_DB_PASSWORD="$(openssl rand -hex 32)"
+
+  local temporary
+  temporary="$(mktemp "$ENV_DIR/.database-credentials.XXXXXX")"
+  printf '%s\n' \
+    "GETOMERCH_APP_DB_PASSWORD=$GETOMERCH_APP_DB_PASSWORD" \
+    "GETOMERCH_MIGRATOR_DB_PASSWORD=$GETOMERCH_MIGRATOR_DB_PASSWORD" \
+    "GETOMERCH_BACKUP_DB_PASSWORD=$GETOMERCH_BACKUP_DB_PASSWORD" \
+    > "$temporary"
+  install -m 0600 -o root -g root "$temporary" "$CREDENTIALS_FILE"
+  rm -f "$temporary"
+}
+
+if [[ ! -s "$CREDENTIALS_FILE" ]]; then
+  [[ "$role_count" == 0 || "$ROTATE_PASSWORDS" == true ]] || \
+    fail "GetoMerch roles exist but $CREDENTIALS_FILE is missing; rotate explicitly"
+  write_credentials
+elif [[ "$ROTATE_PASSWORDS" == true ]]; then
+  write_credentials
+fi
+
+set -a
+source "$CREDENTIALS_FILE"
+set +a
+for secret in \
+  "$GETOMERCH_APP_DB_PASSWORD" \
+  "$GETOMERCH_MIGRATOR_DB_PASSWORD" \
+  "$GETOMERCH_BACKUP_DB_PASSWORD"; do
+  [[ "$secret" =~ ^[a-f0-9]{64}$ ]] || fail "invalid generated database credential"
+done
+
+write_connection_env() {
+  local path="$1"
+  local role="$2"
+  local password="$3"
+  local database="$4"
+  local application_name="$5"
+  local pool_max="$6"
+  local migration_role="${7:-}"
+  local temporary
+
+  temporary="$(mktemp "$ENV_DIR/.database-env.XXXXXX")"
+  {
+    printf "GETOMERCH_DATABASE_URL='postgresql://%s:%s@127.0.0.1:5432/%s?application_name=%s&sslmode=disable'\n" \
+      "$role" "$password" "$database" "$application_name"
+    printf 'GETOMERCH_DATABASE_SSL=false\n'
+    printf 'GETOMERCH_DATABASE_POOL_MAX=%s\n' "$pool_max"
+    printf 'PGHOST=127.0.0.1\n'
+    printf 'PGPORT=5432\n'
+    printf 'PGDATABASE=%s\n' "$database"
+    printf 'PGUSER=%s\n' "$role"
+    printf 'PGPASSWORD=%s\n' "$password"
+    printf 'PGAPPNAME=%s\n' "$application_name"
+    printf 'PGSSLMODE=disable\n'
+    if [[ -n "$migration_role" ]]; then
+      printf 'GETOMERCH_MIGRATION_ROLE=%s\n' "$migration_role"
+    fi
+  } > "$temporary"
+  install -m 0600 -o root -g root "$temporary" "$path"
+  rm -f "$temporary"
+}
+
+write_connection_env "$APP_PRODUCTION_ENV" getomerch_app \
+  "$GETOMERCH_APP_DB_PASSWORD" "$PRODUCTION_DB" getomerch-admin 4
+write_connection_env "$APP_REHEARSAL_ENV" getomerch_app \
+  "$GETOMERCH_APP_DB_PASSWORD" "$REHEARSAL_DB" getomerch-admin-rehearsal 1
+write_connection_env "$MIGRATOR_PRODUCTION_ENV" getomerch_migrator \
+  "$GETOMERCH_MIGRATOR_DB_PASSWORD" "$PRODUCTION_DB" getomerch-migrator 1 \
+  getomerch_owner
+write_connection_env "$MIGRATOR_REHEARSAL_ENV" getomerch_migrator \
+  "$GETOMERCH_MIGRATOR_DB_PASSWORD" "$REHEARSAL_DB" getomerch-migrator 1 \
+  getomerch_owner
+write_connection_env "$BACKUP_PRODUCTION_ENV" getomerch_backup \
+  "$GETOMERCH_BACKUP_DB_PASSWORD" "$PRODUCTION_DB" getomerch-backup 1
+write_connection_env "$BACKUP_REHEARSAL_ENV" getomerch_backup \
+  "$GETOMERCH_BACKUP_DB_PASSWORD" "$REHEARSAL_DB" getomerch-backup 1
+
+komui_before="$(psql_admin -d postgres -AtF '|' <<'SQL'
+select 'role', rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+       rolreplication, rolbypassrls, rolconnlimit
+from pg_roles
+where rolname like 'komui_%'
+union all
+select 'database', datname, datallowconn, false, false, false, false, false,
+       datconnlimit
+from pg_database
+where datname like 'komui_%'
+order by 1, 2;
+SQL
+)"
+
+log "creating or normalizing isolated GetoMerch roles"
+psql_admin -d postgres >/dev/null <<SQL
+DO \$roles\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getomerch_owner') THEN
+    CREATE ROLE getomerch_owner NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getomerch_migrator') THEN
+    CREATE ROLE getomerch_migrator LOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getomerch_app') THEN
+    CREATE ROLE getomerch_app LOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getomerch_backup') THEN
+    CREATE ROLE getomerch_backup LOGIN;
+  END IF;
+END
+\$roles\$;
+
+ALTER ROLE getomerch_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOREPLICATION NOBYPASSRLS;
+ALTER ROLE getomerch_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2
+  PASSWORD '$GETOMERCH_MIGRATOR_DB_PASSWORD';
+ALTER ROLE getomerch_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8
+  PASSWORD '$GETOMERCH_APP_DB_PASSWORD';
+ALTER ROLE getomerch_backup LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2
+  PASSWORD '$GETOMERCH_BACKUP_DB_PASSWORD';
+
+GRANT getomerch_owner TO getomerch_migrator;
+
+ALTER ROLE getomerch_app SET application_name = 'getomerch-admin';
+ALTER ROLE getomerch_app SET statement_timeout = '30s';
+ALTER ROLE getomerch_app SET lock_timeout = '5s';
+ALTER ROLE getomerch_app SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE getomerch_migrator SET application_name = 'getomerch-migrator';
+ALTER ROLE getomerch_migrator SET statement_timeout = '5min';
+ALTER ROLE getomerch_migrator SET lock_timeout = '5s';
+ALTER ROLE getomerch_migrator SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE getomerch_backup SET application_name = 'getomerch-backup';
+ALTER ROLE getomerch_backup SET statement_timeout = '30min';
+ALTER ROLE getomerch_backup SET idle_in_transaction_session_timeout = '60s';
+SQL
+
+HBA_MAIN="$(psql_admin -d postgres -Atc 'show hba_file')"
+[[ -f "$HBA_MAIN" ]] || fail "HBA file not found: $HBA_MAIN"
+
+log "installing ordered GetoMerch HBA rules"
+hba_temporary="$(mktemp "$(dirname "$HBA_INCLUDE_FILE")/.pg_hba_getomerch.XXXXXX")"
+cat > "$hba_temporary" <<'HBA'
+# Managed by /usr/local/sbin/getomerch-postgres-bootstrap.
+local getomerch_rehearsal,getomerch_production getomerch_app,getomerch_migrator,getomerch_backup scram-sha-256
+local all getomerch_app,getomerch_migrator,getomerch_backup reject
+local getomerch_rehearsal,getomerch_production komui_app,komui_migrator,komui_backup reject
+host getomerch_rehearsal,getomerch_production getomerch_app,getomerch_migrator,getomerch_backup 127.0.0.1/32 scram-sha-256
+host getomerch_rehearsal,getomerch_production getomerch_app,getomerch_migrator,getomerch_backup ::1/128 scram-sha-256
+host all getomerch_app,getomerch_migrator,getomerch_backup 127.0.0.1/32 reject
+host all getomerch_app,getomerch_migrator,getomerch_backup ::1/128 reject
+host getomerch_rehearsal,getomerch_production komui_app,komui_migrator,komui_backup 127.0.0.1/32 reject
+host getomerch_rehearsal,getomerch_production komui_app,komui_migrator,komui_backup ::1/128 reject
+HBA
+install -m 0640 -o postgres -g postgres "$hba_temporary" "$HBA_INCLUDE_FILE"
+rm -f "$hba_temporary"
+
+include_line="include_if_exists $HBA_INCLUDE_FILE"
+hba_main_temporary="$(mktemp "$(dirname "$HBA_MAIN")/.pg_hba.main.XXXXXX")"
+awk -v include_line="$include_line" '
+  $0 ~ /^[[:space:]]*include_if_exists[[:space:]].*pg_hba_getomerch[.]conf/ { next }
+  !inserted && $0 !~ /^[[:space:]]*(#|$)/ {
+    print include_line
+    inserted = 1
+  }
+  { print }
+  END { if (!inserted) print include_line }
+' "$HBA_MAIN" > "$hba_main_temporary"
+if ! cmp -s "$HBA_MAIN" "$hba_main_temporary"; then
+  cp -a "$HBA_MAIN" "$HBA_MAIN.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+  install -m 0640 -o postgres -g postgres "$hba_main_temporary" "$HBA_MAIN"
+fi
+rm -f "$hba_main_temporary"
+psql_admin -d postgres -Atc 'select pg_reload_conf()' | grep -qx t || \
+  fail "PostgreSQL configuration reload failed"
+hba_errors="$(psql_admin -d postgres -Atc \
+  "select count(*) from pg_hba_file_rules where error is not null")"
+[[ "$hba_errors" == 0 ]] || fail "pg_hba_file_rules reports $hba_errors errors"
+
+ensure_database() {
+  local database="$1"
+  if ! database_exists "$database"; then
+    runuser -u postgres -- createdb --owner=getomerch_owner \
+      --template=template0 "$database"
+  fi
+
+  local owner
+  owner="$(psql_admin -d postgres -Atc \
+    "select pg_get_userbyid(datdba) from pg_database where datname = '$database'")"
+  [[ "$owner" == getomerch_owner ]] || \
+    fail "$database is owned by $owner, expected getomerch_owner"
+
+  psql_admin -d postgres >/dev/null <<SQL
+REVOKE ALL ON DATABASE $database FROM PUBLIC;
+GRANT CONNECT ON DATABASE $database TO
+  getomerch_owner, getomerch_migrator, getomerch_app, getomerch_backup;
+ALTER DATABASE $database SET timezone = 'UTC';
+SQL
+
+  psql_admin -d "$database" >/dev/null <<'SQL'
+SET ROLE getomerch_owner;
+ALTER SCHEMA public OWNER TO getomerch_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO getomerch_app, getomerch_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO getomerch_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT ON TABLES TO getomerch_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO getomerch_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT ON SEQUENCES TO getomerch_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO getomerch_app;
+RESET ROLE;
+SQL
+}
+
+apply_runtime_grants() {
+  local database="$1"
+  psql_admin -d "$database" >/dev/null <<'SQL'
+SET ROLE getomerch_owner;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO getomerch_app;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO getomerch_backup;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO getomerch_app;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO getomerch_backup;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO getomerch_app;
+GRANT USAGE ON SCHEMA getomerch_meta TO getomerch_app, getomerch_backup;
+GRANT SELECT ON getomerch_meta.schema_migrations TO getomerch_app, getomerch_backup;
+REVOKE ALL ON SCHEMA getomerch_meta FROM PUBLIC;
+DO $grants$
+BEGIN
+  IF to_regnamespace('getomerch_audit') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA getomerch_audit FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA getomerch_audit FROM PUBLIC';
+    EXECUTE 'GRANT USAGE ON SCHEMA getomerch_audit TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON getomerch_audit.operation_requests TO getomerch_app';
+    EXECUTE 'GRANT SELECT, INSERT ON getomerch_audit.audit_log TO getomerch_app';
+    EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA getomerch_audit TO getomerch_backup';
+  END IF;
+  IF to_regnamespace('getomerch_jobs') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA getomerch_jobs FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA getomerch_jobs FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA getomerch_jobs FROM PUBLIC';
+    EXECUTE 'GRANT USAGE ON SCHEMA getomerch_jobs TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON getomerch_jobs.jobs TO getomerch_app';
+    EXECUTE 'GRANT SELECT, INSERT ON getomerch_jobs.job_events TO getomerch_app';
+    EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA getomerch_jobs TO getomerch_app';
+    EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA getomerch_jobs TO getomerch_backup';
+    EXECUTE 'GRANT SELECT ON ALL SEQUENCES IN SCHEMA getomerch_jobs TO getomerch_backup';
+    EXECUTE 'REVOKE ALL ON FUNCTION getomerch_jobs.prune_finished_jobs(interval, integer) FROM PUBLIC';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION getomerch_jobs.prune_finished_jobs(interval, integer) TO getomerch_app';
+  END IF;
+END
+$grants$;
+RESET ROLE;
+SQL
+}
+
+run_migrations() {
+  local env_file="$1"
+  (
+    set -a
+    source "$env_file"
+    set +a
+    node "$MIGRATION_RUNNER" up
+    node "$MIGRATION_RUNNER" verify
+  )
+}
+
+run_psql_with_env() {
+  local env_file="$1"
+  shift
+  (
+    set -a
+    source "$env_file"
+    set +a
+    psql -X -v ON_ERROR_STOP=1 "$@"
+  )
+}
+
+log "creating and migrating permanent rehearsal database"
+ensure_database "$REHEARSAL_DB"
+run_migrations "$MIGRATOR_REHEARSAL_ENV"
+apply_runtime_grants "$REHEARSAL_DB"
+"$HEALTHCHECK_BIN" "$APP_REHEARSAL_ENV" "$REHEARSAL_DB" 0003
+
+run_psql_with_env "$APP_REHEARSAL_ENV" >/dev/null <<'SQL'
+BEGIN;
+INSERT INTO public.merch_colors (name) VALUES ('__getomerch_acl_probe__');
+ROLLBACK;
+SQL
+
+if run_psql_with_env "$APP_REHEARSAL_ENV" \
+  -c 'create table public.__getomerch_forbidden_ddl(id integer)' \
+  >/dev/null 2>&1; then
+  fail "getomerch_app unexpectedly created a table"
+fi
+if run_psql_with_env "$BACKUP_REHEARSAL_ENV" \
+  -c "insert into public.merch_colors(name) values ('__backup_write_probe__')" \
+  >/dev/null 2>&1; then
+  fail "getomerch_backup unexpectedly wrote data"
+fi
+
+log "rehearsal ACL checks passed; creating empty production database"
+ensure_database "$PRODUCTION_DB"
+production_table_count="$(psql_admin -d "$PRODUCTION_DB" -Atc \
+  "select count(*) from pg_tables where schemaname not in ('pg_catalog', 'information_schema')")"
+[[ "$production_table_count" == 0 ]] || \
+  fail "$PRODUCTION_DB is not empty: $production_table_count user tables"
+"$HEALTHCHECK_BIN" "$APP_PRODUCTION_ENV" "$PRODUCTION_DB" none
+
+isolation_failures="$(psql_admin -d postgres -At <<'SQL'
+select count(*)
+from (values
+  (has_database_privilege('komui_app', 'getomerch_production', 'CONNECT')),
+  (has_database_privilege('komui_migrator', 'getomerch_production', 'CONNECT')),
+  (has_database_privilege('komui_backup', 'getomerch_production', 'CONNECT'))
+) checks(has_connect)
+where has_connect;
+SQL
+)"
+[[ "$isolation_failures" == 0 ]] || \
+  fail "$isolation_failures cross-database CONNECT privileges remain"
+
+for role_and_password in \
+  "getomerch_app:$GETOMERCH_APP_DB_PASSWORD" \
+  "getomerch_migrator:$GETOMERCH_MIGRATOR_DB_PASSWORD" \
+  "getomerch_backup:$GETOMERCH_BACKUP_DB_PASSWORD"; do
+  role="${role_and_password%%:*}"
+  password="${role_and_password#*:}"
+  if PGPASSWORD="$password" \
+    PGHOST=127.0.0.1 PGPORT=5432 PGUSER="$role" \
+    PGDATABASE=komui_production psql -X --no-align --tuples-only \
+      --command='select 1' >/dev/null 2>&1; then
+    fail "HBA unexpectedly allowed $role into komui_production"
+  fi
+done
+
+komui_after="$(psql_admin -d postgres -AtF '|' <<'SQL'
+select 'role', rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+       rolreplication, rolbypassrls, rolconnlimit
+from pg_roles
+where rolname like 'komui_%'
+union all
+select 'database', datname, datallowconn, false, false, false, false, false,
+       datconnlimit
+from pg_database
+where datname like 'komui_%'
+order by 1, 2;
+SQL
+)"
+[[ "$komui_before" == "$komui_after" ]] || \
+  fail "KOMUI role or database properties changed during provisioning"
+
+log "PostgreSQL bootstrap completed without production cutover"

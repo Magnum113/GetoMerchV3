@@ -1,0 +1,474 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+BACKUP_ROOT="${GETOMERCH_BACKUP_ROOT:-/var/backups/getomerch}"
+KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
+WORKING_TABLES_FILE="${GETOMERCH_WORKING_TABLES_FILE:-/usr/local/share/getomerch/working-tables.txt}"
+FINGERPRINT_BIN="${GETOMERCH_DATA_FINGERPRINT_BIN:-/usr/local/lib/getomerch/getomerch-data-fingerprint.py}"
+MIGRATION_RUNNER="${GETOMERCH_MIGRATION_RUNNER:-/usr/local/lib/getomerch/database/db/scripts/migrate.mjs}"
+DATA_CHECK_FILE="${GETOMERCH_DATA_CHECK_FILE:-/usr/local/lib/getomerch/database/db/checks/0001_getomerch_data_integrity.sql}"
+HEALTHCHECK_BIN="${GETOMERCH_DB_HEALTHCHECK_BIN:-/usr/local/sbin/getomerch-db-healthcheck}"
+TARGET_MODE="${GETOMERCH_DATA_TARGET:-rehearsal}"
+MAX_ARCHIVE_AGE_SECONDS="${GETOMERCH_REHEARSAL_MAX_ARCHIVE_AGE_SECONDS:-3600}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+case "$TARGET_MODE" in
+  rehearsal)
+    TARGET_DB=getomerch_rehearsal
+    OTHER_DB=getomerch_production
+    REPORT_ROOT="${GETOMERCH_REHEARSAL_REPORT_ROOT:-/var/lib/getomerch/rehearsals}"
+    TARGET_DATABASE_ENV=/etc/getomerch/database-rehearsal.env
+    TARGET_MIGRATOR_ENV=/etc/getomerch/migrator-rehearsal.env
+    CANDIDATE_DB="getomerch_rehearsal_candidate_$(date -u +%Y%m%d_%H%M%S)"
+    PREVIOUS_DB="getomerch_rehearsal_previous_$(date -u +%Y%m%d_%H%M%S)"
+    ;;
+  production)
+    TARGET_DB=getomerch_production
+    OTHER_DB=getomerch_rehearsal
+    REPORT_ROOT="${GETOMERCH_CUTOVER_IMPORT_REPORT_ROOT:-/var/lib/getomerch/cutover/imports}"
+    TARGET_DATABASE_ENV=/etc/getomerch/database.env
+    TARGET_MIGRATOR_ENV=/etc/getomerch/migrator-production.env
+    CANDIDATE_DB="getomerch_cutover_candidate_$(date -u +%Y%m%d_%H%M%S)"
+    PREVIOUS_DB="getomerch_production_previous_$(date -u +%Y%m%d_%H%M%S)"
+    ;;
+  *)
+    echo "ERROR: GETOMERCH_DATA_TARGET must be rehearsal or production" >&2
+    exit 1
+    ;;
+esac
+RUN_DIR="$REPORT_ROOT/$RUN_ID"
+REPORT_FILE="$RUN_DIR/report.env"
+LOG_FILE="$RUN_DIR/data-import.log"
+TMP_DIR="$(mktemp -d "$BACKUP_ROOT/.data-rehearsal-${RUN_ID}.XXXXXX")"
+START_EPOCH="$(date +%s)"
+STATUS=failed
+CANDIDATE_EXISTS=false
+PREVIOUS_EXISTS=false
+
+install -d -m 0700 "$REPORT_ROOT" "$RUN_DIR"
+
+cleanup() {
+  if [[ "$STATUS" != success && "$PREVIOUS_EXISTS" == true ]]; then
+    if runuser -u postgres -- psql -X -Atc \
+      "select exists(select 1 from pg_database where datname='$TARGET_DB')" \
+      | grep -qx t; then
+      runuser -u postgres -- dropdb --force --if-exists "$TARGET_DB" >/dev/null 2>&1 || true
+    fi
+    runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 -d postgres -c \
+      "ALTER DATABASE $PREVIOUS_DB RENAME TO $TARGET_DB" >/dev/null 2>&1 || true
+    PREVIOUS_EXISTS=false
+  fi
+  if [[ "$CANDIDATE_EXISTS" == true ]]; then
+    runuser -u postgres -- dropdb --force --if-exists "$CANDIDATE_DB" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+
+finish_report() {
+  local rc="$1"
+  {
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "status=$STATUS"
+    echo "exit_code=$rc"
+    echo "elapsed_seconds=$(($(date +%s) - START_EPOCH))"
+  } >> "$REPORT_FILE"
+}
+
+on_exit() {
+  local rc="$?"
+  trap - EXIT
+  finish_report "$rc"
+  cleanup
+  exit "$rc"
+}
+trap on_exit EXIT
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in awk cp cut dropdb flock gpg grep install node psql python3 runuser sha256sum stat tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ "$MAX_ARCHIVE_AGE_SECONDS" =~ ^[0-9]+$ ]] || \
+  fail "GETOMERCH_REHEARSAL_MAX_ARCHIVE_AGE_SECONDS must be an integer"
+[[ -s "$KEY_FILE" ]] || fail "backup key is missing: $KEY_FILE"
+[[ -r "$WORKING_TABLES_FILE" ]] || fail "working table allowlist is missing"
+[[ -r "$FINGERPRINT_BIN" ]] || fail "fingerprint helper is missing"
+[[ -r "$MIGRATION_RUNNER" ]] || fail "migration runner is missing"
+[[ -r "$DATA_CHECK_FILE" ]] || fail "data integrity check is missing"
+[[ -x "$HEALTHCHECK_BIN" ]] || fail "database healthcheck is missing"
+MIGRATION_DB_ROOT="$(cd "$(dirname "$MIGRATION_RUNNER")/.." && pwd)"
+EXPECTED_MIGRATION_VERSION="${GETOMERCH_EXPECTED_MIGRATION_VERSION:-$(
+  find "$MIGRATION_DB_ROOT/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]_*.sql' \
+    -printf '%f\n' | sort | tail -n 1 | cut -d_ -f1
+)}"
+[[ "$EXPECTED_MIGRATION_VERSION" =~ ^[0-9]{4}$ ]] || \
+  fail "could not determine expected migration version"
+runuser -u postgres -- test -r "$MIGRATION_RUNNER" || \
+  fail "postgres cannot read the migration runner"
+runuser -u postgres -- test -r "$DATA_CHECK_FILE" || \
+  fail "postgres cannot read the data integrity check"
+
+exec 9>/run/lock/getomerch-data-rehearsal.lock
+flock -n 9 || fail "another data rehearsal is already running"
+
+mapfile -t TABLES < <(awk '/^merch_[a-z0-9_]+$/{print}' "$WORKING_TABLES_FILE")
+[[ "${#TABLES[@]}" -eq 20 ]] || fail "working table allowlist must contain 20 tables"
+[[ "$(printf '%s\n' "${TABLES[@]}" | sort -u | wc -l)" -eq 20 ]] || \
+  fail "working table allowlist contains duplicates"
+
+ARCHIVE="${1:-}"
+if [[ -z "$ARCHIVE" ]]; then
+  ARCHIVE="$(find "$BACKUP_ROOT/daily" -maxdepth 1 -type f \
+    -name 'getomerch-backup-*.tar.gz.gpg' -printf '%T@ %p\n' \
+    | sort -nr | awk 'NR == 1 {print $2}')"
+fi
+[[ -n "$ARCHIVE" && -s "$ARCHIVE" ]] || fail "backup archive was not found"
+[[ -s "$ARCHIVE.sha256" ]] || fail "backup checksum was not found"
+
+archive_age="$(($(date +%s) - $(stat -c %Y "$ARCHIVE")))"
+[[ "$archive_age" -ge 0 && "$archive_age" -le "$MAX_ARCHIVE_AGE_SECONDS" ]] || \
+  fail "backup archive is ${archive_age}s old; create a fresh backup first"
+
+{
+  echo "data_import_id=$RUN_ID"
+  echo "target_mode=$TARGET_MODE"
+  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "source_archive=$(basename "$ARCHIVE")"
+  echo "source_archive_age_seconds=$archive_age"
+  echo "target_database=$TARGET_DB"
+  echo "candidate_database=$CANDIDATE_DB"
+  echo "previous_database=$PREVIOUS_DB"
+  echo "expected_migration_version=$EXPECTED_MIGRATION_VERSION"
+} > "$REPORT_FILE"
+
+log "verifying and extracting immutable source archive"
+sha256sum -c "$ARCHIVE.sha256" >/dev/null
+ARCHIVE_SHA256="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+echo "source_archive_sha256=$ARCHIVE_SHA256" >> "$REPORT_FILE"
+
+PLAIN_ARCHIVE="$TMP_DIR/backup.tar.gz"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --decrypt --output "$PLAIN_ARCHIVE" "$ARCHIVE" >/dev/null 2>&1
+tar -xzf "$PLAIN_ARCHIVE" -C "$TMP_DIR" manifest.json supabase-export.tar.gz SHA256SUMS
+(
+  cd "$TMP_DIR"
+  sha256sum -c SHA256SUMS --ignore-missing >/dev/null
+)
+install -d -m 0700 "$TMP_DIR/supabase" "$TMP_DIR/working"
+tar -xzf "$TMP_DIR/supabase-export.tar.gz" -C "$TMP_DIR/supabase"
+
+readarray -t manifest_values < <(python3 - "$TMP_DIR/manifest.json" "$TMP_DIR/supabase" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+supabase_dir = Path(sys.argv[2])
+supabase = manifest.get("supabase", {})
+if supabase.get("exportStatus") != "ok":
+    raise SystemExit("Supabase export status is not ok")
+if int(supabase.get("workingTableCount", 0)) != 20:
+    raise SystemExit("working export does not contain 20 tables")
+for metadata in supabase.get("files", {}).values():
+    path = supabase_dir / metadata["name"]
+    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() != metadata["sha256"]:
+        raise SystemExit(f"checksum mismatch: {metadata['name']}")
+print(supabase["workingDumpFile"])
+print(supabase["workingTableCount"])
+PY
+)
+[[ "${#manifest_values[@]}" -eq 2 ]] || fail "backup manifest is incomplete"
+WORKING_DUMP="$TMP_DIR/supabase/${manifest_values[0]}"
+[[ -s "$WORKING_DUMP" ]] || fail "working dump is missing"
+tar -tzf "$WORKING_DUMP" >/dev/null
+tar -xzf "$WORKING_DUMP" -C "$TMP_DIR/working"
+
+for required in rows.ndjson counts.tsv export-manifest.json source-fingerprint.json; do
+  [[ -s "$TMP_DIR/working/$required" ]] || fail "working export is missing $required"
+done
+python3 - "$TMP_DIR/working/export-manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+verification = manifest.get("verificationPass") or {}
+if verification.get("status") != "stable":
+    raise SystemExit("source export does not have a stable second read")
+if len(manifest.get("tables", {})) != 20:
+    raise SystemExit("source export manifest does not contain 20 tables")
+PY
+
+install -m 0600 "$TMP_DIR/working/source-fingerprint.json" "$RUN_DIR/source-fingerprint.json"
+install -m 0600 "$TMP_DIR/working/export-manifest.json" "$RUN_DIR/export-manifest.json"
+SOURCE_ROWS="$(python3 - "$RUN_DIR/source-fingerprint.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+value = json.loads(Path(sys.argv[1]).read_text())
+print(sum(table["row_count"] for table in value["tables"].values()))
+PY
+)"
+echo "source_row_count=$SOURCE_ROWS" >> "$REPORT_FILE"
+echo "source_fingerprint_sha256=$(sha256sum "$RUN_DIR/source-fingerprint.json" | awk '{print $1}')" \
+  >> "$REPORT_FILE"
+
+psql_admin() {
+  runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 "$@"
+}
+
+admin_uses_local_target() {
+  local admin_pid
+  admin_pid="$(systemctl show -p MainPID --value getomerch-admin.service)"
+  [[ "$admin_pid" =~ ^[1-9][0-9]*$ ]] || fail "admin service has no active process"
+  tr '\0' '\n' < "/proc/$admin_pid/environ" | cut -d= -f1 | grep -qx GETOMERCH_DATABASE_URL
+}
+
+database_guard_snapshot() {
+  psql_admin -d postgres -AtF '|' -c "
+    select oid, datname, pg_get_userbyid(datdba), datallowconn, datconnlimit
+    from pg_database
+    where datname in ('$OTHER_DB', 'komui_production', 'komui_staging')
+    order by datname
+  "
+  psql_admin -d postgres -AtF '|' -c "
+    select rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+           rolreplication, rolbypassrls, rolconnlimit
+    from pg_roles where rolname like 'komui_%' order by rolname
+  "
+}
+
+[[ "$(psql_admin -d postgres -Atc "select count(*) from pg_database where datname='$TARGET_DB'")" == 1 ]] || \
+  fail "$TARGET_DB is missing"
+[[ "$(psql_admin -d postgres -Atc "select count(*) from pg_database where datname='$OTHER_DB'")" == 1 ]] || \
+  fail "$OTHER_DB is missing"
+TARGET_TABLES_BEFORE="$(psql_admin -d "$TARGET_DB" -Atc \
+  "select count(*) from pg_tables where schemaname='public'")"
+[[ "$TARGET_TABLES_BEFORE" == 0 ]] || fail "$TARGET_DB is not empty"
+OTHER_TABLES_BEFORE="$(psql_admin -d "$OTHER_DB" -Atc \
+  "select count(*) from pg_tables where schemaname='public'")"
+[[ "$(psql_admin -d postgres -Atc "select count(*) from pg_hba_file_rules where error is not null")" == 0 ]] || \
+  fail "PostgreSQL HBA has errors"
+if admin_uses_local_target; then
+  fail "production admin unexpectedly uses the local target database"
+fi
+GUARD_BEFORE="$(database_guard_snapshot)"
+
+log "creating isolated candidate database"
+runuser -u postgres -- createdb --owner=getomerch_owner --template=template0 "$CANDIDATE_DB"
+CANDIDATE_EXISTS=true
+psql_admin -d postgres >/dev/null <<SQL
+REVOKE ALL ON DATABASE $CANDIDATE_DB FROM PUBLIC;
+GRANT CONNECT ON DATABASE $CANDIDATE_DB TO
+  getomerch_owner, getomerch_migrator, getomerch_app, getomerch_backup;
+ALTER DATABASE $CANDIDATE_DB SET timezone = 'UTC';
+SQL
+psql_admin -d "$CANDIDATE_DB" >/dev/null <<'SQL'
+ALTER SCHEMA public OWNER TO getomerch_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+SQL
+
+run_candidate_migration() {
+  local command="$1"
+  runuser -u postgres -- env \
+    -u GETOMERCH_DATABASE_URL \
+    PGHOST=/var/run/postgresql \
+    PGPORT=5432 \
+    PGDATABASE="$CANDIDATE_DB" \
+    PGUSER=postgres \
+    PGSSLMODE=disable \
+    GETOMERCH_DATABASE_SSL=false \
+    GETOMERCH_MIGRATION_ROLE=getomerch_owner \
+    node "$MIGRATION_RUNNER" "$command"
+}
+
+log "building candidate schema from Git baseline"
+run_candidate_migration up
+
+log "loading source rows through COPY into a single import transaction"
+python3 - "$TMP_DIR/working/rows.ndjson" "$TMP_DIR/rows.csv" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+with Path(sys.argv[1]).open() as source, Path(sys.argv[2]).open("w", newline="") as target:
+    writer = csv.writer(target)
+    writer.writerow(("table_name", "payload"))
+    for line_number, line in enumerate(source, 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if not isinstance(row.get("table_name"), str) or not isinstance(row.get("payload"), dict):
+            raise SystemExit(f"invalid source row at line {line_number}")
+        writer.writerow(
+            (
+                row["table_name"],
+                json.dumps(row["payload"], ensure_ascii=False, separators=(",", ":")),
+            )
+        )
+PY
+psql_admin -d "$CANDIDATE_DB" -c \
+  'CREATE UNLOGGED TABLE public.getomerch_import_payload (table_name text NOT NULL, payload jsonb NOT NULL)' \
+  >/dev/null
+psql_admin -d "$CANDIDATE_DB" -c \
+  'COPY public.getomerch_import_payload (table_name, payload) FROM STDIN WITH (FORMAT csv, HEADER true)' \
+  < "$TMP_DIR/rows.csv" >/dev/null
+STAGED_ROWS="$(psql_admin -d "$CANDIDATE_DB" -Atc \
+  'select count(*) from public.getomerch_import_payload')"
+[[ "$STAGED_ROWS" == "$SOURCE_ROWS" ]] || \
+  fail "staged row count mismatch: source=$SOURCE_ROWS staged=$STAGED_ROWS"
+
+{
+  echo 'BEGIN;'
+  echo 'SET LOCAL session_replication_role = replica;'
+  for table in "${TABLES[@]}"; do
+    printf "INSERT INTO public.\"%s\" SELECT (jsonb_populate_record(NULL::public.\"%s\", payload)).* FROM public.getomerch_import_payload WHERE table_name = '%s';\n" \
+      "$table" "$table" "$table"
+  done
+  echo 'DROP TABLE public.getomerch_import_payload;'
+  echo 'COMMIT;'
+} > "$TMP_DIR/import.sql"
+psql_admin -d "$CANDIDATE_DB" < "$TMP_DIR/import.sql" >/dev/null
+psql_admin -d "$CANDIDATE_DB" -c 'ANALYZE' >/dev/null
+
+log "installing runtime and backup grants on candidate"
+psql_admin -d "$CANDIDATE_DB" >/dev/null <<'SQL'
+SET ROLE getomerch_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO getomerch_app, getomerch_backup;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO getomerch_app;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO getomerch_backup;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO getomerch_app;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO getomerch_backup;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO getomerch_app;
+GRANT USAGE ON SCHEMA getomerch_meta TO getomerch_app, getomerch_backup;
+GRANT SELECT ON getomerch_meta.schema_migrations TO getomerch_app, getomerch_backup;
+REVOKE ALL ON SCHEMA getomerch_meta FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO getomerch_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT ON TABLES TO getomerch_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO getomerch_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT SELECT ON SEQUENCES TO getomerch_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO getomerch_app;
+RESET ROLE;
+SQL
+
+log "running schema and data integrity checks"
+run_candidate_migration verify
+psql_admin -d "$CANDIDATE_DB" -AtF $'\t' \
+  < "$DATA_CHECK_FILE" > "$RUN_DIR/data-integrity.tsv"
+INTEGRITY_CHECK_COUNT="$(wc -l < "$RUN_DIR/data-integrity.tsv" | tr -d ' ')"
+[[ "$INTEGRITY_CHECK_COUNT" -gt 0 ]] || fail "data integrity check returned no rows"
+if awk -F $'\t' '$2 != "t" {print; failed=1} END {exit failed}' \
+  "$RUN_DIR/data-integrity.tsv"; then
+  :
+else
+  fail "one or more data integrity checks failed"
+fi
+echo "data_integrity_check_count=$INTEGRITY_CHECK_COUNT" >> "$REPORT_FILE"
+
+log "building target fingerprint"
+TARGET_ROWS="$TMP_DIR/target-rows.ndjson"
+: > "$TARGET_ROWS"
+for table in "${TABLES[@]}"; do
+  psql_admin -d "$CANDIDATE_DB" -Atc \
+    "select json_build_object('table_name', '$table', 'payload', row_to_json(t)) from public.\"$table\" t order by id" \
+    >> "$TARGET_ROWS"
+done
+python3 "$FINGERPRINT_BIN" fingerprint \
+  "$WORKING_TABLES_FILE" "$TARGET_ROWS" "$RUN_DIR/target-fingerprint.json"
+python3 "$FINGERPRINT_BIN" compare \
+  "$RUN_DIR/source-fingerprint.json" \
+  "$RUN_DIR/target-fingerprint.json" \
+  "$RUN_DIR/comparison.json"
+TARGET_ROWS_COUNT="$(python3 - "$RUN_DIR/target-fingerprint.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+value = json.loads(Path(sys.argv[1]).read_text())
+print(sum(table["row_count"] for table in value["tables"].values()))
+PY
+)"
+[[ "$TARGET_ROWS_COUNT" == "$SOURCE_ROWS" ]] || fail "target total row count differs"
+echo "target_row_count=$TARGET_ROWS_COUNT" >> "$REPORT_FILE"
+echo "target_fingerprint_sha256=$(sha256sum "$RUN_DIR/target-fingerprint.json" | awk '{print $1}')" \
+  >> "$REPORT_FILE"
+echo "comparison_sha256=$(sha256sum "$RUN_DIR/comparison.json" | awk '{print $1}')" \
+  >> "$REPORT_FILE"
+
+log "replacing $TARGET_DB with a rollback-safe database rename"
+psql_admin -d postgres -c \
+  "select pg_terminate_backend(pid) from pg_stat_activity where datname='$TARGET_DB' and pid <> pg_backend_pid()" \
+  >/dev/null
+psql_admin -d postgres -c "ALTER DATABASE $TARGET_DB RENAME TO $PREVIOUS_DB" >/dev/null
+PREVIOUS_EXISTS=true
+psql_admin -d postgres -c "ALTER DATABASE $CANDIDATE_DB RENAME TO $TARGET_DB" >/dev/null
+CANDIDATE_EXISTS=false
+
+"$HEALTHCHECK_BIN" "$TARGET_DATABASE_ENV" \
+  "$TARGET_DB" "$EXPECTED_MIGRATION_VERSION"
+(
+  set -a
+  source "$TARGET_MIGRATOR_ENV"
+  set +a
+  node "$MIGRATION_RUNNER" verify
+)
+
+log "checking $OTHER_DB and KOMUI boundaries after target swap"
+[[ "$(psql_admin -d "$OTHER_DB" -Atc \
+  "select count(*) from pg_tables where schemaname='public'")" == "$OTHER_TABLES_BEFORE" ]] || \
+  fail "$OTHER_DB changed during data import"
+[[ "$(database_guard_snapshot)" == "$GUARD_BEFORE" ]] || \
+  fail "non-target/KOMUI role or database properties changed"
+[[ "$(psql_admin -d postgres -Atc "select count(*) from pg_hba_file_rules where error is not null")" == 0 ]] || \
+  fail "PostgreSQL HBA has errors after rehearsal"
+if admin_uses_local_target; then
+  fail "production admin started using the local target database"
+fi
+[[ "$(systemctl is-active getomerch-admin.service)" == active ]] || fail "admin service is not active"
+[[ "$(systemctl is-active postgresql.service)" == active ]] || fail "PostgreSQL is not active"
+
+if [[ "$TARGET_MODE" == rehearsal ]]; then
+  runuser -u postgres -- dropdb --force --if-exists "$PREVIOUS_DB"
+  PREVIOUS_EXISTS=false
+  echo "previous_database_preserved=false" >> "$REPORT_FILE"
+else
+  echo "previous_database_preserved=true" >> "$REPORT_FILE"
+fi
+
+echo "other_database=$OTHER_DB" >> "$REPORT_FILE"
+echo "other_public_tables_after=$OTHER_TABLES_BEFORE" >> "$REPORT_FILE"
+echo "production_runtime_local_database_env=absent" >> "$REPORT_FILE"
+echo "non_target_komui_guard=unchanged" >> "$REPORT_FILE"
+echo "hba_errors=0" >> "$REPORT_FILE"
+echo "comparison_status=success" >> "$REPORT_FILE"
+ln -sfn "$RUN_ID" "$REPORT_ROOT/latest"
+STATUS=success
+log "$TARGET_MODE data import completed with zero unexplained differences"

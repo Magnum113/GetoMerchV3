@@ -1,0 +1,724 @@
+{"kind":"column","name":"cdek_number","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"cdek_uuid","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"event_hash","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"event_type","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"bigint","table":"merch_cdek_events","schema":"public","default":null,"notNull":true,"ordinal":1,"identity":"a","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"payload","type":"jsonb","table":"merch_cdek_events","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"received_at","type":"timestamp with time zone","table":"merch_cdek_events","schema":"public","default":"now()","notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"shipment_id","type":"bigint","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"status_code","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"status_name","type":"text","table":"merch_cdek_events","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"cdek_number","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"cdek_uuid","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_cdek_shipments","schema":"public","default":"now()","notNull":true,"ordinal":18,"identity":"","generated":""}
+{"kind":"column","name":"delivery_address","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"delivery_city","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"delivery_point","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"error_code","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"error_message","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"bigint","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":true,"ordinal":1,"identity":"a","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"package_snapshot","type":"jsonb","table":"merch_cdek_shipments","schema":"public","default":"'[]'::jsonb","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"request_payload","type":"jsonb","table":"merch_cdek_shipments","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"request_uuid","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"response_payload","type":"jsonb","table":"merch_cdek_shipments","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"shipment_point","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_cdek_shipments","schema":"public","default":"'pending'::text","notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"synced_at","type":"timestamp with time zone","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":20,"identity":"","generated":""}
+{"kind":"column","name":"tariff_code","type":"integer","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"tariff_name","type":"text","table":"merch_cdek_shipments","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_cdek_shipments","schema":"public","default":"now()","notNull":true,"ordinal":19,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_colors","schema":"public","default":"now()","notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"hex_code","type":"text","table":"merch_colors","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_colors","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_colors","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_customer_order_items","schema":"public","default":"now()","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"bigint","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":1,"identity":"a","generated":""}
+{"kind":"column","name":"image_url","type":"text","table":"merch_customer_order_items","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"line_total_amount","type":"integer","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"offer_id","type":"text","table":"merch_customer_order_items","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"product_id","type":"uuid","table":"merch_customer_order_items","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"product_name","type":"text","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"product_snapshot","type":"jsonb","table":"merch_customer_order_items","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"size","type":"text","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"sku","type":"text","table":"merch_customer_order_items","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"unit_price_amount","type":"integer","table":"merch_customer_order_items","schema":"public","default":null,"notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"access_token_hash","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"client_request_id","type":"uuid","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_customer_orders","schema":"public","default":"now()","notNull":true,"ordinal":26,"identity":"","generated":""}
+{"kind":"column","name":"currency","type":"text","table":"merch_customer_orders","schema":"public","default":"'RUB'::text","notNull":true,"ordinal":18,"identity":"","generated":""}
+{"kind":"column","name":"customer_first_name","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"customer_last_name","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"customer_phone","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"delivery_address","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"delivery_amount","type":"integer","table":"merch_customer_orders","schema":"public","default":"0","notNull":true,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"delivery_city","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"delivery_eta","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"delivery_hours","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"delivery_point_code","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"delivery_provider","type":"text","table":"merch_customer_orders","schema":"public","default":"'cdek'::text","notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"discount_amount","type":"integer","table":"merch_customer_orders","schema":"public","default":"0","notNull":true,"ordinal":20,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_customer_orders","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"legal_accepted_at","type":"timestamp with time zone","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"marketing_consent","type":"boolean","table":"merch_customer_orders","schema":"public","default":"false","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"metadata","type":"jsonb","table":"merch_customer_orders","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":24,"identity":"","generated":""}
+{"kind":"column","name":"order_number","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"paid_at","type":"timestamp with time zone","table":"merch_customer_orders","schema":"public","default":null,"notNull":false,"ordinal":25,"identity":"","generated":""}
+{"kind":"column","name":"promo_code","type":"text","table":"merch_customer_orders","schema":"public","default":null,"notNull":false,"ordinal":22,"identity":"","generated":""}
+{"kind":"column","name":"source","type":"text","table":"merch_customer_orders","schema":"public","default":"'storefront'::text","notNull":true,"ordinal":23,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_customer_orders","schema":"public","default":"'created'::text","notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"subtotal_amount","type":"integer","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":19,"identity":"","generated":""}
+{"kind":"column","name":"total_amount","type":"integer","table":"merch_customer_orders","schema":"public","default":null,"notNull":true,"ordinal":21,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_customer_orders","schema":"public","default":"now()","notNull":true,"ordinal":27,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_decoration_types","schema":"public","default":"now()","notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_decoration_types","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"made_at","type":"text","table":"merch_decoration_types","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_decoration_types","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"slug","type":"text","table":"merch_decoration_types","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"code","type":"text","table":"merch_designs","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_designs","schema":"public","default":"now()","notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"description","type":"text","table":"merch_designs","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_designs","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"image_url","type":"text","table":"merch_designs","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_designs","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"type","type":"text","table":"merch_designs","schema":"public","default":"'print'::text","notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"archived","type":"boolean","table":"merch_expense_categories","schema":"public","default":"false","notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"color","type":"text","table":"merch_expense_categories","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_expense_categories","schema":"public","default":"now()","notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_expense_categories","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_expense_categories","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"sort_order","type":"integer","table":"merch_expense_categories","schema":"public","default":"0","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"amount","type":"numeric(12,2)","table":"merch_expenses","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"category_id","type":"uuid","table":"merch_expenses","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_expenses","schema":"public","default":"now()","notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"description","type":"text","table":"merch_expenses","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_expenses","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"occurred_at","type":"date","table":"merch_expenses","schema":"public","default":"CURRENT_DATE","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_fabric_types","schema":"public","default":"now()","notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_fabric_types","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_fabric_types","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"slug","type":"text","table":"merch_fabric_types","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_inventory","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"product_id","type":"uuid","table":"merch_inventory","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_inventory","schema":"public","default":"0","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_inventory","schema":"public","default":"now()","notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"warehouse_id","type":"uuid","table":"merch_inventory","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"accruals_for_sale","type":"numeric(12,2)","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"amount","type":"numeric(12,2)","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_ozon_finance_operations","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"items","type":"jsonb","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"operation_date","type":"timestamp with time zone","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"operation_id","type":"bigint","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"operation_type","type":"text","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"operation_type_name","type":"text","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"posting_number","type":"text","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"raw","type":"jsonb","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"sale_commission","type":"numeric(12,2)","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"services","type":"jsonb","table":"merch_ozon_finance_operations","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"synced_at","type":"timestamp with time zone","table":"merch_ozon_finance_operations","schema":"public","default":"now()","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"applied_at","type":"timestamp with time zone","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"apply_error","type":"text","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_ozon_import_items","schema":"public","default":"now()","notNull":true,"ordinal":18,"identity":"","generated":""}
+{"kind":"column","name":"errors","type":"text[]","table":"merch_ozon_import_items","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_ozon_import_items","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"match_reason","type":"text","table":"merch_ozon_import_items","schema":"public","default":"'none'::text","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"offer_id","type":"text","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"ozon_name","type":"text","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"ozon_product_id","type":"bigint","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"ozon_sku","type":"bigint","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"parsed","type":"jsonb","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"plan","type":"jsonb","table":"merch_ozon_import_items","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"raw","type":"jsonb","table":"merch_ozon_import_items","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"run_id","type":"uuid","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"severity","type":"text","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"target_product_id","type":"uuid","table":"merch_ozon_import_items","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"warnings","type":"text[]","table":"merch_ozon_import_items","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"applied_at","type":"timestamp with time zone","table":"merch_ozon_import_runs","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_ozon_import_runs","schema":"public","default":"now()","notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"error","type":"text","table":"merch_ozon_import_runs","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_ozon_import_runs","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"mode","type":"text","table":"merch_ozon_import_runs","schema":"public","default":"'ozon_products'::text","notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"options","type":"jsonb","table":"merch_ozon_import_runs","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_ozon_import_runs","schema":"public","default":"'preview'::text","notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"summary","type":"jsonb","table":"merch_ozon_import_runs","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_ozon_order_items","schema":"public","default":"now()","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_ozon_order_items","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"offer_id","type":"text","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"ozon_sku","type":"text","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"price","type":"numeric(12,2)","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"product_id","type":"uuid","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"shipped_from_warehouse_id","type":"uuid","table":"merch_ozon_order_items","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":"now()","notNull":true,"ordinal":19,"identity":"","generated":""}
+{"kind":"column","name":"customer_name","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"delivery_method","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_ozon_orders","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"in_process_at","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"notes","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":18,"identity":"","generated":""}
+{"kind":"column","name":"order_id","type":"bigint","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"order_number","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"ozon_created_at","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"posting_number","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"raw","type":"jsonb","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"shipment_date","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"shipped_at","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"shipped_from_warehouse_id","type":"uuid","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"source","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":21,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"substatus","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"synced_at","type":"timestamp with time zone","table":"merch_ozon_orders","schema":"public","default":"now()","notNull":true,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"total_price","type":"numeric(12,2)","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"warehouse_name","type":"text","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"workshop_order_id","type":"uuid","table":"merch_ozon_orders","schema":"public","default":null,"notNull":false,"ordinal":20,"identity":"","generated":""}
+{"kind":"column","name":"amount","type":"integer","table":"merch_payment_attempts","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"confirmed_at","type":"timestamp with time zone","table":"merch_payment_attempts","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_payment_attempts","schema":"public","default":"now()","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"error_code","type":"text","table":"merch_payment_attempts","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"error_message","type":"text","table":"merch_payment_attempts","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"external_payment_id","type":"text","table":"merch_payment_attempts","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"bigint","table":"merch_payment_attempts","schema":"public","default":null,"notNull":true,"ordinal":1,"identity":"a","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_payment_attempts","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"payment_url","type":"text","table":"merch_payment_attempts","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"provider","type":"text","table":"merch_payment_attempts","schema":"public","default":"'tbank'::text","notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"provider_status","type":"text","table":"merch_payment_attempts","schema":"public","default":"'INITIATING'::text","notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"request_payload","type":"jsonb","table":"merch_payment_attempts","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"response_payload","type":"jsonb","table":"merch_payment_attempts","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"terminal_key","type":"text","table":"merch_payment_attempts","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_payment_attempts","schema":"public","default":"now()","notNull":true,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"amount","type":"integer","table":"merch_payment_events","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"event_hash","type":"text","table":"merch_payment_events","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"external_payment_id","type":"text","table":"merch_payment_events","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"bigint","table":"merch_payment_events","schema":"public","default":null,"notNull":true,"ordinal":1,"identity":"a","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_payment_events","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"payload","type":"jsonb","table":"merch_payment_events","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"payment_attempt_id","type":"bigint","table":"merch_payment_events","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"provider","type":"text","table":"merch_payment_events","schema":"public","default":"'tbank'::text","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"provider_status","type":"text","table":"merch_payment_events","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"received_at","type":"timestamp with time zone","table":"merch_payment_events","schema":"public","default":"now()","notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"signature_valid","type":"boolean","table":"merch_payment_events","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_print_inventory","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_print_inventory","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_print_inventory","schema":"public","default":"0","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_print_inventory","schema":"public","default":"now()","notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"warehouse_id","type":"uuid","table":"merch_print_inventory","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_product_categories","schema":"public","default":"now()","notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_product_categories","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_product_categories","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"slug","type":"text","table":"merch_product_categories","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"category_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"color_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"cost_price","type":"numeric(10,2)","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_products","schema":"public","default":"now()","notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"decoration_type_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"design_version","type":"text","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"fabric_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fabric","type":"text","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fit","type":"text","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_products","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"is_blank","type":"boolean","table":"merch_products","schema":"public","default":"false","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"legacy_skus","type":"text[]","table":"merch_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"ozon_sku","type":"bigint","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"sale_price","type":"numeric(10,2)","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"size_id","type":"uuid","table":"merch_products","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"sku","type":"text","table":"merch_products","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"category_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"color_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"cost_price","type":"numeric(10,2)","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"decoration_type_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"design_version","type":"text","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"fabric_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fabric","type":"text","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fit","type":"text","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"is_blank","type":"boolean","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"legacy_skus","type":"text[]","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"ozon_sku","type":"bigint","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"sale_price","type":"numeric(10,2)","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"size_id","type":"uuid","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"sku","type":"text","table":"merch_products_backup_20260622","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"category_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"color_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"cost_price","type":"numeric(10,2)","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"decoration_type_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"design_version","type":"text","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"fabric_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fabric","type":"text","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fit","type":"text","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"is_blank","type":"boolean","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"legacy_skus","type":"text[]","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"ozon_sku","type":"bigint","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"sale_price","type":"numeric(10,2)","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"size_id","type":"uuid","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"sku","type":"text","table":"merch_products_backup_v2","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"code","type":"text","table":"merch_promo_codes","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"code_normalized","type":"text","table":"merch_promo_codes","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_promo_codes","schema":"public","default":"now()","notNull":true,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"discount_type","type":"text","table":"merch_promo_codes","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"discount_value","type":"integer","table":"merch_promo_codes","schema":"public","default":"0","notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"ends_at","type":"timestamp with time zone","table":"merch_promo_codes","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"global_usage_limit","type":"integer","table":"merch_promo_codes","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_promo_codes","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"is_active","type":"boolean","table":"merch_promo_codes","schema":"public","default":"true","notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"max_discount_amount","type":"integer","table":"merch_promo_codes","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"metadata","type":"jsonb","table":"merch_promo_codes","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"min_subtotal_amount","type":"integer","table":"merch_promo_codes","schema":"public","default":"0","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_promo_codes","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"per_phone_limit","type":"integer","table":"merch_promo_codes","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"starts_at","type":"timestamp with time zone","table":"merch_promo_codes","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_promo_codes","schema":"public","default":"now()","notNull":true,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"client_request_id","type":"uuid","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_promo_redemptions","schema":"public","default":"now()","notNull":true,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"customer_phone_hash","type":"text","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"delivery_amount","type":"integer","table":"merch_promo_redemptions","schema":"public","default":"0","notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"delivery_discount_amount","type":"integer","table":"merch_promo_redemptions","schema":"public","default":"0","notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"discount_amount","type":"integer","table":"merch_promo_redemptions","schema":"public","default":"0","notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_promo_redemptions","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"order_number","type":"text","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"promo_code_id","type":"uuid","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"redeemed_at","type":"timestamp with time zone","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"released_at","type":"timestamp with time zone","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"reserved_until","type":"timestamp with time zone","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_promo_redemptions","schema":"public","default":"'reserved'::text","notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"subtotal_amount","type":"integer","table":"merch_promo_redemptions","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_promo_redemptions","schema":"public","default":"now()","notNull":true,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_sizes","schema":"public","default":"now()","notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_sizes","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_sizes","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"sort_order","type":"integer","table":"merch_sizes","schema":"public","default":"0","notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"anime_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":21,"identity":"","generated":""}
+{"kind":"column","name":"anime_title","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":20,"identity":"","generated":""}
+{"kind":"column","name":"badges","type":"text[]","table":"merch_storefront_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":47,"identity":"","generated":""}
+{"kind":"column","name":"category","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"category_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"character_name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":22,"identity":"","generated":""}
+{"kind":"column","name":"character_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":23,"identity":"","generated":""}
+{"kind":"column","name":"collection_name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":24,"identity":"","generated":""}
+{"kind":"column","name":"collection_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":25,"identity":"","generated":""}
+{"kind":"column","name":"color_hex","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":16,"identity":"","generated":""}
+{"kind":"column","name":"color_name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":14,"identity":"","generated":""}
+{"kind":"column","name":"color_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":15,"identity":"","generated":""}
+{"kind":"column","name":"compare_at_price","type":"numeric","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":54,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_storefront_products","schema":"public","default":"now()","notNull":true,"ordinal":44,"identity":"","generated":""}
+{"kind":"column","name":"currency","type":"text","table":"merch_storefront_products","schema":"public","default":"'RUB'::text","notNull":true,"ordinal":32,"identity":"","generated":""}
+{"kind":"column","name":"decoration_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"decoration_type","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"description","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"design_key","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"design_name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":26,"identity":"","generated":""}
+{"kind":"column","name":"design_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":27,"identity":"","generated":""}
+{"kind":"column","name":"franchise_type","type":"text","table":"merch_storefront_products","schema":"public","default":"'anime'::text","notNull":true,"ordinal":17,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_storefront_products","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"image_urls","type":"text[]","table":"merch_storefront_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":35,"identity":"","generated":""}
+{"kind":"column","name":"is_active","type":"boolean","table":"merch_storefront_products","schema":"public","default":"true","notNull":true,"ordinal":42,"identity":"","generated":""}
+{"kind":"column","name":"main_image_path","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":34,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"offers","type":"jsonb","table":"merch_storefront_products","schema":"public","default":"'[]'::jsonb","notNull":true,"ordinal":39,"identity":"","generated":""}
+{"kind":"column","name":"ozon_attributes","type":"jsonb","table":"merch_storefront_products","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":40,"identity":"","generated":""}
+{"kind":"column","name":"ozon_description","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"ozon_offer_ids","type":"text[]","table":"merch_storefront_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":38,"identity":"","generated":""}
+{"kind":"column","name":"ozon_product_ids","type":"bigint[]","table":"merch_storefront_products","schema":"public","default":"'{}'::bigint[]","notNull":true,"ordinal":36,"identity":"","generated":""}
+{"kind":"column","name":"ozon_skus","type":"bigint[]","table":"merch_storefront_products","schema":"public","default":"'{}'::bigint[]","notNull":true,"ordinal":37,"identity":"","generated":""}
+{"kind":"column","name":"ozon_variant","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"price_max","type":"numeric(12,2)","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":31,"identity":"","generated":""}
+{"kind":"column","name":"price_min","type":"numeric(12,2)","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":30,"identity":"","generated":""}
+{"kind":"column","name":"primary_image_url","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":33,"identity":"","generated":""}
+{"kind":"column","name":"product_type","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"product_type_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_period_end","type":"date","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":52,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_period_start","type":"date","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":51,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_rank","type":"integer","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":50,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_revenue","type":"numeric(12,2)","table":"merch_storefront_products","schema":"public","default":"0","notNull":true,"ordinal":49,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_units","type":"integer","table":"merch_storefront_products","schema":"public","default":"0","notNull":true,"ordinal":48,"identity":"","generated":""}
+{"kind":"column","name":"sales_6m_updated_at","type":"timestamp with time zone","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":53,"identity":"","generated":""}
+{"kind":"column","name":"short_description","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":46,"identity":"","generated":""}
+{"kind":"column","name":"size_chart_json","type":"jsonb","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":55,"identity":"","generated":""}
+{"kind":"column","name":"sizes","type":"text[]","table":"merch_storefront_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":29,"identity":"","generated":""}
+{"kind":"column","name":"slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"sort_order","type":"integer","table":"merch_storefront_products","schema":"public","default":"0","notNull":true,"ordinal":43,"identity":"","generated":""}
+{"kind":"column","name":"source_payload","type":"jsonb","table":"merch_storefront_products","schema":"public","default":"'{}'::jsonb","notNull":true,"ordinal":41,"identity":"","generated":""}
+{"kind":"column","name":"tags","type":"text[]","table":"merch_storefront_products","schema":"public","default":"'{}'::text[]","notNull":true,"ordinal":28,"identity":"","generated":""}
+{"kind":"column","name":"title_name","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":18,"identity":"","generated":""}
+{"kind":"column","name":"title_slug","type":"text","table":"merch_storefront_products","schema":"public","default":null,"notNull":false,"ordinal":19,"identity":"","generated":""}
+{"kind":"column","name":"updated_at","type":"timestamp with time zone","table":"merch_storefront_products","schema":"public","default":"now()","notNull":true,"ordinal":45,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_transactions","schema":"public","default":"now()","notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":12,"identity":"","generated":""}
+{"kind":"column","name":"from_warehouse_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_transactions","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"notes","type":"text","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"occurred_at","type":"timestamp with time zone","table":"merch_transactions","schema":"public","default":"now()","notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"product_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_transactions","schema":"public","default":null,"notNull":true,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"source_design_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":13,"identity":"","generated":""}
+{"kind":"column","name":"source_product_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"to_warehouse_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"type","type":"text","table":"merch_transactions","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"workshop_order_id","type":"uuid","table":"merch_transactions","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"address","type":"text","table":"merch_warehouses","schema":"public","default":null,"notNull":false,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"contact","type":"text","table":"merch_warehouses","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_warehouses","schema":"public","default":"now()","notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_warehouses","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"name","type":"text","table":"merch_warehouses","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"notes","type":"text","table":"merch_warehouses","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"type","type":"text","table":"merch_warehouses","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"blank_product_id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":3,"identity":"","generated":""}
+{"kind":"column","name":"decoration_type_id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":true,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"design_id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"design_version","type":"text","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fabric","type":"text","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":11,"identity":"","generated":""}
+{"kind":"column","name":"hoodie_fit","type":"text","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":10,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"notes","type":"text","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"order_id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":true,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"quantity","type":"integer","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":true,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"result_product_id","type":"uuid","table":"merch_workshop_order_items","schema":"public","default":null,"notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"completed_at","type":"timestamp with time zone","table":"merch_workshop_orders","schema":"public","default":null,"notNull":false,"ordinal":8,"identity":"","generated":""}
+{"kind":"column","name":"created_at","type":"timestamp with time zone","table":"merch_workshop_orders","schema":"public","default":"now()","notNull":false,"ordinal":6,"identity":"","generated":""}
+{"kind":"column","name":"id","type":"uuid","table":"merch_workshop_orders","schema":"public","default":"gen_random_uuid()","notNull":true,"ordinal":1,"identity":"","generated":""}
+{"kind":"column","name":"notes","type":"text","table":"merch_workshop_orders","schema":"public","default":null,"notNull":false,"ordinal":5,"identity":"","generated":""}
+{"kind":"column","name":"order_number","type":"text","table":"merch_workshop_orders","schema":"public","default":null,"notNull":false,"ordinal":2,"identity":"","generated":""}
+{"kind":"column","name":"received_at","type":"timestamp with time zone","table":"merch_workshop_orders","schema":"public","default":null,"notNull":false,"ordinal":9,"identity":"","generated":""}
+{"kind":"column","name":"sent_at","type":"timestamp with time zone","table":"merch_workshop_orders","schema":"public","default":null,"notNull":false,"ordinal":7,"identity":"","generated":""}
+{"kind":"column","name":"status","type":"text","table":"merch_workshop_orders","schema":"public","default":"'sent'::text","notNull":true,"ordinal":4,"identity":"","generated":""}
+{"kind":"column","name":"workshop_id","type":"uuid","table":"merch_workshop_orders","schema":"public","default":null,"notNull":true,"ordinal":3,"identity":"","generated":""}
+{"kind":"constraint","name":"merch_cdek_events_event_hash_key","table":"merch_cdek_events","schema":"public","definition":"UNIQUE (event_hash)","constraintType":"u"}
+{"kind":"constraint","name":"merch_cdek_events_order_id_fkey","table":"merch_cdek_events","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_cdek_events_pkey","table":"merch_cdek_events","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_cdek_events_shipment_id_fkey","table":"merch_cdek_events","schema":"public","definition":"FOREIGN KEY (shipment_id) REFERENCES merch_cdek_shipments(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_cdek_shipments_cdek_uuid_key","table":"merch_cdek_shipments","schema":"public","definition":"UNIQUE (cdek_uuid)","constraintType":"u"}
+{"kind":"constraint","name":"merch_cdek_shipments_order_id_fkey","table":"merch_cdek_shipments","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_cdek_shipments_order_id_key","table":"merch_cdek_shipments","schema":"public","definition":"UNIQUE (order_id)","constraintType":"u"}
+{"kind":"constraint","name":"merch_cdek_shipments_package_snapshot_check","table":"merch_cdek_shipments","schema":"public","definition":"CHECK (jsonb_typeof(package_snapshot) = 'array'::text)","constraintType":"c"}
+{"kind":"constraint","name":"merch_cdek_shipments_pkey","table":"merch_cdek_shipments","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_cdek_shipments_status_check","table":"merch_cdek_shipments","schema":"public","definition":"CHECK (status = ANY (ARRAY['pending'::text, 'creating'::text, 'accepted'::text, 'created'::text, 'invalid'::text, 'failed'::text, 'deleted'::text, 'unknown'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_cdek_shipments_tariff_code_check","table":"merch_cdek_shipments","schema":"public","definition":"CHECK (tariff_code > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_colors_name_key","table":"merch_colors","schema":"public","definition":"UNIQUE (name)","constraintType":"u"}
+{"kind":"constraint","name":"merch_colors_pkey","table":"merch_colors","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_customer_order_items_check","table":"merch_customer_order_items","schema":"public","definition":"CHECK (line_total_amount = (unit_price_amount * quantity))","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_order_items_line_total_amount_check","table":"merch_customer_order_items","schema":"public","definition":"CHECK (line_total_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_order_items_order_id_fkey","table":"merch_customer_order_items","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_customer_order_items_pkey","table":"merch_customer_order_items","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_customer_order_items_product_id_fkey","table":"merch_customer_order_items","schema":"public","definition":"FOREIGN KEY (product_id) REFERENCES merch_storefront_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_customer_order_items_quantity_check","table":"merch_customer_order_items","schema":"public","definition":"CHECK (quantity > 0 AND quantity <= 10)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_order_items_unit_price_amount_check","table":"merch_customer_order_items","schema":"public","definition":"CHECK (unit_price_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (discount_amount <= subtotal_amount)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_check1","table":"merch_customer_orders","schema":"public","definition":"CHECK (total_amount = (subtotal_amount - discount_amount + delivery_amount))","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_client_request_id_key","table":"merch_customer_orders","schema":"public","definition":"UNIQUE (client_request_id)","constraintType":"u"}
+{"kind":"constraint","name":"merch_customer_orders_currency_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (currency = 'RUB'::text)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_delivery_amount_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (delivery_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_discount_amount_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (discount_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_order_number_key","table":"merch_customer_orders","schema":"public","definition":"UNIQUE (order_number)","constraintType":"u"}
+{"kind":"constraint","name":"merch_customer_orders_pkey","table":"merch_customer_orders","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_customer_orders_status_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (status = ANY (ARRAY['created'::text, 'pending_payment'::text, 'authorized'::text, 'paid'::text, 'payment_failed'::text, 'payment_review'::text, 'canceled'::text, 'partially_refunded'::text, 'refunded'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_subtotal_amount_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (subtotal_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_customer_orders_total_amount_check","table":"merch_customer_orders","schema":"public","definition":"CHECK (total_amount > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_decoration_types_made_at_check","table":"merch_decoration_types","schema":"public","definition":"CHECK (made_at = ANY (ARRAY['own'::text, 'workshop'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_decoration_types_name_key","table":"merch_decoration_types","schema":"public","definition":"UNIQUE (name)","constraintType":"u"}
+{"kind":"constraint","name":"merch_decoration_types_pkey","table":"merch_decoration_types","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_decoration_types_slug_key","table":"merch_decoration_types","schema":"public","definition":"UNIQUE (slug)","constraintType":"u"}
+{"kind":"constraint","name":"merch_designs_pkey","table":"merch_designs","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_designs_type_check","table":"merch_designs","schema":"public","definition":"CHECK (type = ANY (ARRAY['print'::text, 'embroidery'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_expense_categories_pkey","table":"merch_expense_categories","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_expenses_amount_check","table":"merch_expenses","schema":"public","definition":"CHECK (amount > 0::numeric)","constraintType":"c"}
+{"kind":"constraint","name":"merch_expenses_category_id_fkey","table":"merch_expenses","schema":"public","definition":"FOREIGN KEY (category_id) REFERENCES merch_expense_categories(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_expenses_pkey","table":"merch_expenses","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_fabric_types_name_key","table":"merch_fabric_types","schema":"public","definition":"UNIQUE (name)","constraintType":"u"}
+{"kind":"constraint","name":"merch_fabric_types_pkey","table":"merch_fabric_types","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_fabric_types_slug_key","table":"merch_fabric_types","schema":"public","definition":"UNIQUE (slug)","constraintType":"u"}
+{"kind":"constraint","name":"merch_inventory_pkey","table":"merch_inventory","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_inventory_product_id_fkey","table":"merch_inventory","schema":"public","definition":"FOREIGN KEY (product_id) REFERENCES merch_products(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_inventory_product_id_warehouse_id_key","table":"merch_inventory","schema":"public","definition":"UNIQUE (product_id, warehouse_id)","constraintType":"u"}
+{"kind":"constraint","name":"merch_inventory_quantity_check","table":"merch_inventory","schema":"public","definition":"CHECK (quantity >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_inventory_warehouse_id_fkey","table":"merch_inventory","schema":"public","definition":"FOREIGN KEY (warehouse_id) REFERENCES merch_warehouses(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_finance_operations_operation_id_key","table":"merch_ozon_finance_operations","schema":"public","definition":"UNIQUE (operation_id)","constraintType":"u"}
+{"kind":"constraint","name":"merch_ozon_finance_operations_pkey","table":"merch_ozon_finance_operations","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_ozon_import_items_pkey","table":"merch_ozon_import_items","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_ozon_import_items_run_id_fkey","table":"merch_ozon_import_items","schema":"public","definition":"FOREIGN KEY (run_id) REFERENCES merch_ozon_import_runs(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_import_items_severity_check","table":"merch_ozon_import_items","schema":"public","definition":"CHECK (severity = ANY (ARRAY['info'::text, 'warning'::text, 'error'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_ozon_import_items_status_check","table":"merch_ozon_import_items","schema":"public","definition":"CHECK (status = ANY (ARRAY['new_design'::text, 'new_product'::text, 'update'::text, 'noop'::text, 'conflict'::text, 'skipped'::text, 'applied'::text, 'error'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_ozon_import_items_target_product_id_fkey","table":"merch_ozon_import_items","schema":"public","definition":"FOREIGN KEY (target_product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_import_runs_pkey","table":"merch_ozon_import_runs","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_ozon_import_runs_status_check","table":"merch_ozon_import_runs","schema":"public","definition":"CHECK (status = ANY (ARRAY['preview'::text, 'applying'::text, 'applied'::text, 'partial'::text, 'failed'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_ozon_order_items_order_id_fkey","table":"merch_ozon_order_items","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_ozon_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_order_items_pkey","table":"merch_ozon_order_items","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_ozon_order_items_product_id_fkey","table":"merch_ozon_order_items","schema":"public","definition":"FOREIGN KEY (product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_order_items_shipped_from_warehouse_id_fkey","table":"merch_ozon_order_items","schema":"public","definition":"FOREIGN KEY (shipped_from_warehouse_id) REFERENCES merch_warehouses(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_orders_pkey","table":"merch_ozon_orders","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_ozon_orders_posting_number_key","table":"merch_ozon_orders","schema":"public","definition":"UNIQUE (posting_number)","constraintType":"u"}
+{"kind":"constraint","name":"merch_ozon_orders_shipped_from_warehouse_id_fkey","table":"merch_ozon_orders","schema":"public","definition":"FOREIGN KEY (shipped_from_warehouse_id) REFERENCES merch_warehouses(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_ozon_orders_workshop_order_id_fkey","table":"merch_ozon_orders","schema":"public","definition":"FOREIGN KEY (workshop_order_id) REFERENCES merch_workshop_orders(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_payment_attempts_amount_check","table":"merch_payment_attempts","schema":"public","definition":"CHECK (amount > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_payment_attempts_order_id_fkey","table":"merch_payment_attempts","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_payment_attempts_pkey","table":"merch_payment_attempts","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_payment_attempts_provider_check","table":"merch_payment_attempts","schema":"public","definition":"CHECK (provider = 'tbank'::text)","constraintType":"c"}
+{"kind":"constraint","name":"merch_payment_events_event_hash_key","table":"merch_payment_events","schema":"public","definition":"UNIQUE (event_hash)","constraintType":"u"}
+{"kind":"constraint","name":"merch_payment_events_order_id_fkey","table":"merch_payment_events","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_payment_events_payment_attempt_id_fkey","table":"merch_payment_events","schema":"public","definition":"FOREIGN KEY (payment_attempt_id) REFERENCES merch_payment_attempts(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_payment_events_pkey","table":"merch_payment_events","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_payment_events_provider_check","table":"merch_payment_events","schema":"public","definition":"CHECK (provider = 'tbank'::text)","constraintType":"c"}
+{"kind":"constraint","name":"merch_print_inventory_design_id_fkey","table":"merch_print_inventory","schema":"public","definition":"FOREIGN KEY (design_id) REFERENCES merch_designs(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_print_inventory_design_id_warehouse_id_key","table":"merch_print_inventory","schema":"public","definition":"UNIQUE (design_id, warehouse_id)","constraintType":"u"}
+{"kind":"constraint","name":"merch_print_inventory_pkey","table":"merch_print_inventory","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_print_inventory_quantity_check","table":"merch_print_inventory","schema":"public","definition":"CHECK (quantity >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_print_inventory_warehouse_id_fkey","table":"merch_print_inventory","schema":"public","definition":"FOREIGN KEY (warehouse_id) REFERENCES merch_warehouses(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_product_categories_name_key","table":"merch_product_categories","schema":"public","definition":"UNIQUE (name)","constraintType":"u"}
+{"kind":"constraint","name":"merch_product_categories_pkey","table":"merch_product_categories","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_product_categories_slug_key","table":"merch_product_categories","schema":"public","definition":"UNIQUE (slug)","constraintType":"u"}
+{"kind":"constraint","name":"design_decoration_consistency","table":"merch_products","schema":"public","definition":"CHECK (is_blank = true AND design_id IS NULL AND decoration_type_id IS NULL OR is_blank = false AND design_id IS NOT NULL AND decoration_type_id IS NOT NULL)","constraintType":"c"}
+{"kind":"constraint","name":"merch_products_category_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (category_id) REFERENCES merch_product_categories(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_color_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (color_id) REFERENCES merch_colors(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_decoration_type_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (decoration_type_id) REFERENCES merch_decoration_types(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_design_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (design_id) REFERENCES merch_designs(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_fabric_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (fabric_id) REFERENCES merch_fabric_types(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_hoodie_fabric_chk","table":"merch_products","schema":"public","definition":"CHECK (hoodie_fabric IS NULL OR (hoodie_fabric = ANY (ARRAY['FLC'::text, 'NF'::text])))","constraintType":"c"}
+{"kind":"constraint","name":"merch_products_hoodie_fit_chk","table":"merch_products","schema":"public","definition":"CHECK (hoodie_fit IS NULL OR (hoodie_fit = ANY (ARRAY['REG'::text, 'CRP'::text])))","constraintType":"c"}
+{"kind":"constraint","name":"merch_products_pkey","table":"merch_products","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_products_size_id_fkey","table":"merch_products","schema":"public","definition":"FOREIGN KEY (size_id) REFERENCES merch_sizes(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_products_sku_key","table":"merch_products","schema":"public","definition":"UNIQUE (sku)","constraintType":"u"}
+{"kind":"constraint","name":"merch_promo_codes_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (discount_type = 'percent'::text AND discount_value > 0 AND discount_value <= 10000 OR discount_type = 'fixed_amount'::text AND discount_value > 0 OR discount_type = 'free_delivery'::text)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_discount_type_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (discount_type = ANY (ARRAY['percent'::text, 'fixed_amount'::text, 'free_delivery'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_discount_value_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (discount_value >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_global_usage_limit_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (global_usage_limit IS NULL OR global_usage_limit > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_max_discount_amount_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (max_discount_amount IS NULL OR max_discount_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_min_subtotal_amount_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (min_subtotal_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_per_phone_limit_check","table":"merch_promo_codes","schema":"public","definition":"CHECK (per_phone_limit IS NULL OR per_phone_limit > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_codes_pkey","table":"merch_promo_codes","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_promo_redemptions_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (discount_amount <= subtotal_amount)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_check1","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (delivery_discount_amount <= delivery_amount)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_delivery_amount_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (delivery_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_delivery_discount_amount_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (delivery_discount_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_discount_amount_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (discount_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_order_id_fkey","table":"merch_promo_redemptions","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_customer_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_promo_redemptions_pkey","table":"merch_promo_redemptions","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_promo_redemptions_promo_code_id_fkey","table":"merch_promo_redemptions","schema":"public","definition":"FOREIGN KEY (promo_code_id) REFERENCES merch_promo_codes(id) ON DELETE RESTRICT","constraintType":"f"}
+{"kind":"constraint","name":"merch_promo_redemptions_status_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (status = ANY (ARRAY['reserved'::text, 'redeemed'::text, 'released'::text, 'expired'::text, 'canceled'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_promo_redemptions_subtotal_amount_check","table":"merch_promo_redemptions","schema":"public","definition":"CHECK (subtotal_amount >= 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_sizes_name_key","table":"merch_sizes","schema":"public","definition":"UNIQUE (name)","constraintType":"u"}
+{"kind":"constraint","name":"merch_sizes_pkey","table":"merch_sizes","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_storefront_products_design_key_key","table":"merch_storefront_products","schema":"public","definition":"UNIQUE (design_key)","constraintType":"u"}
+{"kind":"constraint","name":"merch_storefront_products_pkey","table":"merch_storefront_products","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_storefront_products_slug_key","table":"merch_storefront_products","schema":"public","definition":"UNIQUE (slug)","constraintType":"u"}
+{"kind":"constraint","name":"merch_transactions_design_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (design_id) REFERENCES merch_designs(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_from_warehouse_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (from_warehouse_id) REFERENCES merch_warehouses(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_pkey","table":"merch_transactions","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_transactions_product_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_quantity_check","table":"merch_transactions","schema":"public","definition":"CHECK (quantity > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_transactions_source_design_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (source_design_id) REFERENCES merch_designs(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_source_product_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (source_product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_to_warehouse_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (to_warehouse_id) REFERENCES merch_warehouses(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_transactions_type_check","table":"merch_transactions","schema":"public","definition":"CHECK (type = ANY (ARRAY['receive'::text, 'transfer'::text, 'sale'::text, 'production'::text, 'adjustment'::text, 'writeoff'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_transactions_workshop_order_id_fkey","table":"merch_transactions","schema":"public","definition":"FOREIGN KEY (workshop_order_id) REFERENCES merch_workshop_orders(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_warehouses_pkey","table":"merch_warehouses","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_warehouses_type_check","table":"merch_warehouses","schema":"public","definition":"CHECK (type = ANY (ARRAY['own'::text, 'workshop'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_workshop_order_items_blank_product_id_fkey","table":"merch_workshop_order_items","schema":"public","definition":"FOREIGN KEY (blank_product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_workshop_order_items_decoration_type_id_fkey","table":"merch_workshop_order_items","schema":"public","definition":"FOREIGN KEY (decoration_type_id) REFERENCES merch_decoration_types(id)","constraintType":"f"}
+{"kind":"constraint","name":"merch_workshop_order_items_design_id_fkey","table":"merch_workshop_order_items","schema":"public","definition":"FOREIGN KEY (design_id) REFERENCES merch_designs(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_workshop_order_items_order_id_fkey","table":"merch_workshop_order_items","schema":"public","definition":"FOREIGN KEY (order_id) REFERENCES merch_workshop_orders(id) ON DELETE CASCADE","constraintType":"f"}
+{"kind":"constraint","name":"merch_workshop_order_items_pkey","table":"merch_workshop_order_items","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_workshop_order_items_quantity_check","table":"merch_workshop_order_items","schema":"public","definition":"CHECK (quantity > 0)","constraintType":"c"}
+{"kind":"constraint","name":"merch_workshop_order_items_result_product_id_fkey","table":"merch_workshop_order_items","schema":"public","definition":"FOREIGN KEY (result_product_id) REFERENCES merch_products(id) ON DELETE SET NULL","constraintType":"f"}
+{"kind":"constraint","name":"merch_workshop_orders_order_number_key","table":"merch_workshop_orders","schema":"public","definition":"UNIQUE (order_number)","constraintType":"u"}
+{"kind":"constraint","name":"merch_workshop_orders_pkey","table":"merch_workshop_orders","schema":"public","definition":"PRIMARY KEY (id)","constraintType":"p"}
+{"kind":"constraint","name":"merch_workshop_orders_status_check","table":"merch_workshop_orders","schema":"public","definition":"CHECK (status = ANY (ARRAY['sent'::text, 'ready'::text, 'received'::text, 'cancelled'::text]))","constraintType":"c"}
+{"kind":"constraint","name":"merch_workshop_orders_workshop_id_fkey","table":"merch_workshop_orders","schema":"public","definition":"FOREIGN KEY (workshop_id) REFERENCES merch_warehouses(id)","constraintType":"f"}
+{"kind":"function","name":"merch_create_checkout_order","table":null,"schema":"public","definition":"CREATE OR REPLACE FUNCTION public.merch_create_checkout_order(p_order jsonb, p_items jsonb)\n RETURNS uuid\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\ndeclare\n  v_order_id uuid := coalesce((p_order ->> 'id')::uuid, gen_random_uuid());\nbegin\n  if jsonb_typeof(p_items) <> 'array'\n     or jsonb_array_length(p_items) < 1\n     or jsonb_array_length(p_items) > 100 then\n    raise exception 'invalid order items';\n  end if;\n\n  insert into public.merch_customer_orders (\n    id, client_request_id, order_number, access_token_hash, status,\n    customer_first_name, customer_last_name, customer_phone,\n    marketing_consent, legal_accepted_at, delivery_provider,\n    delivery_point_code, delivery_city, delivery_address, delivery_hours,\n    delivery_eta, delivery_amount, currency, subtotal_amount,\n    discount_amount, total_amount, promo_code, source, metadata\n  )\n  values (\n    v_order_id,\n    (p_order ->> 'client_request_id')::uuid,\n    p_order ->> 'order_number',\n    p_order ->> 'access_token_hash',\n    coalesce(p_order ->> 'status', 'created'),\n    p_order ->> 'customer_first_name',\n    p_order ->> 'customer_last_name',\n    p_order ->> 'customer_phone',\n    coalesce((p_order ->> 'marketing_consent')::boolean, false),\n    (p_order ->> 'legal_accepted_at')::timestamptz,\n    coalesce(p_order ->> 'delivery_provider', 'cdek'),\n    p_order ->> 'delivery_point_code',\n    p_order ->> 'delivery_city',\n    p_order ->> 'delivery_address',\n    p_order ->> 'delivery_hours',\n    p_order ->> 'delivery_eta',\n    (p_order ->> 'delivery_amount')::integer,\n    coalesce(p_order ->> 'currency', 'RUB'),\n    (p_order ->> 'subtotal_amount')::integer,\n    coalesce((p_order ->> 'discount_amount')::integer, 0),\n    (p_order ->> 'total_amount')::integer,\n    nullif(p_order ->> 'promo_code', ''),\n    coalesce(p_order ->> 'source', 'storefront'),\n    coalesce(p_order -> 'metadata', '{}'::jsonb)\n  );\n\n  insert into public.merch_customer_order_items (\n    order_id, product_id, offer_id, sku, product_name, size, quantity,\n    unit_price_amount, line_total_amount, image_url, product_snapshot\n  )\n  select\n    v_order_id,\n    (item ->> 'product_id')::uuid,\n    nullif(item ->> 'offer_id', ''),\n    nullif(item ->> 'sku', ''),\n    item ->> 'product_name',\n    item ->> 'size',\n    (item ->> 'quantity')::integer,\n    (item ->> 'unit_price_amount')::integer,\n    (item ->> 'line_total_amount')::integer,\n    nullif(item ->> 'image_url', ''),\n    coalesce(item -> 'product_snapshot', '{}'::jsonb)\n  from jsonb_array_elements(p_items) as item;\n\n  return v_order_id;\nend;\n$function$\n","identityArguments":"p_order jsonb, p_items jsonb"}
+{"kind":"function","name":"notify_vercel_storefront_changed","table":null,"schema":"public","definition":"CREATE OR REPLACE FUNCTION public.notify_vercel_storefront_changed()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public', 'extensions', 'net'\nAS $function$\nBEGIN\n  PERFORM net.http_post(\n    url := 'https://api.vercel.com/v1/integrations/deploy/prj_u4G6kyZeIQVxttwDsWrfS6NHJGeZ/7xi5mUYRlY',\n    headers := '{\"Content-Type\": \"application/json\"}'::jsonb,\n    body := jsonb_build_object(\n      'source', 'supabase',\n      'table',  TG_TABLE_NAME,\n      'op',     TG_OP,\n      'fired_at', now()\n    )\n  );\n  RETURN NULL;\nEND;\n$function$\n","identityArguments":""}
+{"kind":"function","name":"update_inventory_timestamp","table":null,"schema":"public","definition":"CREATE OR REPLACE FUNCTION public.update_inventory_timestamp()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$\nBEGIN\n  NEW.updated_at = now();\n  RETURN NEW;\nEND;\n$function$\n","identityArguments":""}
+{"kind":"index","name":"merch_cdek_events_event_hash_key","table":"merch_cdek_events","schema":"public","definition":"CREATE UNIQUE INDEX merch_cdek_events_event_hash_key ON public.merch_cdek_events USING btree (event_hash)"}
+{"kind":"index","name":"merch_cdek_events_order_received_idx","table":"merch_cdek_events","schema":"public","definition":"CREATE INDEX merch_cdek_events_order_received_idx ON public.merch_cdek_events USING btree (order_id, received_at DESC)"}
+{"kind":"index","name":"merch_cdek_events_pkey","table":"merch_cdek_events","schema":"public","definition":"CREATE UNIQUE INDEX merch_cdek_events_pkey ON public.merch_cdek_events USING btree (id)"}
+{"kind":"index","name":"merch_cdek_events_shipment_received_idx","table":"merch_cdek_events","schema":"public","definition":"CREATE INDEX merch_cdek_events_shipment_received_idx ON public.merch_cdek_events USING btree (shipment_id, received_at DESC)"}
+{"kind":"index","name":"merch_cdek_shipments_cdek_number_idx","table":"merch_cdek_shipments","schema":"public","definition":"CREATE INDEX merch_cdek_shipments_cdek_number_idx ON public.merch_cdek_shipments USING btree (cdek_number) WHERE (cdek_number IS NOT NULL)"}
+{"kind":"index","name":"merch_cdek_shipments_cdek_uuid_key","table":"merch_cdek_shipments","schema":"public","definition":"CREATE UNIQUE INDEX merch_cdek_shipments_cdek_uuid_key ON public.merch_cdek_shipments USING btree (cdek_uuid)"}
+{"kind":"index","name":"merch_cdek_shipments_order_id_key","table":"merch_cdek_shipments","schema":"public","definition":"CREATE UNIQUE INDEX merch_cdek_shipments_order_id_key ON public.merch_cdek_shipments USING btree (order_id)"}
+{"kind":"index","name":"merch_cdek_shipments_pkey","table":"merch_cdek_shipments","schema":"public","definition":"CREATE UNIQUE INDEX merch_cdek_shipments_pkey ON public.merch_cdek_shipments USING btree (id)"}
+{"kind":"index","name":"merch_cdek_shipments_status_created_idx","table":"merch_cdek_shipments","schema":"public","definition":"CREATE INDEX merch_cdek_shipments_status_created_idx ON public.merch_cdek_shipments USING btree (status, created_at DESC)"}
+{"kind":"index","name":"merch_colors_name_key","table":"merch_colors","schema":"public","definition":"CREATE UNIQUE INDEX merch_colors_name_key ON public.merch_colors USING btree (name)"}
+{"kind":"index","name":"merch_colors_pkey","table":"merch_colors","schema":"public","definition":"CREATE UNIQUE INDEX merch_colors_pkey ON public.merch_colors USING btree (id)"}
+{"kind":"index","name":"merch_customer_order_items_order_idx","table":"merch_customer_order_items","schema":"public","definition":"CREATE INDEX merch_customer_order_items_order_idx ON public.merch_customer_order_items USING btree (order_id)"}
+{"kind":"index","name":"merch_customer_order_items_pkey","table":"merch_customer_order_items","schema":"public","definition":"CREATE UNIQUE INDEX merch_customer_order_items_pkey ON public.merch_customer_order_items USING btree (id)"}
+{"kind":"index","name":"merch_customer_order_items_product_idx","table":"merch_customer_order_items","schema":"public","definition":"CREATE INDEX merch_customer_order_items_product_idx ON public.merch_customer_order_items USING btree (product_id)"}
+{"kind":"index","name":"merch_customer_orders_client_request_id_key","table":"merch_customer_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_customer_orders_client_request_id_key ON public.merch_customer_orders USING btree (client_request_id)"}
+{"kind":"index","name":"merch_customer_orders_order_number_key","table":"merch_customer_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_customer_orders_order_number_key ON public.merch_customer_orders USING btree (order_number)"}
+{"kind":"index","name":"merch_customer_orders_phone_created_idx","table":"merch_customer_orders","schema":"public","definition":"CREATE INDEX merch_customer_orders_phone_created_idx ON public.merch_customer_orders USING btree (customer_phone, created_at DESC)"}
+{"kind":"index","name":"merch_customer_orders_pkey","table":"merch_customer_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_customer_orders_pkey ON public.merch_customer_orders USING btree (id)"}
+{"kind":"index","name":"merch_customer_orders_status_created_idx","table":"merch_customer_orders","schema":"public","definition":"CREATE INDEX merch_customer_orders_status_created_idx ON public.merch_customer_orders USING btree (status, created_at DESC)"}
+{"kind":"index","name":"merch_decoration_types_name_key","table":"merch_decoration_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_decoration_types_name_key ON public.merch_decoration_types USING btree (name)"}
+{"kind":"index","name":"merch_decoration_types_pkey","table":"merch_decoration_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_decoration_types_pkey ON public.merch_decoration_types USING btree (id)"}
+{"kind":"index","name":"merch_decoration_types_slug_key","table":"merch_decoration_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_decoration_types_slug_key ON public.merch_decoration_types USING btree (slug)"}
+{"kind":"index","name":"merch_designs_code_idx","table":"merch_designs","schema":"public","definition":"CREATE INDEX merch_designs_code_idx ON public.merch_designs USING btree (code) WHERE (code IS NOT NULL)"}
+{"kind":"index","name":"merch_designs_code_type_unique","table":"merch_designs","schema":"public","definition":"CREATE UNIQUE INDEX merch_designs_code_type_unique ON public.merch_designs USING btree (code, type) WHERE (code IS NOT NULL)"}
+{"kind":"index","name":"merch_designs_pkey","table":"merch_designs","schema":"public","definition":"CREATE UNIQUE INDEX merch_designs_pkey ON public.merch_designs USING btree (id)"}
+{"kind":"index","name":"merch_expense_categories_pkey","table":"merch_expense_categories","schema":"public","definition":"CREATE UNIQUE INDEX merch_expense_categories_pkey ON public.merch_expense_categories USING btree (id)"}
+{"kind":"index","name":"merch_expenses_category_idx","table":"merch_expenses","schema":"public","definition":"CREATE INDEX merch_expenses_category_idx ON public.merch_expenses USING btree (category_id)"}
+{"kind":"index","name":"merch_expenses_occurred_idx","table":"merch_expenses","schema":"public","definition":"CREATE INDEX merch_expenses_occurred_idx ON public.merch_expenses USING btree (occurred_at DESC)"}
+{"kind":"index","name":"merch_expenses_pkey","table":"merch_expenses","schema":"public","definition":"CREATE UNIQUE INDEX merch_expenses_pkey ON public.merch_expenses USING btree (id)"}
+{"kind":"index","name":"merch_fabric_types_name_key","table":"merch_fabric_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_fabric_types_name_key ON public.merch_fabric_types USING btree (name)"}
+{"kind":"index","name":"merch_fabric_types_pkey","table":"merch_fabric_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_fabric_types_pkey ON public.merch_fabric_types USING btree (id)"}
+{"kind":"index","name":"merch_fabric_types_slug_key","table":"merch_fabric_types","schema":"public","definition":"CREATE UNIQUE INDEX merch_fabric_types_slug_key ON public.merch_fabric_types USING btree (slug)"}
+{"kind":"index","name":"idx_inventory_product","table":"merch_inventory","schema":"public","definition":"CREATE INDEX idx_inventory_product ON public.merch_inventory USING btree (product_id)"}
+{"kind":"index","name":"idx_inventory_warehouse","table":"merch_inventory","schema":"public","definition":"CREATE INDEX idx_inventory_warehouse ON public.merch_inventory USING btree (warehouse_id)"}
+{"kind":"index","name":"merch_inventory_pkey","table":"merch_inventory","schema":"public","definition":"CREATE UNIQUE INDEX merch_inventory_pkey ON public.merch_inventory USING btree (id)"}
+{"kind":"index","name":"merch_inventory_product_id_warehouse_id_key","table":"merch_inventory","schema":"public","definition":"CREATE UNIQUE INDEX merch_inventory_product_id_warehouse_id_key ON public.merch_inventory USING btree (product_id, warehouse_id)"}
+{"kind":"index","name":"merch_ozon_finance_operations_operation_id_key","table":"merch_ozon_finance_operations","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_finance_operations_operation_id_key ON public.merch_ozon_finance_operations USING btree (operation_id)"}
+{"kind":"index","name":"merch_ozon_finance_operations_pkey","table":"merch_ozon_finance_operations","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_finance_operations_pkey ON public.merch_ozon_finance_operations USING btree (id)"}
+{"kind":"index","name":"merch_ozon_finance_ops_date_idx","table":"merch_ozon_finance_operations","schema":"public","definition":"CREATE INDEX merch_ozon_finance_ops_date_idx ON public.merch_ozon_finance_operations USING btree (operation_date DESC)"}
+{"kind":"index","name":"merch_ozon_finance_ops_posting_idx","table":"merch_ozon_finance_operations","schema":"public","definition":"CREATE INDEX merch_ozon_finance_ops_posting_idx ON public.merch_ozon_finance_operations USING btree (posting_number)"}
+{"kind":"index","name":"merch_ozon_finance_ops_type_idx","table":"merch_ozon_finance_operations","schema":"public","definition":"CREATE INDEX merch_ozon_finance_ops_type_idx ON public.merch_ozon_finance_operations USING btree (operation_type)"}
+{"kind":"index","name":"merch_ozon_import_items_offer_idx","table":"merch_ozon_import_items","schema":"public","definition":"CREATE INDEX merch_ozon_import_items_offer_idx ON public.merch_ozon_import_items USING btree (offer_id)"}
+{"kind":"index","name":"merch_ozon_import_items_pkey","table":"merch_ozon_import_items","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_import_items_pkey ON public.merch_ozon_import_items USING btree (id)"}
+{"kind":"index","name":"merch_ozon_import_items_run_idx","table":"merch_ozon_import_items","schema":"public","definition":"CREATE INDEX merch_ozon_import_items_run_idx ON public.merch_ozon_import_items USING btree (run_id)"}
+{"kind":"index","name":"merch_ozon_import_items_run_offer_key","table":"merch_ozon_import_items","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_import_items_run_offer_key ON public.merch_ozon_import_items USING btree (run_id, offer_id)"}
+{"kind":"index","name":"merch_ozon_import_items_status_idx","table":"merch_ozon_import_items","schema":"public","definition":"CREATE INDEX merch_ozon_import_items_status_idx ON public.merch_ozon_import_items USING btree (status)"}
+{"kind":"index","name":"merch_ozon_import_runs_created_idx","table":"merch_ozon_import_runs","schema":"public","definition":"CREATE INDEX merch_ozon_import_runs_created_idx ON public.merch_ozon_import_runs USING btree (created_at DESC)"}
+{"kind":"index","name":"merch_ozon_import_runs_pkey","table":"merch_ozon_import_runs","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_import_runs_pkey ON public.merch_ozon_import_runs USING btree (id)"}
+{"kind":"index","name":"merch_ozon_order_items_offer_idx","table":"merch_ozon_order_items","schema":"public","definition":"CREATE INDEX merch_ozon_order_items_offer_idx ON public.merch_ozon_order_items USING btree (offer_id)"}
+{"kind":"index","name":"merch_ozon_order_items_order_idx","table":"merch_ozon_order_items","schema":"public","definition":"CREATE INDEX merch_ozon_order_items_order_idx ON public.merch_ozon_order_items USING btree (order_id)"}
+{"kind":"index","name":"merch_ozon_order_items_pkey","table":"merch_ozon_order_items","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_order_items_pkey ON public.merch_ozon_order_items USING btree (id)"}
+{"kind":"index","name":"merch_ozon_order_items_product_idx","table":"merch_ozon_order_items","schema":"public","definition":"CREATE INDEX merch_ozon_order_items_product_idx ON public.merch_ozon_order_items USING btree (product_id)"}
+{"kind":"index","name":"merch_ozon_orders_created_idx","table":"merch_ozon_orders","schema":"public","definition":"CREATE INDEX merch_ozon_orders_created_idx ON public.merch_ozon_orders USING btree (ozon_created_at DESC)"}
+{"kind":"index","name":"merch_ozon_orders_pkey","table":"merch_ozon_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_orders_pkey ON public.merch_ozon_orders USING btree (id)"}
+{"kind":"index","name":"merch_ozon_orders_posting_number_key","table":"merch_ozon_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_ozon_orders_posting_number_key ON public.merch_ozon_orders USING btree (posting_number)"}
+{"kind":"index","name":"merch_ozon_orders_shipped_idx","table":"merch_ozon_orders","schema":"public","definition":"CREATE INDEX merch_ozon_orders_shipped_idx ON public.merch_ozon_orders USING btree (shipped_at)"}
+{"kind":"index","name":"merch_ozon_orders_source_idx","table":"merch_ozon_orders","schema":"public","definition":"CREATE INDEX merch_ozon_orders_source_idx ON public.merch_ozon_orders USING btree (source)"}
+{"kind":"index","name":"merch_ozon_orders_status_idx","table":"merch_ozon_orders","schema":"public","definition":"CREATE INDEX merch_ozon_orders_status_idx ON public.merch_ozon_orders USING btree (status)"}
+{"kind":"index","name":"merch_ozon_orders_workshop_order_idx","table":"merch_ozon_orders","schema":"public","definition":"CREATE INDEX merch_ozon_orders_workshop_order_idx ON public.merch_ozon_orders USING btree (workshop_order_id)"}
+{"kind":"index","name":"merch_payment_attempts_external_id_idx","table":"merch_payment_attempts","schema":"public","definition":"CREATE UNIQUE INDEX merch_payment_attempts_external_id_idx ON public.merch_payment_attempts USING btree (provider, external_payment_id) WHERE (external_payment_id IS NOT NULL)"}
+{"kind":"index","name":"merch_payment_attempts_order_created_idx","table":"merch_payment_attempts","schema":"public","definition":"CREATE INDEX merch_payment_attempts_order_created_idx ON public.merch_payment_attempts USING btree (order_id, created_at DESC)"}
+{"kind":"index","name":"merch_payment_attempts_pkey","table":"merch_payment_attempts","schema":"public","definition":"CREATE UNIQUE INDEX merch_payment_attempts_pkey ON public.merch_payment_attempts USING btree (id)"}
+{"kind":"index","name":"merch_payment_events_attempt_idx","table":"merch_payment_events","schema":"public","definition":"CREATE INDEX merch_payment_events_attempt_idx ON public.merch_payment_events USING btree (payment_attempt_id)"}
+{"kind":"index","name":"merch_payment_events_event_hash_key","table":"merch_payment_events","schema":"public","definition":"CREATE UNIQUE INDEX merch_payment_events_event_hash_key ON public.merch_payment_events USING btree (event_hash)"}
+{"kind":"index","name":"merch_payment_events_order_received_idx","table":"merch_payment_events","schema":"public","definition":"CREATE INDEX merch_payment_events_order_received_idx ON public.merch_payment_events USING btree (order_id, received_at DESC)"}
+{"kind":"index","name":"merch_payment_events_pkey","table":"merch_payment_events","schema":"public","definition":"CREATE UNIQUE INDEX merch_payment_events_pkey ON public.merch_payment_events USING btree (id)"}
+{"kind":"index","name":"merch_print_inventory_design_id_warehouse_id_key","table":"merch_print_inventory","schema":"public","definition":"CREATE UNIQUE INDEX merch_print_inventory_design_id_warehouse_id_key ON public.merch_print_inventory USING btree (design_id, warehouse_id)"}
+{"kind":"index","name":"merch_print_inventory_design_idx","table":"merch_print_inventory","schema":"public","definition":"CREATE INDEX merch_print_inventory_design_idx ON public.merch_print_inventory USING btree (design_id)"}
+{"kind":"index","name":"merch_print_inventory_pkey","table":"merch_print_inventory","schema":"public","definition":"CREATE UNIQUE INDEX merch_print_inventory_pkey ON public.merch_print_inventory USING btree (id)"}
+{"kind":"index","name":"merch_print_inventory_warehouse_idx","table":"merch_print_inventory","schema":"public","definition":"CREATE INDEX merch_print_inventory_warehouse_idx ON public.merch_print_inventory USING btree (warehouse_id)"}
+{"kind":"index","name":"merch_product_categories_name_key","table":"merch_product_categories","schema":"public","definition":"CREATE UNIQUE INDEX merch_product_categories_name_key ON public.merch_product_categories USING btree (name)"}
+{"kind":"index","name":"merch_product_categories_pkey","table":"merch_product_categories","schema":"public","definition":"CREATE UNIQUE INDEX merch_product_categories_pkey ON public.merch_product_categories USING btree (id)"}
+{"kind":"index","name":"merch_product_categories_slug_key","table":"merch_product_categories","schema":"public","definition":"CREATE UNIQUE INDEX merch_product_categories_slug_key ON public.merch_product_categories USING btree (slug)"}
+{"kind":"index","name":"idx_merch_products_blank_combo","table":"merch_products","schema":"public","definition":"CREATE UNIQUE INDEX idx_merch_products_blank_combo ON public.merch_products USING btree (category_id, fabric_id, color_id, size_id) WHERE (is_blank = true)"}
+{"kind":"index","name":"idx_merch_products_finished_combo","table":"merch_products","schema":"public","definition":"CREATE INDEX idx_merch_products_finished_combo ON public.merch_products USING btree (category_id, fabric_id, color_id, size_id, design_id, decoration_type_id) WHERE (is_blank = false)"}
+{"kind":"index","name":"merch_products_legacy_skus_gin","table":"merch_products","schema":"public","definition":"CREATE INDEX merch_products_legacy_skus_gin ON public.merch_products USING gin (legacy_skus)"}
+{"kind":"index","name":"merch_products_ozon_sku_key","table":"merch_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_products_ozon_sku_key ON public.merch_products USING btree (ozon_sku) WHERE (ozon_sku IS NOT NULL)"}
+{"kind":"index","name":"merch_products_pkey","table":"merch_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_products_pkey ON public.merch_products USING btree (id)"}
+{"kind":"index","name":"merch_products_sku_key","table":"merch_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_products_sku_key ON public.merch_products USING btree (sku)"}
+{"kind":"index","name":"merch_promo_codes_active_window_idx","table":"merch_promo_codes","schema":"public","definition":"CREATE INDEX merch_promo_codes_active_window_idx ON public.merch_promo_codes USING btree (is_active, starts_at, ends_at)"}
+{"kind":"index","name":"merch_promo_codes_code_normalized_idx","table":"merch_promo_codes","schema":"public","definition":"CREATE UNIQUE INDEX merch_promo_codes_code_normalized_idx ON public.merch_promo_codes USING btree (code_normalized)"}
+{"kind":"index","name":"merch_promo_codes_pkey","table":"merch_promo_codes","schema":"public","definition":"CREATE UNIQUE INDEX merch_promo_codes_pkey ON public.merch_promo_codes USING btree (id)"}
+{"kind":"index","name":"merch_promo_redemptions_order_idx","table":"merch_promo_redemptions","schema":"public","definition":"CREATE UNIQUE INDEX merch_promo_redemptions_order_idx ON public.merch_promo_redemptions USING btree (order_id)"}
+{"kind":"index","name":"merch_promo_redemptions_phone_idx","table":"merch_promo_redemptions","schema":"public","definition":"CREATE INDEX merch_promo_redemptions_phone_idx ON public.merch_promo_redemptions USING btree (promo_code_id, customer_phone_hash, status)"}
+{"kind":"index","name":"merch_promo_redemptions_pkey","table":"merch_promo_redemptions","schema":"public","definition":"CREATE UNIQUE INDEX merch_promo_redemptions_pkey ON public.merch_promo_redemptions USING btree (id)"}
+{"kind":"index","name":"merch_promo_redemptions_promo_status_idx","table":"merch_promo_redemptions","schema":"public","definition":"CREATE INDEX merch_promo_redemptions_promo_status_idx ON public.merch_promo_redemptions USING btree (promo_code_id, status, created_at DESC)"}
+{"kind":"index","name":"merch_promo_redemptions_request_promo_idx","table":"merch_promo_redemptions","schema":"public","definition":"CREATE UNIQUE INDEX merch_promo_redemptions_request_promo_idx ON public.merch_promo_redemptions USING btree (client_request_id, promo_code_id)"}
+{"kind":"index","name":"merch_sizes_name_key","table":"merch_sizes","schema":"public","definition":"CREATE UNIQUE INDEX merch_sizes_name_key ON public.merch_sizes USING btree (name)"}
+{"kind":"index","name":"merch_sizes_pkey","table":"merch_sizes","schema":"public","definition":"CREATE UNIQUE INDEX merch_sizes_pkey ON public.merch_sizes USING btree (id)"}
+{"kind":"index","name":"merch_storefront_products_active_sort_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_active_sort_idx ON public.merch_storefront_products USING btree (is_active, sort_order)"}
+{"kind":"index","name":"merch_storefront_products_badges_gin_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_badges_gin_idx ON public.merch_storefront_products USING gin (badges)"}
+{"kind":"index","name":"merch_storefront_products_catalog_filters_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_catalog_filters_idx ON public.merch_storefront_products USING btree (category_slug, product_type_slug, decoration_slug, color_slug, title_slug, anime_slug)"}
+{"kind":"index","name":"merch_storefront_products_design_key_key","table":"merch_storefront_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_storefront_products_design_key_key ON public.merch_storefront_products USING btree (design_key)"}
+{"kind":"index","name":"merch_storefront_products_offers_gin_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_offers_gin_idx ON public.merch_storefront_products USING gin (offers)"}
+{"kind":"index","name":"merch_storefront_products_pkey","table":"merch_storefront_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_storefront_products_pkey ON public.merch_storefront_products USING btree (id)"}
+{"kind":"index","name":"merch_storefront_products_sizes_gin_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_sizes_gin_idx ON public.merch_storefront_products USING gin (sizes)"}
+{"kind":"index","name":"merch_storefront_products_slug_key","table":"merch_storefront_products","schema":"public","definition":"CREATE UNIQUE INDEX merch_storefront_products_slug_key ON public.merch_storefront_products USING btree (slug)"}
+{"kind":"index","name":"merch_storefront_products_source_payload_gin_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_source_payload_gin_idx ON public.merch_storefront_products USING gin (source_payload)"}
+{"kind":"index","name":"merch_storefront_products_tags_gin_idx","table":"merch_storefront_products","schema":"public","definition":"CREATE INDEX merch_storefront_products_tags_gin_idx ON public.merch_storefront_products USING gin (tags)"}
+{"kind":"index","name":"idx_transactions_date","table":"merch_transactions","schema":"public","definition":"CREATE INDEX idx_transactions_date ON public.merch_transactions USING btree (occurred_at DESC)"}
+{"kind":"index","name":"idx_transactions_product","table":"merch_transactions","schema":"public","definition":"CREATE INDEX idx_transactions_product ON public.merch_transactions USING btree (product_id)"}
+{"kind":"index","name":"merch_transactions_pkey","table":"merch_transactions","schema":"public","definition":"CREATE UNIQUE INDEX merch_transactions_pkey ON public.merch_transactions USING btree (id)"}
+{"kind":"index","name":"merch_warehouses_pkey","table":"merch_warehouses","schema":"public","definition":"CREATE UNIQUE INDEX merch_warehouses_pkey ON public.merch_warehouses USING btree (id)"}
+{"kind":"index","name":"idx_workshop_items_order","table":"merch_workshop_order_items","schema":"public","definition":"CREATE INDEX idx_workshop_items_order ON public.merch_workshop_order_items USING btree (order_id)"}
+{"kind":"index","name":"merch_workshop_order_items_pkey","table":"merch_workshop_order_items","schema":"public","definition":"CREATE UNIQUE INDEX merch_workshop_order_items_pkey ON public.merch_workshop_order_items USING btree (id)"}
+{"kind":"index","name":"merch_workshop_orders_order_number_key","table":"merch_workshop_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_workshop_orders_order_number_key ON public.merch_workshop_orders USING btree (order_number)"}
+{"kind":"index","name":"merch_workshop_orders_pkey","table":"merch_workshop_orders","schema":"public","definition":"CREATE UNIQUE INDEX merch_workshop_orders_pkey ON public.merch_workshop_orders USING btree (id)"}
+{"kind":"policy","name":"No direct storefront access to CDEK events","roles":["anon","authenticated"],"table":"merch_cdek_events","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to CDEK shipments","roles":["anon","authenticated"],"table":"merch_cdek_shipments","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_colors","roles":["anon"],"table":"merch_colors","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_colors","roles":["authenticated"],"table":"merch_colors","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to customer order items","roles":["anon","authenticated"],"table":"merch_customer_order_items","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to customer orders","roles":["anon","authenticated"],"table":"merch_customer_orders","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_decoration_types","roles":["anon"],"table":"merch_decoration_types","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_decoration_types","roles":["authenticated"],"table":"merch_decoration_types","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_designs","roles":["anon"],"table":"merch_designs","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_designs","roles":["authenticated"],"table":"merch_designs","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"expense_categories_all","roles":["public"],"table":"merch_expense_categories","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"expenses_all","roles":["public"],"table":"merch_expenses","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_fabric_types","roles":["anon"],"table":"merch_fabric_types","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_fabric_types","roles":["authenticated"],"table":"merch_fabric_types","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_inventory","roles":["anon"],"table":"merch_inventory","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_inventory","roles":["authenticated"],"table":"merch_inventory","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"ozon_finance_ops_all","roles":["public"],"table":"merch_ozon_finance_operations","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"ozon_import_items_all","roles":["public"],"table":"merch_ozon_import_items","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"ozon_import_runs_all","roles":["public"],"table":"merch_ozon_import_runs","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"ozon_order_items_all","roles":["public"],"table":"merch_ozon_order_items","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"ozon_orders_all","roles":["public"],"table":"merch_ozon_orders","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to payment attempts","roles":["anon","authenticated"],"table":"merch_payment_attempts","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to payment events","roles":["anon","authenticated"],"table":"merch_payment_events","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"print_inventory_all","roles":["public"],"table":"merch_print_inventory","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_product_categories","roles":["anon"],"table":"merch_product_categories","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_product_categories","roles":["authenticated"],"table":"merch_product_categories","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_products","roles":["anon"],"table":"merch_products","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_products","roles":["authenticated"],"table":"merch_products","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to promo codes","roles":["anon","authenticated"],"table":"merch_promo_codes","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"No direct storefront access to promo redemptions","roles":["anon","authenticated"],"table":"merch_promo_redemptions","using":"false","schema":"public","command":"ALL","withCheck":"false","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_sizes","roles":["anon"],"table":"merch_sizes","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_sizes","roles":["authenticated"],"table":"merch_sizes","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"Public storefront products are readable","roles":["anon","authenticated"],"table":"merch_storefront_products","using":"(is_active = true)","schema":"public","command":"SELECT","withCheck":null,"permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_transactions","roles":["anon"],"table":"merch_transactions","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_transactions","roles":["authenticated"],"table":"merch_transactions","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_warehouses","roles":["anon"],"table":"merch_warehouses","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_warehouses","roles":["authenticated"],"table":"merch_warehouses","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_workshop_order_items","roles":["anon"],"table":"merch_workshop_order_items","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_workshop_order_items","roles":["authenticated"],"table":"merch_workshop_order_items","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"anon_all_merch_workshop_orders","roles":["anon"],"table":"merch_workshop_orders","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"policy","name":"authenticated_all_merch_workshop_orders","roles":["authenticated"],"table":"merch_workshop_orders","using":"true","schema":"public","command":"ALL","withCheck":"true","permissive":"PERMISSIVE"}
+{"kind":"table","name":"merch_cdek_events","table":"merch_cdek_events","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_cdek_shipments","table":"merch_cdek_shipments","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_colors","table":"merch_colors","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_customer_order_items","table":"merch_customer_order_items","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_customer_orders","table":"merch_customer_orders","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_decoration_types","table":"merch_decoration_types","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_designs","table":"merch_designs","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_expense_categories","table":"merch_expense_categories","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_expenses","table":"merch_expenses","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_fabric_types","table":"merch_fabric_types","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_inventory","table":"merch_inventory","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_ozon_finance_operations","table":"merch_ozon_finance_operations","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_ozon_import_items","table":"merch_ozon_import_items","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_ozon_import_runs","table":"merch_ozon_import_runs","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_ozon_order_items","table":"merch_ozon_order_items","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_ozon_orders","table":"merch_ozon_orders","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_payment_attempts","table":"merch_payment_attempts","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_payment_events","table":"merch_payment_events","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_print_inventory","table":"merch_print_inventory","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_product_categories","table":"merch_product_categories","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_products","table":"merch_products","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_products_backup_20260622","table":"merch_products_backup_20260622","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_products_backup_v2","table":"merch_products_backup_v2","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_promo_codes","table":"merch_promo_codes","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_promo_redemptions","table":"merch_promo_redemptions","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_sizes","table":"merch_sizes","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_storefront_products","table":"merch_storefront_products","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_transactions","table":"merch_transactions","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_warehouses","table":"merch_warehouses","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_workshop_order_items","table":"merch_workshop_order_items","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"table","name":"merch_workshop_orders","table":"merch_workshop_orders","schema":"public","relkind":"r","rowLevelSecurity":true,"forceRowLevelSecurity":false}
+{"kind":"trigger","name":"merch_cdek_shipments_set_updated_at","table":"merch_cdek_shipments","schema":"public","definition":"CREATE TRIGGER merch_cdek_shipments_set_updated_at BEFORE UPDATE ON merch_cdek_shipments FOR EACH ROW EXECUTE FUNCTION private.merch_set_updated_at()"}
+{"kind":"trigger","name":"merch_customer_orders_set_updated_at","table":"merch_customer_orders","schema":"public","definition":"CREATE TRIGGER merch_customer_orders_set_updated_at BEFORE UPDATE ON merch_customer_orders FOR EACH ROW EXECUTE FUNCTION private.merch_set_updated_at()"}
+{"kind":"trigger","name":"trg_inventory_updated_at","table":"merch_inventory","schema":"public","definition":"CREATE TRIGGER trg_inventory_updated_at BEFORE UPDATE ON merch_inventory FOR EACH ROW EXECUTE FUNCTION update_inventory_timestamp()"}
+{"kind":"trigger","name":"merch_payment_attempts_set_updated_at","table":"merch_payment_attempts","schema":"public","definition":"CREATE TRIGGER merch_payment_attempts_set_updated_at BEFORE UPDATE ON merch_payment_attempts FOR EACH ROW EXECUTE FUNCTION private.merch_set_updated_at()"}
+{"kind":"trigger","name":"merch_promo_codes_set_updated_at","table":"merch_promo_codes","schema":"public","definition":"CREATE TRIGGER merch_promo_codes_set_updated_at BEFORE UPDATE ON merch_promo_codes FOR EACH ROW EXECUTE FUNCTION private.merch_set_updated_at()"}
+{"kind":"trigger","name":"merch_promo_redemptions_set_updated_at","table":"merch_promo_redemptions","schema":"public","definition":"CREATE TRIGGER merch_promo_redemptions_set_updated_at BEFORE UPDATE ON merch_promo_redemptions FOR EACH ROW EXECUTE FUNCTION private.merch_set_updated_at()"}
+{"kind":"trigger","name":"storefront_products_redeploy","table":"merch_storefront_products","schema":"public","definition":"CREATE TRIGGER storefront_products_redeploy AFTER INSERT OR DELETE OR UPDATE ON merch_storefront_products FOR EACH STATEMENT EXECUTE FUNCTION notify_vercel_storefront_changed()"}

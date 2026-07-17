@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  echo "Usage: getomerch-db-healthcheck ENV_FILE EXPECTED_DATABASE EXPECTED_VERSION" >&2
+}
+
+ENV_FILE="${1:-}"
+EXPECTED_DATABASE="${2:-}"
+EXPECTED_VERSION="${3:-}"
+
+[[ -r "$ENV_FILE" && "$EXPECTED_DATABASE" =~ ^getomerch_[a-z0-9_]+$ ]] || {
+  usage
+  exit 2
+}
+[[ "$EXPECTED_VERSION" == "none" || "$EXPECTED_VERSION" =~ ^[0-9]{4,}$ ]] || {
+  usage
+  exit 2
+}
+
+set -a
+# The accepted files are root-managed and contain simple KEY=value entries.
+source "$ENV_FILE"
+set +a
+
+[[ -n "${GETOMERCH_DATABASE_URL:-}" ]] || {
+  echo "ERROR: GETOMERCH_DATABASE_URL is missing" >&2
+  exit 1
+}
+for variable in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGAPPNAME PGSSLMODE; do
+  [[ -n "${!variable:-}" ]] || {
+    echo "ERROR: $variable is missing" >&2
+    exit 1
+  }
+done
+
+export PGCONNECT_TIMEOUT="${GETOMERCH_DATABASE_CONNECT_TIMEOUT_SECONDS:-10}"
+
+IFS='|' read -r actual_database actual_role select_one < <(
+  psql -X -v ON_ERROR_STOP=1 -AtF '|' -c \
+    "select current_database(), current_user, 1"
+)
+
+[[ "$actual_database" == "$EXPECTED_DATABASE" ]] || {
+  echo "ERROR: connected to $actual_database instead of $EXPECTED_DATABASE" >&2
+  exit 1
+}
+[[ "$select_one" == "1" ]] || {
+  echo "ERROR: SELECT 1 failed" >&2
+  exit 1
+}
+
+ledger="$(psql -X -v ON_ERROR_STOP=1 -Atc \
+  "select to_regclass('getomerch_meta.schema_migrations')")"
+if [[ -z "$ledger" ]]; then
+  actual_version="none"
+else
+  actual_version="$(psql -X -v ON_ERROR_STOP=1 -Atc \
+    "select coalesce(max(version), 'none') from getomerch_meta.schema_migrations")"
+fi
+
+[[ "$actual_version" == "$EXPECTED_VERSION" ]] || {
+  echo "ERROR: migration version is $actual_version, expected $EXPECTED_VERSION" >&2
+  exit 1
+}
+
+printf 'database=%s role=%s select_1=ok migration_version=%s\n' \
+  "$actual_database" "$actual_role" "$actual_version"

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
+import { getDatabaseRuntimeConfig } from "@/lib/db/config";
+import { enqueueOzonJob } from "@/lib/jobs/http";
 
 // Server-side route — keeps OZON keys hidden from the browser
 
@@ -51,8 +53,25 @@ async function fetchAllOzonPrices(): Promise<Record<string, OzonPriceItem["price
   return map;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    if (getDatabaseRuntimeConfig().writeSource === "server") {
+      const dryRun = parseBoolean(new URL(request.url).searchParams.get("dryRun"));
+      const queued = await enqueueOzonJob(request, {
+        type: "ozon_prices_sync",
+        dedupeKey: `prices:${dryRun ? "dry" : "apply"}`,
+        payload: { dryRun },
+        maxAttempts: 4,
+      });
+      return NextResponse.json({
+        ok: true,
+        queued: true,
+        reused: queued.reused,
+        jobId: queued.job.id,
+        status: queued.job.status,
+      }, { status: 202 });
+    }
+
     await requireAdminSession();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
@@ -107,4 +126,11 @@ export async function POST() {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+function parseBoolean(value: string | null) {
+  if (value == null || value === "") return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AdminApiError(400, "bad_request", "dryRun must be true or false");
 }

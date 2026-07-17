@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+ENV_FILE="${GETOMERCH_ADMIN_ENV_FILE:-/etc/getomerch/admin-production.env}"
+SERVICE_UNIT="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+LOCK_FILE="${GETOMERCH_MAINTENANCE_LOCK_FILE:-/run/lock/getomerch-maintenance.lock}"
+COMMAND="${1:-status}"
+REASON="${2:-Перенос рабочей базы данных}"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+read_mode() {
+  python3 - "$ENV_FILE" <<'PY'
+import sys
+from pathlib import Path
+
+value = "off"
+for raw in Path(sys.argv[1]).read_text().splitlines():
+    if raw.startswith("GETOMERCH_MAINTENANCE_MODE="):
+        value = raw.split("=", 1)[1].strip().strip("'\"") or "off"
+print(value)
+PY
+}
+
+write_mode() {
+  local mode="$1"
+  local reason="$2"
+  [[ "$mode" == "off" || "$mode" == "read_only" ]] || fail "invalid maintenance mode"
+  [[ "$reason" != *$'\n'* && ${#reason} -le 240 ]] || fail "invalid maintenance reason"
+
+  cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+  python3 - "$ENV_FILE" "$mode" "$reason" <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+mode = sys.argv[2]
+reason = sys.argv[3]
+lines = [
+    line for line in path.read_text().splitlines()
+    if not line.startswith(("GETOMERCH_MAINTENANCE_MODE=", "GETOMERCH_MAINTENANCE_REASON="))
+]
+lines.append(f"GETOMERCH_MAINTENANCE_MODE={mode}")
+if mode == "read_only":
+    lines.append(f"GETOMERCH_MAINTENANCE_REASON={reason}")
+
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    with os.fdopen(fd, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.chown(temporary, 0, 0)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+wait_for_service() {
+  for _attempt in $(seq 1 45); do
+    if systemctl is-active --quiet "$SERVICE_UNIT" && \
+       curl -fsS --max-time 3 http://127.0.0.1:3100/login >/dev/null; then
+      return
+    fi
+    sleep 1
+  done
+  fail "$SERVICE_UNIT did not become ready"
+}
+
+verify_mode() {
+  local expected="$1"
+  local status
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+    -X POST http://127.0.0.1:3100/api/ozon/sync-orders)"
+  if [[ "$expected" == "read_only" ]]; then
+    [[ "$status" == 503 ]] || fail "maintenance write probe returned HTTP $status, expected 503"
+  else
+    [[ "$status" == 401 ]] || fail "normal write probe returned HTTP $status, expected 401"
+  fi
+}
+
+show_status() {
+  local mode
+  mode="$(read_mode)"
+  printf 'mode=%s\n' "$mode"
+  printf 'service=%s\n' "$(systemctl is-active "$SERVICE_UNIT" 2>/dev/null || true)"
+  if systemctl is-active --quiet "$SERVICE_UNIT"; then
+    verify_mode "$mode"
+    printf 'write_probe=ok\n'
+  else
+    printf 'write_probe=skipped\n'
+  fi
+}
+
+[[ -s "$ENV_FILE" ]] || fail "missing admin env: $ENV_FILE"
+[[ "$(stat -c '%a:%U:%G' "$ENV_FILE")" == "600:root:root" ]] || fail "unsafe admin env permissions"
+exec 9>"$LOCK_FILE"
+flock -n 9 || fail "another maintenance transition is running"
+
+case "$COMMAND" in
+  enable)
+    write_mode read_only "$REASON"
+    systemctl restart "$SERVICE_UNIT"
+    wait_for_service
+    verify_mode read_only
+    echo "maintenance=read_only"
+    ;;
+  disable)
+    write_mode off ""
+    systemctl restart "$SERVICE_UNIT"
+    wait_for_service
+    verify_mode off
+    echo "maintenance=off"
+    ;;
+  status)
+    show_status
+    ;;
+  *)
+    fail "usage: $0 {enable [reason]|disable|status}"
+    ;;
+esac

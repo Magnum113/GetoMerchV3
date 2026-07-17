@@ -1,0 +1,26 @@
+[Unit]
+Description=GetoMerch background worker rehearsal
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getomerch
+Group=getomerch
+WorkingDirectory=/opt/getomerch/rehearsals/current
+EnvironmentFile=/etc/getomerch/admin-production.env
+EnvironmentFile=/etc/getomerch/database-rehearsal.env
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--conditions=react-server
+Environment=GETOMERCH_DATABASE_POOL_MAX=2
+Environment=GETOMERCH_DATABASE_APPLICATION_NAME=getomerch-worker-rehearsal
+ExecStart=/usr/bin/npm run worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077

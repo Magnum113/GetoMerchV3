@@ -20,6 +20,8 @@ import type {
   ExpenseCategory,
   InventoryMatrix,
 } from "@/lib/types";
+import type { BackgroundJob } from "@/lib/jobs/types";
+import type { OzonImportApplyResult, OzonImportPreview } from "@/lib/ozon-import";
 
 type ApiResponse<T> =
   | { ok: true; data: T }
@@ -54,9 +56,14 @@ type DesignProductCount = {
 const ADMIN_REQUEST_TIMEOUT_MS = 30_000;
 
 async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
+  const idempotencyKey = crypto.randomUUID();
   const response = await adminFetch("/api/admin/rpc", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": idempotencyKey,
+      "X-Request-Id": crypto.randomUUID(),
+    },
     body: JSON.stringify({ action, args }),
   });
 
@@ -180,6 +187,53 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   return payload as T;
 }
 
+type QueuedJobResponse = {
+  queued: true;
+  jobId: string;
+  status: string;
+  reused?: boolean;
+};
+
+async function startAndWaitForJob<T>(
+  input: string,
+  init: RequestInit = {},
+): Promise<{ result: T; queued: boolean }> {
+  const idempotencyKey = crypto.randomUUID();
+  const response = await requestJson<T | QueuedJobResponse>(input, {
+    ...init,
+    headers: {
+      ...(init.headers ?? {}),
+      "X-Idempotency-Key": idempotencyKey,
+      "X-Request-Id": crypto.randomUUID(),
+    },
+  });
+  if (!isQueuedJobResponse(response)) return { result: response as T, queued: false };
+  return { result: await waitForJobResult<T>(response.jobId), queued: true };
+}
+
+async function waitForJobResult<T>(jobId: string): Promise<T> {
+  const deadline = Date.now() + 20 * 60_000;
+  while (Date.now() < deadline) {
+    const job = await adminGet<BackgroundJob>(`/api/admin/jobs/${jobId}`);
+    if (job.status === "succeeded") return job.result as T;
+    if (job.status === "failed") {
+      throw new Error(job.errorMessage || `Фоновое задание завершилось с ошибкой (${job.errorCode ?? "unknown"}).`);
+    }
+    if (job.status === "cancelled") throw new Error("Фоновое задание отменено.");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("Фоновое задание выполняется дольше 20 минут. Его состояние сохранено на сервере.");
+}
+
+function isQueuedJobResponse(value: unknown): value is QueuedJobResponse {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && (value as { queued?: unknown }).queued === true
+      && typeof (value as { jobId?: unknown }).jobId === "string",
+  );
+}
+
 async function readJson<T>(response: Response): Promise<T | null> {
   const text = await response.text();
   if (!text) return null;
@@ -200,6 +254,8 @@ function apiError<T>(response: Response, payload: ApiResponse<T> | null) {
         ? "Нужно заново войти в админку."
         : response.status === 403
           ? "Недостаточно прав для действия."
+          : response.status === 503
+            ? "Админка временно работает только для чтения. Повторите действие после завершения обслуживания."
           : response.status === 409
             ? "Конфликт данных. Обновите страницу и повторите действие."
             : response.status === 422
@@ -351,21 +407,56 @@ export const api = {
     if (opts.scope) params.set("scope", opts.scope);
     if (opts.days != null) params.set("days", String(opts.days));
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 70_000);
-    try {
-      return await requestJson(`/api/ozon/sync-orders?${params.toString()}`, {
+    const response = await startAndWaitForJob<{
+      scope: "active" | "all";
+      created: number;
+      updated: number;
+      fetched: number;
+      unmatchedItems: number;
+      unmatchedSamples: string[];
+      failedOrders?: number;
+      failedOrderSamples?: string[];
+      failedItemOrders?: number;
+      durationMs?: number;
+    }>(`/api/ozon/sync-orders?${params.toString()}`, { method: "POST" });
+    return response.result;
+  },
+
+  async syncOzonPrices() {
+    const response = await startAndWaitForJob<{
+      total: number;
+      updated: number;
+      unchanged: number;
+      notFound: number;
+      notFoundSamples: string[];
+    }>("/api/ozon/sync-prices", { method: "POST" });
+    return response.result;
+  },
+
+  async createOzonImportPreview() {
+    const response = await startAndWaitForJob<OzonImportPreview | { runId: string }>(
+      "/api/ozon/import/preview",
+      { method: "POST" },
+    );
+    if (!response.queued) return response.result as OzonImportPreview;
+    const runId = (response.result as { runId?: unknown }).runId;
+    if (typeof runId !== "string") throw new Error("Фоновый импорт не вернул runId.");
+    return adminGet<OzonImportPreview>(`/api/admin/import/ozon/runs/${runId}`);
+  },
+
+  async applyOzonImport(
+    runId: string,
+    designOverrides: Record<string, { name?: string; imageUrl?: string | null }>,
+  ) {
+    const response = await startAndWaitForJob<OzonImportApplyResult>(
+      "/api/ozon/import/apply",
+      {
         method: "POST",
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("Синхронизация заказов не ответила за 70 секунд. Попробуйте ещё раз или проверьте логи.");
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId, designOverrides }),
+      },
+    );
+    return response.result;
   },
 
   // ---------- DESIGNS CRUD ----------
@@ -427,10 +518,10 @@ export const api = {
     const params = new URLSearchParams();
     if (opts.from) params.set("from", opts.from);
     if (opts.to) params.set("to", opts.to);
-    return requestJson<{ fetched: number; created: number; updated: number; from: string; to: string }>(
+    return startAndWaitForJob<{ fetched: number; created: number; updated: number; from: string; to: string }>(
       `/api/ozon/sync-finance?${params.toString()}`,
       { method: "POST" },
-    );
+    ).then((response) => response.result);
   },
 };
 

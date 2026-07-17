@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+MODE="${1:-}"
+TABLES_FILE="${2:-}"
+OUTPUT_DIR="${3:-}"
+REST_EXPORT_BIN="${GETOMERCH_REST_EXPORT_BIN:-/usr/local/lib/getomerch/getomerch-rest-export.mjs}"
+SCHEMA_PRE_FILE="${GETOMERCH_SCHEMA_PRE_FILE:-/usr/local/share/getomerch/working-schema-pre.sql}"
+SCHEMA_POST_FILE="${GETOMERCH_SCHEMA_POST_FILE:-/usr/local/share/getomerch/working-schema-post.sql}"
+POLICIES_FILE="${GETOMERCH_POLICIES_FILE:-/usr/local/share/getomerch/working-policies.csv}"
+FORENSIC_CATALOG_FILE="${GETOMERCH_FORENSIC_CATALOG_FILE:-/usr/local/share/getomerch/supabase-public-catalog.jsonl}"
+DATA_FINGERPRINT_BIN="${GETOMERCH_DATA_FINGERPRINT_BIN:-/usr/local/lib/getomerch/getomerch-data-fingerprint.py}"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+[[ "$MODE" == "working" || "$MODE" == "forensic" ]] || \
+  fail "usage: getomerch-logical-export working|forensic TABLES_FILE OUTPUT_DIR"
+[[ -r "$TABLES_FILE" ]] || fail "table list is not readable: $TABLES_FILE"
+[[ -x "$REST_EXPORT_BIN" ]] || fail "REST export helper is missing: $REST_EXPORT_BIN"
+[[ -n "$OUTPUT_DIR" && "$OUTPUT_DIR" != *"'"* && "$OUTPUT_DIR" != *$'\n'* ]] || \
+  fail "unsafe output directory"
+
+install -d -m 0700 "$OUTPUT_DIR"
+node "$REST_EXPORT_BIN" "$MODE" "$TABLES_FILE" "$OUTPUT_DIR"
+cp "$TABLES_FILE" "$OUTPUT_DIR/tables.txt"
+
+if [[ "$MODE" == "working" ]]; then
+  [[ -s "$SCHEMA_PRE_FILE" && -s "$SCHEMA_POST_FILE" ]] || \
+    fail "working schema snapshot is missing"
+  cp "$SCHEMA_PRE_FILE" "$OUTPUT_DIR/schema-pre.sql"
+  cp "$SCHEMA_POST_FILE" "$OUTPUT_DIR/schema-post.sql"
+  cat "$OUTPUT_DIR/schema-pre.sql" "$OUTPUT_DIR/schema-post.sql" > "$OUTPUT_DIR/schema.sql"
+  if [[ -s "$POLICIES_FILE" ]]; then
+    cp "$POLICIES_FILE" "$OUTPUT_DIR/policies.tsv"
+  else
+    : > "$OUTPUT_DIR/policies.tsv"
+  fi
+  [[ -r "$DATA_FINGERPRINT_BIN" ]] || \
+    fail "data fingerprint helper is missing: $DATA_FINGERPRINT_BIN"
+  python3 "$DATA_FINGERPRINT_BIN" fingerprint \
+    "$TABLES_FILE" "$OUTPUT_DIR/rows.ndjson" "$OUTPUT_DIR/source-fingerprint.json"
+elif [[ -s "$FORENSIC_CATALOG_FILE" ]]; then
+  cp "$FORENSIC_CATALOG_FILE" "$OUTPUT_DIR/catalog.jsonl"
+fi
+
+tar -C "$OUTPUT_DIR" -czf "$OUTPUT_DIR.tmp.tar.gz" .
+mv "$OUTPUT_DIR.tmp.tar.gz" "$OUTPUT_DIR/export.tar.gz"

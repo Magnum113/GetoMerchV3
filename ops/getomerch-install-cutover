@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+REPO_ROOT="${GETOMERCH_INSTALL_SOURCE:-$(cd "$(dirname "$0")/.." && pwd)}"
+CONFIG_FILE=/etc/getomerch/cutover.env
+DATABASE_BUNDLE=/usr/local/lib/getomerch/database
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+for path in \
+  "$REPO_ROOT/ops/getomerch-maintenance" \
+  "$REPO_ROOT/ops/getomerch-cutover" \
+  "$REPO_ROOT/ops/getomerch-data-rehearsal" \
+  "$REPO_ROOT/ops/getomerch-database-backup" \
+  "$REPO_ROOT/ops/getomerch-database-restore-drill" \
+  "$REPO_ROOT/ops/systemd/getomerch-worker.service" \
+  "$REPO_ROOT/ops/systemd/getomerch-database-backup.service" \
+  "$REPO_ROOT/ops/systemd/getomerch-database-backup.timer" \
+  "$REPO_ROOT/ops/getomerch-cutover.env.example"; do
+  [[ -s "$path" ]] || fail "missing installation artifact: $path"
+done
+
+for script in \
+  getomerch-maintenance \
+  getomerch-cutover \
+  getomerch-data-rehearsal \
+  getomerch-database-backup \
+  getomerch-database-restore-drill; do
+  install -o root -g root -m 0755 "$REPO_ROOT/ops/$script" "/usr/local/sbin/$script"
+done
+
+install -o root -g root -m 0644 \
+  "$REPO_ROOT/ops/systemd/getomerch-worker.service" \
+  /etc/systemd/system/getomerch-worker.service
+install -o root -g root -m 0644 \
+  "$REPO_ROOT/ops/systemd/getomerch-database-backup.service" \
+  /etc/systemd/system/getomerch-database-backup.service
+install -o root -g root -m 0644 \
+  "$REPO_ROOT/ops/systemd/getomerch-database-backup.timer" \
+  /etc/systemd/system/getomerch-database-backup.timer
+
+if [[ ! -s "$CONFIG_FILE" ]]; then
+  install -o root -g root -m 0600 "$REPO_ROOT/ops/getomerch-cutover.env.example" "$CONFIG_FILE"
+fi
+
+install -d -o root -g root -m 0755 "$DATABASE_BUNDLE"
+rsync -a --delete --exclude node_modules "$REPO_ROOT/db/" "$DATABASE_BUNDLE/db/"
+if [[ -d /opt/getomerch/current/node_modules ]]; then
+  ln -sfn /opt/getomerch/current/node_modules "$DATABASE_BUNDLE/node_modules"
+fi
+
+systemctl daemon-reload
+systemctl disable --now getomerch-worker.service >/dev/null 2>&1 || true
+systemctl disable --now getomerch-database-backup.timer >/dev/null 2>&1 || true
+systemd-analyze verify \
+  /etc/systemd/system/getomerch-worker.service \
+  /etc/systemd/system/getomerch-database-backup.service \
+  /etc/systemd/system/getomerch-database-backup.timer
+
+echo "cutover_artifacts=installed"
+echo "worker=disabled"
+echo "database_backup_timer=disabled"

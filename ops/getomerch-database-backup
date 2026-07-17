@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+BACKUP_ROOT="${GETOMERCH_DATABASE_BACKUP_ROOT:-/var/backups/getomerch/database}"
+KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
+DATABASE_ENV="${GETOMERCH_DATABASE_BACKUP_ENV:-/etc/getomerch/database-backup.env}"
+EXTERNAL_ENV="${GETOMERCH_BACKUP_EXTERNAL_ENV_FILE:-/etc/komui/yandex-backup.env}"
+STATE_FILE="${GETOMERCH_DATABASE_BACKUP_STATE:-/var/lib/getomerch/database-backup-latest.json}"
+REQUIRE_OFFSITE="${GETOMERCH_DATABASE_BACKUP_REQUIRE_OFFSITE:-true}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+HOUR_DIR="$BACKUP_ROOT/hourly"
+DAILY_DIR="$BACKUP_ROOT/daily"
+WEEKLY_DIR="$BACKUP_ROOT/weekly"
+MONTHLY_DIR="$BACKUP_ROOT/monthly"
+LOG_DIR="$BACKUP_ROOT/logs"
+TMP_DIR="$(mktemp -d /var/tmp/getomerch-database-backup-${RUN_ID}.XXXXXX)"
+LOG_FILE="$LOG_DIR/getomerch-database-backup-${RUN_ID}.log"
+PLAIN_ARCHIVE="$TMP_DIR/getomerch-database-backup-${RUN_ID}.tar.gz"
+FINAL_ARCHIVE="$HOUR_DIR/getomerch-database-backup-${RUN_ID}.tar.gz.gpg"
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+alert() {
+  if command -v /usr/local/sbin/komui-alert >/dev/null 2>&1; then
+    /usr/local/sbin/komui-alert "$1" "$2" || true
+  fi
+}
+
+on_error() {
+  local rc="$1"
+  local line="$2"
+  trap - ERR
+  alert "GetoMerch database backup failure" \
+    "Local database backup failed at line $line with exit code $rc. Log: $LOG_FILE"
+  exit "$rc"
+}
+trap 'on_error "$?" "$LINENO"' ERR
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in gpg pg_dump psql python3 sha256sum tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ "$REQUIRE_OFFSITE" == true || "$REQUIRE_OFFSITE" == false ]] || \
+  fail "GETOMERCH_DATABASE_BACKUP_REQUIRE_OFFSITE must be true or false"
+[[ -s "$KEY_FILE" ]] || fail "backup encryption key is missing"
+[[ -s "$DATABASE_ENV" ]] || fail "database backup env is missing"
+[[ "$(stat -c '%a:%U:%G' "$DATABASE_ENV")" == "600:root:root" ]] || \
+  fail "unsafe database backup env permissions"
+
+install -d -m 0700 "$HOUR_DIR" "$DAILY_DIR" "$WEEKLY_DIR" "$MONTHLY_DIR" "$LOG_DIR" "$(dirname "$STATE_FILE")"
+exec > >(tee "$LOG_FILE") 2>&1
+exec 9>/run/lock/getomerch-database-backup.lock
+flock -n 9 || fail "another local database backup is running"
+
+set -a
+# shellcheck disable=SC1090
+source "$DATABASE_ENV"
+set +a
+[[ "${PGDATABASE:-}" == getomerch_production ]] || fail "backup env must target getomerch_production"
+[[ "${PGUSER:-}" == getomerch_backup ]] || fail "backup env must use getomerch_backup"
+
+log "backup_id=$RUN_ID"
+log "database=getomerch_production"
+
+psql -X -v ON_ERROR_STOP=1 -Atc \
+  "select current_database(), current_user, coalesce((select max(version) from getomerch_meta.schema_migrations), 'none')" \
+  > "$TMP_DIR/database-identity.tsv"
+IFS='|' read -r database_name database_user migration_version < "$TMP_DIR/database-identity.tsv"
+[[ "$database_name" == getomerch_production && "$database_user" == getomerch_backup ]] || \
+  fail "database identity check failed"
+[[ "$migration_version" =~ ^[0-9]{4}$ ]] || fail "invalid migration version"
+
+log "capturing table counts"
+psql -X -v ON_ERROR_STOP=1 -AtF '|' -c \
+  "select schemaname, tablename from pg_catalog.pg_tables where schemaname in ('public','getomerch_meta','getomerch_audit','getomerch_jobs') order by schemaname, tablename" \
+  > "$TMP_DIR/tables.tsv"
+: > "$TMP_DIR/counts.tsv"
+while IFS='|' read -r schema table; do
+  [[ "$schema" =~ ^[a-z_][a-z0-9_]*$ && "$table" =~ ^[a-z_][a-z0-9_]*$ ]] || \
+    fail "unsafe table name returned by PostgreSQL"
+  count="$(psql -X -v ON_ERROR_STOP=1 -Atc "select count(*) from \"$schema\".\"$table\"")"
+  printf '%s.%s|%s\n' "$schema" "$table" "$count" >> "$TMP_DIR/counts.tsv"
+done < "$TMP_DIR/tables.tsv"
+table_count="$(wc -l < "$TMP_DIR/counts.tsv" | tr -d ' ')"
+[[ "$table_count" -ge 25 ]] || fail "database has an incomplete table set"
+
+log "creating custom-format dump"
+pg_dump -Fc --no-owner --file="$TMP_DIR/getomerch_production.dump" getomerch_production
+[[ -s "$TMP_DIR/getomerch_production.dump" ]] || fail "pg_dump produced an empty file"
+
+log "packing encrypted runtime configuration"
+tar -C / -czf "$TMP_DIR/runtime-config.tar.gz" --ignore-failed-read \
+  etc/getomerch/admin-production.env \
+  etc/getomerch/database.env \
+  etc/getomerch/database-backup.env \
+  etc/getomerch/database-credentials.env \
+  etc/getomerch/migrator-production.env \
+  etc/systemd/system/getomerch-admin.service \
+  etc/systemd/system/getomerch-admin.service.d \
+  etc/systemd/system/getomerch-worker.service \
+  etc/systemd/system/getomerch-database-backup.service \
+  etc/systemd/system/getomerch-database-backup.timer 2>/dev/null || true
+
+python3 - "$TMP_DIR/manifest.json" "$RUN_ID" "$migration_version" "$table_count" <<'PY'
+import json
+import os
+import socket
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path, run_id, migration_version, table_count = sys.argv[1:5]
+
+def output(args):
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+
+active_release = output(["readlink", "-f", "/opt/getomerch/current"])
+manifest = {
+    "backupId": run_id,
+    "component": "getomerch-production-database",
+    "createdAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "host": socket.getfqdn() or socket.gethostname(),
+    "database": "getomerch_production",
+    "format": "pg_dump-custom",
+    "migrationVersion": migration_version,
+    "tableCount": int(table_count),
+    "activeRelease": active_release,
+    "activeReleaseName": Path(active_release).name if active_release else "",
+    "gitCommit": output(["git", "-C", "/opt/getomerch/deploy-source", "rev-parse", "HEAD"]),
+    "files": {},
+}
+Path(path).write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+PY
+
+(
+  cd "$TMP_DIR"
+  sha256sum getomerch_production.dump counts.tsv runtime-config.tar.gz > SHA256SUMS
+)
+python3 - "$TMP_DIR/manifest.json" "$TMP_DIR" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+root = Path(sys.argv[2])
+data = json.loads(path.read_text())
+for name in ("getomerch_production.dump", "counts.tsv", "runtime-config.tar.gz"):
+    file_path = root / name
+    data["files"][name] = {
+        "sizeBytes": file_path.stat().st_size,
+        "sha256": hashlib.sha256(file_path.read_bytes()).hexdigest(),
+    }
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
+(
+  cd "$TMP_DIR"
+  sha256sum manifest.json >> SHA256SUMS
+)
+
+tar -C "$TMP_DIR" -czf "$PLAIN_ARCHIVE" \
+  getomerch_production.dump counts.tsv runtime-config.tar.gz manifest.json SHA256SUMS
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --symmetric --cipher-algo AES256 \
+  --output "$FINAL_ARCHIVE" "$PLAIN_ARCHIVE"
+(
+  cd "$HOUR_DIR"
+  sha256sum "$(basename "$FINAL_ARCHIVE")" > "$(basename "$FINAL_ARCHIVE.sha256")"
+)
+chmod 0600 "$FINAL_ARCHIVE" "$FINAL_ARCHIVE.sha256"
+
+log "verifying encrypted archive"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --decrypt --output "$TMP_DIR/verify.tar.gz" "$FINAL_ARCHIVE" >/dev/null 2>&1
+tar -tzf "$TMP_DIR/verify.tar.gz" >/dev/null
+install -d -m 0700 "$TMP_DIR/verify"
+tar -xzf "$TMP_DIR/verify.tar.gz" -C "$TMP_DIR/verify"
+(
+  cd "$TMP_DIR/verify"
+  sha256sum -c SHA256SUMS >/dev/null
+)
+(
+  cd "$HOUR_DIR"
+  sha256sum -c "$(basename "$FINAL_ARCHIVE.sha256")" >/dev/null
+)
+
+external_status=skipped_no_env
+external_destination=""
+if [[ -f "$EXTERNAL_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$EXTERNAL_ENV"
+  set +a
+  [[ -n "${YANDEX_S3_BUCKET:-}" && -n "${YANDEX_S3_ENDPOINT:-}" ]] || \
+    fail "off-site backup bucket or endpoint is missing"
+  prefix="${GETOMERCH_DATABASE_BACKUP_S3_PREFIX:-${YANDEX_S3_PREFIX:-}/getomerch/database/hourly}"
+  prefix="${prefix#/}"
+  prefix="${prefix%/}"
+  external_destination="s3://${YANDEX_S3_BUCKET}/${prefix}/$(basename "$FINAL_ARCHIVE")"
+  if command -v aws >/dev/null 2>&1; then
+    aws --endpoint-url "$YANDEX_S3_ENDPOINT" s3 cp "$FINAL_ARCHIVE" "$external_destination" --only-show-errors
+    aws --endpoint-url "$YANDEX_S3_ENDPOINT" s3 cp "$FINAL_ARCHIVE.sha256" "$external_destination.sha256" --only-show-errors
+  elif command -v s3cmd >/dev/null 2>&1; then
+    s3_host="${YANDEX_S3_ENDPOINT#https://}"
+    s3_host="${s3_host#http://}"
+    s3_host="${s3_host%/}"
+    cat > "$TMP_DIR/s3cmd.cfg" <<S3CFG
+[default]
+access_key = ${AWS_ACCESS_KEY_ID}
+secret_key = ${AWS_SECRET_ACCESS_KEY}
+host_base = ${s3_host}
+host_bucket = %(bucket)s.${s3_host}
+use_https = True
+signature_v2 = False
+S3CFG
+    chmod 0600 "$TMP_DIR/s3cmd.cfg"
+    s3cmd -c "$TMP_DIR/s3cmd.cfg" --no-progress put "$FINAL_ARCHIVE" "$external_destination" >/dev/null
+    s3cmd -c "$TMP_DIR/s3cmd.cfg" --no-progress put "$FINAL_ARCHIVE.sha256" "$external_destination.sha256" >/dev/null
+  else
+    fail "no supported S3 client is installed"
+  fi
+  external_status=ok
+fi
+if [[ "$REQUIRE_OFFSITE" == true && "$external_status" != ok ]]; then
+  fail "off-site upload is required but status is $external_status"
+fi
+
+snapshot_pair() {
+  local directory="$1"
+  cp -p "$FINAL_ARCHIVE" "$directory/"
+  cp -p "$FINAL_ARCHIVE.sha256" "$directory/"
+}
+
+date_key="$(date -u +%Y%m%d)"
+if ! find "$DAILY_DIR" -maxdepth 1 -name "getomerch-database-backup-${date_key}T*.tar.gz.gpg" -print -quit | grep -q .; then
+  snapshot_pair "$DAILY_DIR"
+fi
+if [[ "$(date -u +%u)" == 7 ]] && \
+   ! find "$WEEKLY_DIR" -maxdepth 1 -name "getomerch-database-backup-${date_key}T*.tar.gz.gpg" -print -quit | grep -q .; then
+  snapshot_pair "$WEEKLY_DIR"
+fi
+if [[ "$(date -u +%d)" == 01 ]] && \
+   ! find "$MONTHLY_DIR" -maxdepth 1 -name "getomerch-database-backup-${date_key}T*.tar.gz.gpg" -print -quit | grep -q .; then
+  snapshot_pair "$MONTHLY_DIR"
+fi
+
+find "$HOUR_DIR" -type f -name 'getomerch-database-backup-*' -mtime +3 -delete
+find "$DAILY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +14 -delete
+find "$WEEKLY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +42 -delete
+find "$MONTHLY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +190 -delete
+
+python3 - "$STATE_FILE" "$RUN_ID" "$FINAL_ARCHIVE" "$external_status" "$external_destination" "$migration_version" "$table_count" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = {
+    "updatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "status": "success",
+    "backupId": sys.argv[2],
+    "archive": sys.argv[3],
+    "externalStatus": sys.argv[4],
+    "externalDestination": sys.argv[5],
+    "migrationVersion": sys.argv[6],
+    "tableCount": int(sys.argv[7]),
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w") as handle:
+    json.dump(payload, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, path)
+PY
+
+log "archive=$FINAL_ARCHIVE"
+log "archive_size_bytes=$(stat -c %s "$FINAL_ARCHIVE")"
+log "external_upload=$external_status"
+log "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

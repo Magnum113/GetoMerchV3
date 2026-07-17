@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+RELEASE_LINK="${GETOMERCH_REHEARSAL_RELEASE_LINK:-/opt/getomerch/rehearsals/current}"
+ADMIN_ENV="${GETOMERCH_ADMIN_ENV_FILE:-/etc/getomerch/admin-production.env}"
+REPORT_ROOT="${GETOMERCH_PREPRODUCTION_REPORT_ROOT:-/var/lib/getomerch/preproduction}"
+PORT="${GETOMERCH_ROLLBACK_REHEARSAL_PORT:-3103}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+UNIT="getomerch-stage9-rollback-$RUN_ID.service"
+UNIT_PATH="/run/systemd/system/$UNIT"
+TEST_ENV="/run/getomerch-stage9-rollback-$RUN_ID.env"
+RUN_DIR="$REPORT_ROOT/rollback-$RUN_ID"
+REPORT_FILE="$RUN_DIR/report.env"
+STATUS=failed
+START_EPOCH="$(date +%s)"
+
+install -d -m 0700 "$RUN_DIR"
+
+cleanup() {
+  systemctl stop "$UNIT" >/dev/null 2>&1 || true
+  rm -f "$UNIT_PATH" "$TEST_ENV"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+}
+
+on_exit() {
+  local rc="$?"
+  trap - EXIT
+  {
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "status=$STATUS"
+    echo "exit_code=$rc"
+    echo "elapsed_seconds=$(($(date +%s) - START_EPOCH))"
+  } >> "$REPORT_FILE"
+  cleanup
+  exit "$rc"
+}
+trap on_exit EXIT
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+for command in curl node openssl systemctl systemd-run; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1024 && "$PORT" -le 65535 ]] || fail "unsafe port"
+[[ -s "$ADMIN_ENV" && "$(stat -c '%a:%U:%G' "$ADMIN_ENV")" == "600:root:root" ]] || \
+  fail "admin env is missing or unsafe"
+RELEASE="$(readlink -f "$RELEASE_LINK" 2>/dev/null || true)"
+[[ "$RELEASE" =~ ^/opt/getomerch/rehearsals/stage[0-9]+- ]] || fail "invalid rehearsal release"
+[[ -r "$RELEASE/scripts/check-preproduction.mjs" && -r "$RELEASE/scripts/check-db-repositories.mjs" ]] || \
+  fail "stage-9 checks are missing from release"
+systemctl is-active --quiet getomerch-admin.service || fail "production admin is not active"
+[[ "$(systemctl show getomerch-worker.service -p LoadState --value)" == not-found ]] || \
+  fail "production worker unexpectedly exists"
+if ss -ltnH "( sport = :$PORT )" | grep -q .; then
+  fail "port $PORT is already in use"
+fi
+
+exec 9>/run/lock/getomerch-supabase-rollback-rehearsal.lock
+flock -n 9 || fail "another rollback rehearsal is running"
+
+TEST_PASSWORD="$(openssl rand -base64 36 | tr -d '\n')"
+TEST_HASH="$(printf '%s' "$TEST_PASSWORD" | runuser -u getomerch -- node "$RELEASE/scripts/generate-admin-password-hash.mjs")"
+cat > "$TEST_ENV" <<ENV
+ADMIN_AUTH_PASSWORD_HASH=$TEST_HASH
+ADMIN_AUTH_TEST_PASSWORD=$TEST_PASSWORD
+GETOMERCH_DB_READ_SOURCE=supabase
+GETOMERCH_DB_WRITE_SOURCE=supabase
+GETOMERCH_DB_SHADOW_COMPARE=false
+GETOMERCH_DB_SHADOW_COMPARE_STRICT=false
+GETOMERCH_DB_ALLOW_FAULT_INJECTION=false
+ADMIN_BFF_BASE_URL=http://127.0.0.1:$PORT
+EXPECTED_DB_READ_SOURCE=supabase
+GETOMERCH_PREPRODUCTION_CHECK_KOMUI=true
+ENV
+chmod 0600 "$TEST_ENV"
+
+{
+  echo "rollback_rehearsal_id=$RUN_ID"
+  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "release=$RELEASE"
+  echo "listen=127.0.0.1:$PORT"
+  echo "read_source=supabase"
+  echo "write_source=supabase"
+  echo "production_service_before=$(systemctl is-active getomerch-admin.service)"
+} > "$REPORT_FILE"
+
+cat > "$UNIT_PATH" <<UNIT
+[Unit]
+Description=GetoMerch stage-9 Supabase rollback rehearsal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getomerch
+Group=getomerch
+WorkingDirectory=$RELEASE
+EnvironmentFile=$ADMIN_ENV
+EnvironmentFile=$TEST_ENV
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start -- --hostname 127.0.0.1 --port $PORT
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 "$UNIT_PATH"
+systemctl daemon-reload
+systemctl start "$UNIT"
+
+for _attempt in $(seq 1 45); do
+  if curl --silent --fail --output /dev/null --connect-timeout 1 "http://127.0.0.1:$PORT/login"; then
+    break
+  fi
+  sleep 1
+done
+systemctl is-active --quiet "$UNIT" || fail "rollback rehearsal service did not start"
+
+systemd-run --quiet --wait --pipe --collect \
+  --unit="getomerch-stage9-rollback-check-$RUN_ID" \
+  --property=User=getomerch \
+  --property=Group=getomerch \
+  --property="WorkingDirectory=$RELEASE" \
+  --property="EnvironmentFile=$ADMIN_ENV" \
+  --property="EnvironmentFile=$TEST_ENV" \
+  /usr/bin/node scripts/check-db-repositories.mjs | tee "$RUN_DIR/repository-check.log"
+
+systemd-run --quiet --wait --pipe --collect \
+  --unit="getomerch-stage9-rollback-full-$RUN_ID" \
+  --property=User=getomerch \
+  --property=Group=getomerch \
+  --property="WorkingDirectory=$RELEASE" \
+  --property="EnvironmentFile=$ADMIN_ENV" \
+  --property="EnvironmentFile=$TEST_ENV" \
+  /usr/bin/node scripts/check-preproduction.mjs | tee "$RUN_DIR/preproduction-check.log"
+
+[[ "$(systemctl is-active getomerch-admin.service)" == active ]] || fail "production admin changed state"
+[[ "$(systemctl show getomerch-worker.service -p LoadState --value)" == not-found ]] || \
+  fail "production worker changed state"
+
+echo "repository_checks=ok" >> "$REPORT_FILE"
+echo "preproduction_checks=ok" >> "$REPORT_FILE"
+echo "test_password_login=ok" >> "$REPORT_FILE"
+echo "production_service_after=active" >> "$REPORT_FILE"
+echo "production_worker_after=not-found" >> "$REPORT_FILE"
+STATUS=success
+echo "Supabase rollback rehearsal completed: $RUN_DIR"

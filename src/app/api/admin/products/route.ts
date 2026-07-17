@@ -4,14 +4,11 @@ import {
   AdminApiError,
   adminErrorResponse,
   adminJson,
-  assertNoSupabaseError,
   parseBooleanParam,
   parseLimitParam,
   requireUuidParam,
 } from "@/lib/admin/http";
-import { hydrateProducts } from "@/lib/admin/product-hydration";
-import { getAdminSupabaseClient } from "@/lib/supabase/server";
-import type { Product } from "@/lib/types";
+import { createDatabaseReadServices } from "@/lib/db/services/runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -25,31 +22,21 @@ export async function GET(request: NextRequest) {
     const designId = requireUuidParam(params.get("design_id"), "design_id");
     const search = (params.get("search") ?? params.get("sku") ?? "").trim();
 
-    const sb = getAdminSupabaseClient();
-    let query = sb
-      .from("merch_products")
-      .select("*")
-      .order("sku", { ascending: true })
-      .range(offset, offset + limit);
-
-    if (isBlank !== undefined) query = query.eq("is_blank", isBlank);
-    if (designId) query = query.eq("design_id", designId);
-    if (search) query = query.ilike("sku", `%${escapeLikePattern(search)}%`);
-
-    const { data, error } = await query;
-    assertNoSupabaseError(error);
-
-    const rows = (data ?? []) as Product[];
-    const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-    const products = await hydrateProducts(pageRows);
+    const services = createDatabaseReadServices();
+    const page = await services.products.listPage({
+      limit,
+      offset,
+      isBlank,
+      designId,
+      search: search || undefined,
+    });
     return adminJson({
-      data: products,
+      data: page.rows,
       meta: {
         limit,
         offset,
-        nextCursor: hasMore ? encodeProductCursor(offset + limit) : null,
-        hasMore,
+        nextCursor: page.hasMore ? encodeProductCursor(offset + limit) : null,
+        hasMore: page.hasMore,
       },
     });
   } catch (error) {
@@ -77,8 +64,4 @@ function parseProductCursor(value: string | null) {
 
 function encodeProductCursor(offset: number) {
   return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
-}
-
-function escapeLikePattern(value: string) {
-  return value.replace(/[%_\\]/g, (char) => `\\${char}`);
 }

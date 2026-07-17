@@ -587,7 +587,7 @@ export const api = {
       const order = await api.getWorkshopOrder(orderId);
       if (!order) return;
       for (const it of order.items ?? []) {
-        if (!it.blank_product) continue;
+        if (!it.blank_product || !it.blank_product_id) continue;
         // Find/create finished product SKU
         const finished = await api.findOrCreateProduct({
           category_id: it.blank_product.category_id,

@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+RELEASE_LINK="${GETOMERCH_REHEARSAL_RELEASE_LINK:-/opt/getomerch/rehearsals/current}"
+ADMIN_ENV="${GETOMERCH_ADMIN_ENV_FILE:-/etc/getomerch/admin-production.env}"
+CREDENTIALS_ENV="${GETOMERCH_DATABASE_CREDENTIALS_ENV:-/etc/getomerch/database-credentials.env}"
+HBA_FILE="${GETOMERCH_HBA_FILE:-/etc/postgresql/17/main/pg_hba_getomerch.conf}"
+REPORT_ROOT="${GETOMERCH_PREPRODUCTION_REPORT_ROOT:-/var/lib/getomerch/preproduction}"
+PORT="${GETOMERCH_STAGE9_WRITE_PORT:-3102}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+DATABASE="getomerch_stage9_$(date -u +%Y%m%d_%H%M%S)"
+APP_UNIT="getomerch-stage9-write-$RUN_ID.service"
+WORKER_UNIT="getomerch-stage9-worker-$RUN_ID.service"
+APP_UNIT_PATH="/run/systemd/system/$APP_UNIT"
+WORKER_UNIT_PATH="/run/systemd/system/$WORKER_UNIT"
+TEST_ENV="/run/getomerch-stage9-write-$RUN_ID.env"
+RUN_DIR="$REPORT_ROOT/server-write-$RUN_ID"
+REPORT_FILE="$RUN_DIR/report.env"
+TMP_DIR="$(mktemp -d /var/tmp/getomerch-stage9-write-${RUN_ID}.XXXXXX)"
+HBA_BACKUP="$TMP_DIR/pg_hba_getomerch.conf"
+DATABASE_CREATED=false
+HBA_CHANGED=false
+STATUS=failed
+START_EPOCH="$(date +%s)"
+
+install -d -m 0700 "$RUN_DIR"
+chown root:postgres "$TMP_DIR"
+chmod 0770 "$TMP_DIR"
+
+cleanup() {
+  systemctl stop "$WORKER_UNIT" >/dev/null 2>&1 || true
+  systemctl stop "$APP_UNIT" >/dev/null 2>&1 || true
+  rm -f "$WORKER_UNIT_PATH" "$APP_UNIT_PATH" "$TEST_ENV"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed "$WORKER_UNIT" "$APP_UNIT" >/dev/null 2>&1 || true
+  if [[ "$DATABASE_CREATED" == true ]]; then
+    runuser -u postgres -- dropdb --force --if-exists "$DATABASE" >/dev/null 2>&1 || true
+  fi
+  if [[ "$HBA_CHANGED" == true && -s "$HBA_BACKUP" ]]; then
+    install -o postgres -g postgres -m 0640 "$HBA_BACKUP" "$HBA_FILE"
+    runuser -u postgres -- psql -X -d postgres -Atc 'select pg_reload_conf()' >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+
+on_exit() {
+  local rc="$?"
+  trap - EXIT
+  {
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "status=$STATUS"
+    echo "exit_code=$rc"
+    echo "elapsed_seconds=$(($(date +%s) - START_EPOCH))"
+  } >> "$REPORT_FILE"
+  cleanup
+  exit "$rc"
+}
+trap on_exit EXIT
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in curl node openssl pg_dump pg_restore psql python3 runuser systemctl systemd-run; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ -s "$ADMIN_ENV" && -s "$CREDENTIALS_ENV" && -s "$HBA_FILE" ]] || fail "required server env/HBA is missing"
+RELEASE="$(readlink -f "$RELEASE_LINK" 2>/dev/null || true)"
+[[ "$RELEASE" =~ ^/opt/getomerch/rehearsals/stage9- ]] || fail "stage-9 release is not active"
+for test_file in check-db-repositories.mjs check-db-mutations.mjs check-db-jobs.mjs check-ozon-dry-run.mjs check-preproduction.mjs; do
+  [[ -r "$RELEASE/scripts/$test_file" ]] || fail "missing readable test: $test_file"
+done
+systemctl is-active --quiet getomerch-admin.service || fail "production admin is not active"
+systemctl is-active --quiet postgresql.service || fail "PostgreSQL is not active"
+[[ "$(systemctl show getomerch-worker.service -p LoadState --value)" == not-found ]] || \
+  fail "production worker unexpectedly exists"
+if ss -ltnH "( sport = :$PORT )" | grep -q .; then
+  fail "port $PORT is already in use"
+fi
+
+exec 9>/run/lock/getomerch-server-write-rehearsal.lock
+flock -n 9 || fail "another server-write rehearsal is running"
+
+# shellcheck disable=SC1090
+source "$CREDENTIALS_ENV"
+[[ -n "${GETOMERCH_APP_DB_PASSWORD:-}" ]] || fail "app database password is missing"
+ENCODED_PASSWORD="$(printf '%s' "$GETOMERCH_APP_DB_PASSWORD" | \
+  python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=""))')"
+unset GETOMERCH_APP_DB_PASSWORD GETOMERCH_MIGRATOR_DB_PASSWORD GETOMERCH_BACKUP_DB_PASSWORD
+INTERNAL_TOKEN="$(openssl rand -hex 48)"
+DATABASE_URL="postgresql://getomerch_app:${ENCODED_PASSWORD}@127.0.0.1:5432/${DATABASE}?application_name=getomerch-stage9"
+
+cat > "$TEST_ENV" <<ENV
+GETOMERCH_DATABASE_URL=$DATABASE_URL
+GETOMERCH_DATABASE_SSL=false
+GETOMERCH_DATABASE_POOL_MAX=3
+GETOMERCH_DATABASE_APPLICATION_NAME=getomerch-stage9
+GETOMERCH_DB_READ_SOURCE=server
+GETOMERCH_DB_WRITE_SOURCE=server
+GETOMERCH_DB_SHADOW_COMPARE=false
+GETOMERCH_DB_SHADOW_COMPARE_STRICT=false
+GETOMERCH_DB_ALLOW_FAULT_INJECTION=true
+GETOMERCH_INTERNAL_SERVICE_TOKEN=$INTERNAL_TOKEN
+EXPECTED_INTERNAL_SERVICE_TOKEN=$INTERNAL_TOKEN
+EXPECTED_STAGE7_DATABASE=$DATABASE
+EXPECTED_STAGE8_DATABASE=$DATABASE
+ADMIN_BFF_BASE_URL=http://127.0.0.1:$PORT
+EXPECTED_DB_READ_SOURCE=server
+GETOMERCH_PREPRODUCTION_CHECK_KOMUI=false
+ALLOW_REAL_OZON_DRY_RUN=true
+ENV
+chmod 0600 "$TEST_ENV"
+
+{
+  echo "server_write_rehearsal_id=$RUN_ID"
+  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "release=$RELEASE"
+  echo "database=$DATABASE"
+  echo "listen=127.0.0.1:$PORT"
+  echo "production_service_before=$(systemctl is-active getomerch-admin.service)"
+  echo "production_worker_before=$(systemctl show getomerch-worker.service -p LoadState --value)"
+} > "$REPORT_FILE"
+
+business_counts() {
+  local database="$1"
+  while IFS= read -r table; do
+    [[ "$table" =~ ^merch_[a-z0-9_]+$ ]] || fail "unsafe business table name"
+    count="$(runuser -u postgres -- psql -X -d "$database" -Atc "select count(*) from public.\"$table\"")"
+    printf '%s|%s\n' "$table" "$count"
+  done < <(runuser -u postgres -- psql -X -d "$database" -Atc \
+    "select tablename from pg_catalog.pg_tables where schemaname='public' and tablename like 'merch_%' order by tablename")
+}
+
+business_counts getomerch_rehearsal > "$RUN_DIR/rehearsal-counts-before.tsv"
+
+log "cloning fresh rehearsal database into disposable stage-9 database"
+runuser -u postgres -- pg_dump -Fc --no-owner --file="$TMP_DIR/source.dump" getomerch_rehearsal
+runuser -u postgres -- createdb --owner=getomerch_owner --template=template0 "$DATABASE"
+DATABASE_CREATED=true
+runuser -u postgres -- pg_restore --exit-on-error --no-owner \
+  --role=getomerch_owner --dbname="$DATABASE" "$TMP_DIR/source.dump"
+runuser -u postgres -- psql -X -d "$DATABASE" -c 'ANALYZE' >/dev/null
+
+log "installing temporary exact HBA rules"
+cp "$HBA_FILE" "$HBA_BACKUP"
+python3 - "$HBA_FILE" "$DATABASE" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+database = sys.argv[2]
+lines = path.read_text().splitlines()
+rules = [
+    f"local {database} getomerch_app,getomerch_migrator,getomerch_backup scram-sha-256",
+    f"host {database} getomerch_app,getomerch_migrator,getomerch_backup 127.0.0.1/32 scram-sha-256",
+    f"host {database} getomerch_app,getomerch_migrator,getomerch_backup ::1/128 scram-sha-256",
+]
+path.write_text("\n".join([lines[0], *rules, *lines[1:]]) + "\n")
+PY
+chown postgres:postgres "$HBA_FILE"
+chmod 0640 "$HBA_FILE"
+HBA_CHANGED=true
+runuser -u postgres -- psql -X -d postgres -Atc 'select pg_reload_conf()' >/dev/null
+[[ "$(runuser -u postgres -- psql -X -d postgres -Atc 'select count(*) from pg_hba_file_rules where error is not null')" == 0 ]] || \
+  fail "temporary HBA contains errors"
+
+cat > "$APP_UNIT_PATH" <<UNIT
+[Unit]
+Description=GetoMerch stage-9 disposable server-write app
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getomerch
+Group=getomerch
+WorkingDirectory=$RELEASE
+EnvironmentFile=$ADMIN_ENV
+EnvironmentFile=$TEST_ENV
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start -- --hostname 127.0.0.1 --port $PORT
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UNIT
+chmod 0644 "$APP_UNIT_PATH"
+systemctl daemon-reload
+systemctl start "$APP_UNIT"
+for _attempt in $(seq 1 45); do
+  if curl --silent --fail --output /dev/null --connect-timeout 1 "http://127.0.0.1:$PORT/login"; then
+    break
+  fi
+  sleep 1
+done
+systemctl is-active --quiet "$APP_UNIT" || fail "stage-9 write app did not start"
+
+run_test() {
+  local label="$1"
+  local script="$2"
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="getomerch-stage9-${label}-$RUN_ID" \
+    --property=User=getomerch \
+    --property=Group=getomerch \
+    --property="WorkingDirectory=$RELEASE" \
+    --property="EnvironmentFile=$ADMIN_ENV" \
+    --property="EnvironmentFile=$TEST_ENV" \
+    /usr/bin/node "$script" | tee "$RUN_DIR/$label.log"
+}
+
+log "running repository, mutation and durable-job regressions"
+run_test repositories scripts/check-db-repositories.mjs
+run_test mutations scripts/check-db-mutations.mjs
+run_test jobs scripts/check-db-jobs.mjs
+run_test preproduction scripts/check-preproduction.mjs
+
+log "restoring a pristine disposable database before the real Ozon phase"
+systemctl stop "$APP_UNIT"
+runuser -u postgres -- dropdb --force --if-exists "$DATABASE"
+DATABASE_CREATED=false
+runuser -u postgres -- createdb --owner=getomerch_owner --template=template0 "$DATABASE"
+DATABASE_CREATED=true
+runuser -u postgres -- pg_restore --exit-on-error --no-owner \
+  --role=getomerch_owner --dbname="$DATABASE" "$TMP_DIR/source.dump"
+runuser -u postgres -- psql -X -d "$DATABASE" -c 'ANALYZE' >/dev/null
+systemctl start "$APP_UNIT"
+for _attempt in $(seq 1 45); do
+  if curl --silent --fail --output /dev/null --connect-timeout 1 "http://127.0.0.1:$PORT/login"; then
+    break
+  fi
+  sleep 1
+done
+systemctl is-active --quiet "$APP_UNIT" || fail "stage-9 write app did not restart"
+
+log "running real Ozon smoke through a temporary worker in dry-run mode"
+cat > "$WORKER_UNIT_PATH" <<UNIT
+[Unit]
+Description=GetoMerch stage-9 disposable real-Ozon worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getomerch
+Group=getomerch
+WorkingDirectory=$RELEASE
+EnvironmentFile=$ADMIN_ENV
+EnvironmentFile=$TEST_ENV
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--conditions=react-server
+ExecStart=/usr/bin/npm run worker
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UNIT
+chmod 0644 "$WORKER_UNIT_PATH"
+systemctl daemon-reload
+systemctl start "$WORKER_UNIT"
+sleep 2
+systemctl is-active --quiet "$WORKER_UNIT" || fail "stage-9 Ozon worker did not start"
+run_test ozon-dry-run scripts/check-ozon-dry-run.mjs
+systemctl stop "$WORKER_UNIT"
+
+business_counts getomerch_rehearsal > "$RUN_DIR/rehearsal-counts-after.tsv"
+cmp -s "$RUN_DIR/rehearsal-counts-before.tsv" "$RUN_DIR/rehearsal-counts-after.tsv" || \
+  fail "permanent rehearsal business counts changed during disposable tests"
+[[ "$(runuser -u postgres -- psql -X -d getomerch_production -Atc \
+  'select count(*) from pg_catalog.pg_tables where schemaname=current_schema()')" == 0 ]] || \
+  fail "local production database changed"
+[[ "$(systemctl is-active getomerch-admin.service)" == active ]] || fail "production admin changed state"
+[[ "$(systemctl show getomerch-worker.service -p LoadState --value)" == not-found ]] || \
+  fail "production worker changed state"
+
+echo "repository_checks=ok" >> "$REPORT_FILE"
+echo "mutation_checks=ok" >> "$REPORT_FILE"
+echo "job_checks=ok" >> "$REPORT_FILE"
+echo "preproduction_checks=ok" >> "$REPORT_FILE"
+echo "real_ozon_dry_run=ok" >> "$REPORT_FILE"
+echo "permanent_rehearsal_counts=unchanged" >> "$REPORT_FILE"
+echo "production_database_public_tables=0" >> "$REPORT_FILE"
+echo "production_service_after=active" >> "$REPORT_FILE"
+echo "production_worker_after=not-found" >> "$REPORT_FILE"
+STATUS=success
+log "disposable server-write rehearsal completed"

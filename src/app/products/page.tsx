@@ -44,9 +44,7 @@ export default function ProductsPage() {
     setSyncing(true);
     const t = toast.loading("Синхронизация цен с Ozon…");
     try {
-      const res = await fetch("/api/ozon/sync-prices", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Ошибка синхронизации");
+      const data = await api.syncOzonPrices();
       toast.success(
         `Цены обновлены: ${data.updated} изменено, ${data.unchanged} без изменений${data.notFound ? `, ${data.notFound} без цены` : ""}`,
         { id: t },

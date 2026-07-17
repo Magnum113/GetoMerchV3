@@ -1,0 +1,488 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+COMMAND="${1:-status}"
+CONFIRMATION="${2:-}"
+CONFIG_FILE="${GETOMERCH_CUTOVER_CONFIG:-/etc/getomerch/cutover.env}"
+ADMIN_ENV="${GETOMERCH_ADMIN_ENV_FILE:-/etc/getomerch/admin-production.env}"
+DATABASE_ENV="${GETOMERCH_DATABASE_ENV_FILE:-/etc/getomerch/database.env}"
+STATE_FILE="${GETOMERCH_CUTOVER_STATE:-/var/lib/getomerch/cutover/state.json}"
+REPORT_ROOT="${GETOMERCH_CUTOVER_REPORT_ROOT:-/var/lib/getomerch/cutover}"
+LOCK_FILE="${GETOMERCH_CUTOVER_LOCK:-/run/lock/getomerch-cutover.lock}"
+ADMIN_DROPIN_DIR=/etc/systemd/system/getomerch-admin.service.d
+ADMIN_DROPIN="$ADMIN_DROPIN_DIR/database.conf"
+SERVICE_UNIT=getomerch-admin.service
+WORKER_UNIT=getomerch-worker.service
+SOURCE_BACKUP_TIMER=getomerch-backup.timer
+DATABASE_BACKUP_TIMER=getomerch-database-backup.timer
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR="$REPORT_ROOT/runs/$RUN_ID"
+LOG_FILE="$RUN_DIR/cutover.log"
+CURRENT_OPERATION=""
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+env_value() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = ""
+if path.is_file():
+    for raw in path.read_text().splitlines():
+        if raw.startswith(f"{key}="):
+            value = raw.split("=", 1)[1].strip().strip("'\"")
+print(value)
+PY
+}
+
+runtime_source() {
+  local value
+  value="$(env_value "$ADMIN_ENV" "$1")"
+  printf '%s\n' "${value:-supabase}"
+}
+
+set_admin_runtime() {
+  local read_source="$1"
+  local write_source="$2"
+  local maintenance="$3"
+  python3 - "$ADMIN_ENV" "$read_source" "$write_source" "$maintenance" <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+values = {
+    "GETOMERCH_DB_READ_SOURCE": sys.argv[2],
+    "GETOMERCH_DB_WRITE_SOURCE": sys.argv[3],
+    "GETOMERCH_DB_SHADOW_COMPARE": "false",
+    "GETOMERCH_DB_SHADOW_COMPARE_STRICT": "false",
+    "GETOMERCH_DB_ALLOW_FAULT_INJECTION": "false",
+    "GETOMERCH_MAINTENANCE_MODE": sys.argv[4],
+}
+lines = [line for line in path.read_text().splitlines() if not any(line.startswith(f"{key}=") for key in values)]
+lines.extend(f"{key}={value}" for key, value in values.items())
+if values["GETOMERCH_MAINTENANCE_MODE"] == "read_only":
+    lines = [line for line in lines if not line.startswith("GETOMERCH_MAINTENANCE_REASON=")]
+    lines.append("GETOMERCH_MAINTENANCE_REASON=Перенос рабочей базы данных")
+else:
+    lines = [line for line in lines if not line.startswith("GETOMERCH_MAINTENANCE_REASON=")]
+
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    with os.fdopen(fd, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.chown(temporary, 0, 0)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+ensure_internal_token() {
+  if [[ -n "$(env_value "$ADMIN_ENV" GETOMERCH_INTERNAL_SERVICE_TOKEN)" ]]; then
+    return
+  fi
+  local token
+  token="$(openssl rand -hex 48)"
+  printf 'GETOMERCH_INTERNAL_SERVICE_TOKEN=%s\n' "$token" >> "$ADMIN_ENV"
+  chmod 0600 "$ADMIN_ENV"
+}
+
+state_field() {
+  python3 - "$STATE_FILE" "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    print("")
+else:
+    value = json.loads(path.read_text()).get(sys.argv[2], "")
+    print(value if not isinstance(value, (dict, list)) else json.dumps(value, ensure_ascii=False))
+PY
+}
+
+write_state() {
+  local phase="$1"
+  local previous_env="${2:-$(state_field previousEnvBackup)}"
+  local previous_db="${3:-$(state_field previousDatabase)}"
+  local source_archive="${4:-$(state_field sourceArchive)}"
+  local writes_opened="${5:-$(state_field writesOpenedAt)}"
+  python3 - "$STATE_FILE" "$phase" "$RUN_ID" "$previous_env" "$previous_db" "$source_archive" "$writes_opened" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+previous = {}
+if path.is_file():
+    try:
+        previous = json.loads(path.read_text())
+    except Exception:
+        previous = {}
+payload = {
+    **previous,
+    "phase": sys.argv[2],
+    "runId": sys.argv[3],
+    "updatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "previousEnvBackup": sys.argv[4],
+    "previousDatabase": sys.argv[5],
+    "sourceArchive": sys.argv[6],
+    "writesOpenedAt": sys.argv[7],
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w") as handle:
+    json.dump(payload, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+os.chmod(temporary, 0o600)
+os.replace(temporary, path)
+PY
+}
+
+wait_for_admin() {
+  for _attempt in $(seq 1 45); do
+    if systemctl is-active --quiet "$SERVICE_UNIT" && \
+       curl -fsS --max-time 3 http://127.0.0.1:3100/login >/dev/null; then
+      return
+    fi
+    sleep 1
+  done
+  fail "$SERVICE_UNIT did not become ready"
+}
+
+install_database_dropin() {
+  install -d -m 0755 "$ADMIN_DROPIN_DIR"
+  cat > "$ADMIN_DROPIN" <<'UNIT'
+[Service]
+EnvironmentFile=/etc/getomerch/database.env
+Environment=GETOMERCH_DATABASE_POOL_MAX=4
+Environment=GETOMERCH_DATABASE_APPLICATION_NAME=getomerch-admin-production
+UNIT
+  chmod 0644 "$ADMIN_DROPIN"
+  systemctl daemon-reload
+}
+
+config_gate() {
+  [[ -s "$CONFIG_FILE" ]] || fail "cutover approval config is missing: $CONFIG_FILE"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_APPROVED)" == true ]] || fail "cutover is not approved"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_WINDOW_MINUTES)" == 60 ]] || fail "cutover window must be 60 minutes"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_RPO_MINUTES)" == 60 ]] || fail "cutover RPO must be 60 minutes"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_SUPABASE_RETENTION_DAYS)" == 30 ]] || fail "Supabase retention must be 30 days"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_AUTOMATION_DELAY_HOURS)" == 24 ]] || fail "automation delay must be 24 hours"
+  [[ "$(env_value "$CONFIG_FILE" GETOMERCH_CUTOVER_ROLLBACK_BOUNDARY)" == before_first_write ]] || \
+    fail "rollback boundary must be before_first_write"
+}
+
+preflight() {
+  config_gate
+  for command in curl flock gpg node openssl pg_dump pg_restore psql python3 runuser systemctl systemd-run; do
+    command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+  done
+  for path in \
+    "$ADMIN_ENV" "$DATABASE_ENV" /etc/getomerch/database-backup.env \
+    /usr/local/sbin/getomerch-maintenance \
+    /usr/local/sbin/getomerch-data-rehearsal \
+    /usr/local/sbin/getomerch-database-backup \
+    /usr/local/sbin/getomerch-database-restore-drill \
+    /usr/local/sbin/getomerch-backup \
+    /usr/local/sbin/komui-backup; do
+    [[ -s "$path" ]] || fail "required cutover artifact is missing: $path"
+  done
+  [[ "$(stat -c '%a:%U:%G' "$ADMIN_ENV")" == "600:root:root" ]] || fail "unsafe admin env permissions"
+  systemctl is-active --quiet "$SERVICE_UNIT" || fail "admin service is not active"
+  systemctl is-active --quiet postgresql.service || fail "PostgreSQL is not active"
+  systemctl is-active --quiet nginx || fail "nginx is not active"
+  systemctl is-active --quiet komui-production-backend.service || fail "KOMUI production backend is not active"
+  systemctl is-active --quiet komui-backend.service || fail "KOMUI stage backend is not active"
+  free_mb="$(df -Pm / | awk 'NR == 2 {print $4}')"
+  [[ "$free_mb" =~ ^[0-9]+$ && "$free_mb" -ge 4096 ]] || fail "less than 4 GiB free disk remains"
+  [[ "$(runuser -u postgres -- psql -X -d postgres -Atc "select count(*) from pg_hba_file_rules where error is not null")" == 0 ]] || \
+    fail "PostgreSQL HBA contains errors"
+  [[ "$(runuser -u postgres -- psql -X -d postgres -Atc "select count(*) from pg_database where datname='getomerch_production'")" == 1 ]] || \
+    fail "getomerch_production is missing"
+  phase="$(state_field phase)"
+  if [[ -z "$phase" || "$phase" == idle || "$phase" == aborted ]]; then
+    public_tables="$(runuser -u postgres -- psql -X -d getomerch_production -Atc \
+      "select count(*) from pg_catalog.pg_tables where schemaname='public'")"
+    [[ "$public_tables" == 0 ]] || fail "getomerch_production is not empty"
+    [[ "$(runtime_source GETOMERCH_DB_READ_SOURCE)" == supabase ]] || fail "production read source is not Supabase"
+    [[ "$(runtime_source GETOMERCH_DB_WRITE_SOURCE)" == supabase ]] || fail "production write source is not Supabase"
+  fi
+  [[ "$(systemctl is-active "$WORKER_UNIT" 2>/dev/null || true)" != active ]] || fail "production worker must be stopped"
+  log "preflight=ok"
+  log "free_disk_mb=$free_mb"
+  log "phase=${phase:-idle}"
+}
+
+latest_supabase_archive() {
+  find /var/backups/getomerch/daily -maxdepth 1 -type f \
+    -name 'getomerch-backup-*.tar.gz.gpg' -printf '%T@ %p\n' \
+    | sort -nr | awk 'NR == 1 {print $2}'
+}
+
+verify_final_source_backup() {
+  local archive="$1"
+  local temporary
+  temporary="$(mktemp -d /var/tmp/getomerch-final-source.XXXXXX)"
+  gpg --batch --yes --pinentry-mode loopback \
+    --passphrase-file /etc/komui/backup.key \
+    --decrypt --output "$temporary/archive.tar.gz" "$archive" >/dev/null 2>&1
+  tar -xzf "$temporary/archive.tar.gz" -C "$temporary" manifest.json
+  python3 - "$temporary/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+if data.get("supabase", {}).get("exportStatus") != "ok":
+    raise SystemExit("final Supabase export status is not ok")
+if data.get("supabase", {}).get("workingTableCount") != 20:
+    raise SystemExit("final Supabase export does not contain 20 working tables")
+PY
+  rm -rf "$temporary"
+  local latest_log
+  latest_log="$(find /var/backups/getomerch/logs -maxdepth 1 -type f -name 'getomerch-backup-*.log' -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 {print $2}')"
+  grep -qx '.*external_upload=ok' "$latest_log" || fail "final Supabase backup was not uploaded off-site"
+}
+
+run_preproduction_checks() {
+  local release
+  release="$(readlink -f /opt/getomerch/current)"
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="getomerch-cutover-read-smoke-$RUN_ID" \
+    --property=User=getomerch \
+    --property=Group=getomerch \
+    --property="WorkingDirectory=$release" \
+    --property="EnvironmentFile=$ADMIN_ENV" \
+    --property="EnvironmentFile=$DATABASE_ENV" \
+    --setenv=ADMIN_BFF_BASE_URL=http://127.0.0.1:3100 \
+    --setenv=EXPECTED_DB_READ_SOURCE=server \
+    --setenv=GETOMERCH_PREPRODUCTION_CHECK_KOMUI=true \
+    /usr/bin/node scripts/check-preproduction.mjs
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="getomerch-cutover-maintenance-smoke-$RUN_ID" \
+    --property=User=getomerch \
+    --property=Group=getomerch \
+    --property="WorkingDirectory=$release" \
+    --property="EnvironmentFile=$ADMIN_ENV" \
+    --property="EnvironmentFile=$DATABASE_ENV" \
+    --setenv=ADMIN_BFF_BASE_URL=http://127.0.0.1:3100 \
+    /usr/bin/node scripts/check-maintenance-mode.mjs
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="getomerch-cutover-ozon-connectivity-$RUN_ID" \
+    --property=User=getomerch \
+    --property=Group=getomerch \
+    --property="WorkingDirectory=$release" \
+    --property="EnvironmentFile=$ADMIN_ENV" \
+    /usr/bin/node scripts/check-ozon-connectivity.mjs
+}
+
+run_transaction_rollback_check() {
+  (
+    set -a
+    source "$DATABASE_ENV"
+    set +a
+    psql -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+BEGIN;
+SELECT id FROM public.merch_inventory ORDER BY id LIMIT 1 FOR UPDATE;
+UPDATE public.merch_inventory
+SET quantity = quantity
+WHERE id = (SELECT id FROM public.merch_inventory ORDER BY id LIMIT 1);
+ROLLBACK;
+SQL
+  )
+}
+
+restore_empty_local_target() {
+  local previous_db="$1"
+  [[ "$previous_db" =~ ^getomerch_production_previous_[0-9_]+$ ]] || return 0
+  exists="$(runuser -u postgres -- psql -X -d postgres -Atc \
+    "select count(*) from pg_database where datname='$previous_db'")"
+  [[ "$exists" == 1 ]] || return 0
+  runuser -u postgres -- psql -X -d postgres -v ON_ERROR_STOP=1 >/dev/null <<SQL
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = 'getomerch_production' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS getomerch_production;
+ALTER DATABASE $previous_db RENAME TO getomerch_production;
+SQL
+}
+
+rollback_prewrite() {
+  local previous_env previous_db
+  previous_env="$(state_field previousEnvBackup)"
+  previous_db="$(state_field previousDatabase)"
+  if [[ -z "$previous_db" && -L /var/lib/getomerch/cutover/imports/latest ]]; then
+    previous_db="$(env_value "$(readlink -f /var/lib/getomerch/cutover/imports/latest)/report.env" previous_database)"
+  fi
+  systemctl disable --now "$WORKER_UNIT" >/dev/null 2>&1 || true
+  systemctl disable --now "$DATABASE_BACKUP_TIMER" >/dev/null 2>&1 || true
+  if [[ -n "$previous_env" && -s "$previous_env" ]]; then
+    install -o root -g root -m 0600 "$previous_env" "$ADMIN_ENV"
+  else
+    set_admin_runtime supabase supabase off
+  fi
+  rm -f "$ADMIN_DROPIN"
+  systemctl daemon-reload
+  restore_empty_local_target "$previous_db"
+  systemctl restart "$SERVICE_UNIT"
+  wait_for_admin
+  systemctl enable --now "$SOURCE_BACKUP_TIMER" >/dev/null 2>&1 || true
+  write_state aborted "$previous_env" "" "$(state_field sourceArchive)" ""
+  log "pre-write rollback completed; runtime is back on Supabase"
+}
+
+prepare() {
+  [[ "$CONFIRMATION" == --confirm-maintenance ]] || fail "prepare requires --confirm-maintenance"
+  preflight
+  CURRENT_OPERATION=prepare
+  install -d -m 0700 "$RUN_DIR"
+  exec > >(tee "$LOG_FILE") 2>&1
+
+  previous_env="$REPORT_ROOT/admin-production.env.before-$RUN_ID"
+  install -o root -g root -m 0600 "$ADMIN_ENV" "$previous_env"
+  write_state preparing "$previous_env" "" "" ""
+
+  ensure_internal_token
+  /usr/local/sbin/getomerch-maintenance enable "Перенос рабочей базы данных"
+  systemctl disable --now "$WORKER_UNIT" >/dev/null 2>&1 || true
+  systemctl stop "$DATABASE_BACKUP_TIMER" >/dev/null 2>&1 || true
+  systemctl stop "$SOURCE_BACKUP_TIMER" >/dev/null 2>&1 || true
+
+  log "creating final Supabase and KOMUI backups"
+  /usr/local/sbin/getomerch-backup
+  /usr/local/sbin/komui-backup
+  source_archive="$(latest_supabase_archive)"
+  [[ -n "$source_archive" ]] || fail "final Supabase archive was not created"
+  verify_final_source_backup "$source_archive"
+  write_state importing "$previous_env" "" "$source_archive" ""
+
+  log "building getomerch_production from the final frozen source"
+  GETOMERCH_DATA_TARGET=production GETOMERCH_REHEARSAL_MAX_ARCHIVE_AGE_SECONDS=1800 \
+    /usr/local/sbin/getomerch-data-rehearsal "$source_archive"
+  import_report="$(readlink -f /var/lib/getomerch/cutover/imports/latest)/report.env"
+  previous_db="$(env_value "$import_report" previous_database)"
+  [[ "$previous_db" =~ ^getomerch_production_previous_[0-9_]+$ ]] || fail "production import did not report the previous database"
+  write_state switching "$previous_env" "$previous_db" "$source_archive" ""
+
+  log "switching the read-only runtime to local PostgreSQL"
+  set_admin_runtime server server read_only
+  install_database_dropin
+  systemctl restart "$SERVICE_UNIT"
+  wait_for_admin
+  /usr/local/sbin/getomerch-maintenance status
+  run_preproduction_checks
+  run_transaction_rollback_check
+
+  log "creating and restoring the first encrypted local database backup"
+  /usr/local/sbin/getomerch-database-backup
+  /usr/local/sbin/getomerch-database-restore-drill
+  systemctl is-active --quiet komui-production-backend.service || fail "KOMUI production backend changed state"
+  systemctl is-active --quiet komui-backend.service || fail "KOMUI stage backend changed state"
+
+  systemctl disable "$SOURCE_BACKUP_TIMER" >/dev/null 2>&1 || true
+  write_state prepared "$previous_env" "$previous_db" "$source_archive" ""
+  CURRENT_OPERATION=""
+  log "cutover preparation is complete; maintenance remains read_only"
+  log "next command: sudo /usr/local/sbin/getomerch-cutover go --confirm-writes"
+}
+
+go_live() {
+  [[ "$CONFIRMATION" == --confirm-writes ]] || fail "go requires --confirm-writes"
+  [[ "$(state_field phase)" == prepared ]] || fail "cutover is not in prepared state"
+  [[ -z "$(state_field writesOpenedAt)" ]] || fail "writes were already opened"
+  [[ "$(env_value "$ADMIN_ENV" GETOMERCH_DB_READ_SOURCE)" == server ]] || fail "read source is not server"
+  [[ "$(env_value "$ADMIN_ENV" GETOMERCH_DB_WRITE_SOURCE)" == server ]] || fail "write source is not server"
+  [[ "$(env_value "$ADMIN_ENV" GETOMERCH_MAINTENANCE_MODE)" == read_only ]] || fail "maintenance mode is not read_only"
+  latest_restore="$(readlink -f /var/lib/getomerch/database-restore-drills/latest)/report.env"
+  [[ -s "$latest_restore" && "$(env_value "$latest_restore" status)" == success ]] || fail "latest local restore drill is not successful"
+
+  opened_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_state opening "$(state_field previousEnvBackup)" "$(state_field previousDatabase)" "$(state_field sourceArchive)" "$opened_at"
+  set_admin_runtime server server off
+  systemctl restart "$SERVICE_UNIT"
+  wait_for_admin
+  write_state live "$(state_field previousEnvBackup)" "$(state_field previousDatabase)" "$(state_field sourceArchive)" "$opened_at"
+
+  systemctl enable --now "$WORKER_UNIT"
+  systemctl enable --now "$DATABASE_BACKUP_TIMER"
+  systemctl is-active --quiet "$WORKER_UNIT" || fail "worker did not start after Go"
+  systemctl is-active --quiet "$DATABASE_BACKUP_TIMER" || fail "database backup timer did not start after Go"
+  log "production writes are open on local PostgreSQL"
+  log "automatic Ozon sync timers remain disabled for the first 24 hours"
+  log "rollback is now forward-fix/data-replay only; simple Supabase abort is forbidden"
+}
+
+abort_cutover() {
+  [[ "$CONFIRMATION" == --confirm-abort ]] || fail "abort requires --confirm-abort"
+  phase="$(state_field phase)"
+  [[ "$phase" == prepared || "$phase" == preparing || "$phase" == importing || "$phase" == switching ]] || \
+    fail "pre-write abort is only allowed before Go"
+  [[ -z "$(state_field writesOpenedAt)" ]] || fail "writes were opened; use forward-fix/data-replay runbook"
+  rollback_prewrite
+}
+
+show_status() {
+  printf 'phase=%s\n' "$(state_field phase)"
+  printf 'updated_at=%s\n' "$(state_field updatedAt)"
+  printf 'writes_opened_at=%s\n' "$(state_field writesOpenedAt)"
+  printf 'read_source=%s\n' "$(runtime_source GETOMERCH_DB_READ_SOURCE)"
+  printf 'write_source=%s\n' "$(runtime_source GETOMERCH_DB_WRITE_SOURCE)"
+  printf 'maintenance=%s\n' "$(env_value "$ADMIN_ENV" GETOMERCH_MAINTENANCE_MODE || true)"
+  printf 'admin_service=%s\n' "$(systemctl is-active "$SERVICE_UNIT" 2>/dev/null || true)"
+  printf 'worker_service=%s\n' "$(systemctl is-active "$WORKER_UNIT" 2>/dev/null || true)"
+  printf 'source_backup_timer=%s\n' "$(systemctl is-active "$SOURCE_BACKUP_TIMER" 2>/dev/null || true)"
+  printf 'database_backup_timer=%s\n' "$(systemctl is-active "$DATABASE_BACKUP_TIMER" 2>/dev/null || true)"
+  printf 'production_public_tables=%s\n' "$(runuser -u postgres -- psql -X -d getomerch_production -Atc "select count(*) from pg_catalog.pg_tables where schemaname='public'" 2>/dev/null || true)"
+}
+
+on_error() {
+  local rc="$1"
+  local line="$2"
+  trap - ERR
+  log "ERROR: $CURRENT_OPERATION failed at line $line with exit code $rc"
+  if [[ "$CURRENT_OPERATION" == prepare && -z "$(state_field writesOpenedAt)" ]]; then
+    rollback_prewrite || true
+  fi
+  exit "$rc"
+}
+trap 'on_error "$?" "$LINENO"' ERR
+
+install -d -m 0700 "$REPORT_ROOT"
+exec 8>"$LOCK_FILE"
+flock -n 8 || fail "another cutover command is running"
+
+case "$COMMAND" in
+  preflight) preflight ;;
+  prepare) prepare ;;
+  go) go_live ;;
+  abort) abort_cutover ;;
+  status) show_status ;;
+  *) fail "usage: $0 {preflight|prepare --confirm-maintenance|go --confirm-writes|abort --confirm-abort|status}" ;;
+esac

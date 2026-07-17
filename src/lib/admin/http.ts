@@ -6,6 +6,8 @@ export type AdminApiErrorCode =
   | "bad_request"
   | "unauthorized"
   | "not_found"
+  | "conflict"
+  | "maintenance"
   | "method_not_allowed"
   | "supabase_query_failed"
   | "server_config_error"

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
+import { getDatabaseRuntimeConfig } from "@/lib/db/config";
+import { enqueueOzonJob } from "@/lib/jobs/http";
 
 export const dynamic = "force-dynamic";
 
@@ -104,18 +106,36 @@ async function fetchAllOperations(from: string, to: string): Promise<OzonFinance
 
 export async function POST(req: Request) {
   try {
+    const url = new URL(req.url);
+    const fromParam = url.searchParams.get("from");
+    const toParam = url.searchParams.get("to");
+    const dryRun = parseBoolean(url.searchParams.get("dryRun"), "dryRun");
+    const to = parseIsoDate(toParam, new Date(Date.now() + 86400 * 1000), "to");
+    const from = parseIsoDate(fromParam, new Date(Date.now() - 365 * 86400 * 1000), "from");
+    if (new Date(from) >= new Date(to)) {
+      throw new AdminApiError(400, "bad_request", "from must be earlier than to");
+    }
+
+    if (getDatabaseRuntimeConfig().writeSource === "server") {
+      const queued = await enqueueOzonJob(req, {
+        type: "ozon_finance_sync",
+        dedupeKey: `finance:${from}:${to}:${dryRun ? "dry" : "apply"}`,
+        payload: { from, to, dryRun },
+        maxAttempts: 4,
+      });
+      return NextResponse.json({
+        ok: true,
+        queued: true,
+        reused: queued.reused,
+        jobId: queued.job.id,
+        status: queued.job.status,
+      }, { status: 202 });
+    }
+
     await requireAdminSession();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
-    const url = new URL(req.url);
-    const fromParam = url.searchParams.get("from");
-    const toParam = url.searchParams.get("to");
-    // Default: last 365 days (УСН отчётность — годовая)
-    const to = toParam ? new Date(toParam).toISOString() : new Date(Date.now() + 86400 * 1000).toISOString();
-    const from = fromParam
-      ? new Date(fromParam).toISOString()
-      : new Date(Date.now() - 365 * 86400 * 1000).toISOString();
 
     const supabase = getAdminSupabaseClient();
 
@@ -175,6 +195,21 @@ export async function POST(req: Request) {
     const msg = formatError(e);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+function parseIsoDate(value: string | null, fallback: Date, name: string) {
+  const parsed = value ? new Date(value) : fallback;
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new AdminApiError(400, "bad_request", `${name} must be a valid date`);
+  }
+  return parsed.toISOString();
+}
+
+function parseBoolean(value: string | null, name: string) {
+  if (value == null || value === "") return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AdminApiError(400, "bad_request", `${name} must be true or false`);
 }
 
 function formatError(e: unknown): string {

@@ -7,9 +7,22 @@ BACKUP_ROOT="${GETOMERCH_BACKUP_ROOT:-/var/backups/getomerch}"
 KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
 EXTERNAL_ENV_FILE="${GETOMERCH_BACKUP_EXTERNAL_ENV_FILE:-/etc/komui/yandex-backup.env}"
 CONFIG_ENV_FILE="${GETOMERCH_BACKUP_ENV_FILE:-/etc/getomerch/backup.env}"
+ADMIN_ENV_FILE="${GETOMERCH_ADMIN_ENV_FILE:-/etc/getomerch/admin-production.env}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
 DEPLOY_LOG_DAYS="${GETOMERCH_BACKUP_DEPLOY_LOG_DAYS:-14}"
+WORKING_TABLES_FILE="${GETOMERCH_WORKING_TABLES_FILE:-/usr/local/share/getomerch/working-tables.txt}"
+
+[[ -r "$WORKING_TABLES_FILE" ]] || {
+  echo "Working table allowlist is missing: $WORKING_TABLES_FILE" >&2
+  exit 1
+}
+mapfile -t WORKING_TABLES < <(awk '/^merch_[a-z0-9_]+$/{print}' "$WORKING_TABLES_FILE")
+UNIQUE_WORKING_TABLE_COUNT="$(printf '%s\n' "${WORKING_TABLES[@]}" | sort -u | wc -l)"
+[[ "${#WORKING_TABLES[@]}" -eq 20 && "$UNIQUE_WORKING_TABLE_COUNT" -eq 20 ]] || {
+  echo "Working table allowlist must contain exactly 20 valid table names" >&2
+  exit 1
+}
 
 DAILY_DIR="$BACKUP_ROOT/daily"
 WEEKLY_DIR="$BACKUP_ROOT/weekly"
@@ -79,14 +92,19 @@ git_origin_main() {
   fi
 }
 
+load_optional_env "$ADMIN_ENV_FILE"
 load_optional_env "$CONFIG_ENV_FILE"
 
-SUPABASE_DATABASE_URL="${GETOMERCH_SUPABASE_DATABASE_URL:-${SUPABASE_DATABASE_URL:-}}"
 SUPABASE_PROJECT_ID="${GETOMERCH_SUPABASE_PROJECT_ID:-bkxpzfnglihxpbnhtjjq}"
-SUPABASE_EXPORT_STATUS="skipped_missing_database_url"
+INCLUDE_FULL_SUPABASE_DUMP="${GETOMERCH_BACKUP_INCLUDE_FULL_SUPABASE_DUMP:-false}"
+SUPABASE_EXPORT_STATUS="skipped_missing_rest_credentials"
 SUPABASE_SCHEMA_FILE="supabase-schema.sql"
-SUPABASE_DATA_FILE="supabase-merch-data.dump"
+SUPABASE_DATA_FILE="supabase-working-20.tar.gz"
+SUPABASE_FULL_DUMP_FILE="supabase-full-project.tar.gz"
 SUPABASE_POLICIES_FILE="supabase-policies.tsv"
+SUPABASE_COUNTS_FILE="supabase-working-counts.tsv"
+LOGICAL_EXPORT_BIN="${GETOMERCH_LOGICAL_EXPORT_BIN:-/usr/local/sbin/getomerch-logical-export}"
+FORENSIC_TABLES_FILE="${GETOMERCH_FORENSIC_TABLES_FILE:-/usr/local/share/getomerch/forensic-public-tables.txt}"
 
 CONFIG_ARCHIVE="$TMP_DIR/runtime-config.tar.gz"
 DEPLOY_LOGS_ARCHIVE="$TMP_DIR/deploy-logs.tar.gz"
@@ -117,6 +135,8 @@ log "capturing admin baseline"
   echo "deploy_source_commit=$(git_short /opt/getomerch/deploy-source)"
   echo "deploy_source_origin_main=$(git_origin_main /opt/getomerch/deploy-source)"
   echo "admin_service=$(systemctl is-active getomerch-admin.service 2>/dev/null || true)"
+  echo "worker_service=$(systemctl is-active getomerch-worker.service 2>/dev/null || true)"
+  echo "worker_enabled=$(systemctl is-enabled getomerch-worker.service 2>/dev/null || true)"
   echo "nginx_service=$(systemctl is-active nginx 2>/dev/null || true)"
   echo
   echo "disk:"
@@ -126,7 +146,7 @@ log "capturing admin baseline"
   /usr/local/sbin/getomerch-deploy-status 2>&1 || true
 } > "$TMP_DIR/baseline/admin-status.txt"
 
-python3 - "$RUN_ID" "$SUPABASE_PROJECT_ID" "$SUPABASE_EXPORT_STATUS" "$SUPABASE_SCHEMA_FILE" "$SUPABASE_DATA_FILE" "$SUPABASE_POLICIES_FILE" <<'PY' > "$TMP_DIR/manifest.json"
+python3 - "$RUN_ID" "$SUPABASE_PROJECT_ID" "$SUPABASE_EXPORT_STATUS" "$SUPABASE_SCHEMA_FILE" "$SUPABASE_DATA_FILE" "$SUPABASE_FULL_DUMP_FILE" "$SUPABASE_POLICIES_FILE" "$SUPABASE_COUNTS_FILE" "${#WORKING_TABLES[@]}" "$INCLUDE_FULL_SUPABASE_DUMP" <<'PY' > "$TMP_DIR/manifest.json"
 import json
 import pathlib
 import socket
@@ -134,7 +154,18 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-run_id, supabase_project_id, supabase_export_status, schema_file, data_file, policies_file = sys.argv[1:7]
+(
+    run_id,
+    supabase_project_id,
+    supabase_export_status,
+    schema_file,
+    data_file,
+    full_dump_file,
+    policies_file,
+    counts_file,
+    working_table_count,
+    include_full_dump,
+) = sys.argv[1:11]
 
 def run(args):
     try:
@@ -155,6 +186,8 @@ manifest = {
     "deploySourceOriginMain": remote_main[0] if remote_main else "",
     "service": {
         "getomerch-admin.service": run(["systemctl", "is-active", "getomerch-admin.service"]),
+        "getomerch-worker.service": run(["systemctl", "is-active", "getomerch-worker.service"]),
+        "getomerch-worker.enabled": run(["systemctl", "is-enabled", "getomerch-worker.service"]),
         "nginx": run(["systemctl", "is-active", "nginx"]),
     },
     "supabase": {
@@ -162,7 +195,12 @@ manifest = {
         "exportStatus": supabase_export_status,
         "schemaFile": schema_file,
         "dataFile": data_file,
+        "workingDumpFile": data_file,
+        "fullProjectDumpFile": full_dump_file,
+        "fullProjectDumpIncluded": include_full_dump.lower() == "true",
         "policiesFile": policies_file,
+        "countsFile": counts_file,
+        "workingTableCount": int(working_table_count),
     },
     "restore": {
         "adminConfigArchive": "runtime-config.tar.gz",
@@ -178,7 +216,18 @@ log "packing runtime config"
 tar -C / -czf "$CONFIG_ARCHIVE" --ignore-failed-read \
   etc/getomerch/admin-production.env \
   etc/getomerch/backup.env \
+  etc/getomerch/database-credentials.env \
+  etc/getomerch/database.env \
+  etc/getomerch/database-rehearsal.env \
+  etc/getomerch/migrator-production.env \
+  etc/getomerch/migrator-rehearsal.env \
+  etc/getomerch/database-backup.env \
+  etc/getomerch/database-backup-rehearsal.env \
+  etc/getomerch/cutover.env \
+  etc/postgresql/17/main/pg_hba.conf \
+  etc/postgresql/17/main/pg_hba_getomerch.conf \
   etc/systemd/system/getomerch-admin.service \
+  etc/systemd/system/getomerch-worker.service \
   etc/systemd/system/getomerch-backup.service \
   etc/systemd/system/getomerch-backup.timer \
   etc/nginx/sites-available/getomerch-admin \
@@ -187,8 +236,31 @@ tar -C / -czf "$CONFIG_ARCHIVE" --ignore-failed-read \
   usr/local/sbin/getomerch-deploy-status \
   usr/local/sbin/getomerch-rollback \
   usr/local/sbin/getomerch-backup \
+  usr/local/sbin/getomerch-logical-export \
+  usr/local/sbin/getomerch-restore-drill \
+  usr/local/sbin/getomerch-db-healthcheck \
+  usr/local/sbin/getomerch-postgres-bootstrap \
+  usr/local/sbin/getomerch-data-rehearsal \
+  usr/local/sbin/getomerch-admin-rehearsal \
+  usr/local/sbin/getomerch-local-db-restore-drill \
+  usr/local/sbin/getomerch-server-write-rehearsal \
+  usr/local/sbin/getomerch-supabase-rollback-rehearsal \
+  usr/local/sbin/getomerch-maintenance \
+  usr/local/sbin/getomerch-cutover \
+  usr/local/sbin/getomerch-database-backup \
+  usr/local/sbin/getomerch-database-restore-drill \
+  usr/local/lib/getomerch/getomerch-rest-export.mjs \
+  usr/local/lib/getomerch/getomerch-data-fingerprint.py \
+  usr/local/lib/getomerch/database \
+  usr/local/share/getomerch/working-tables.txt \
+  usr/local/share/getomerch/forensic-public-tables.txt \
+  usr/local/share/getomerch/working-schema-pre.sql \
+  usr/local/share/getomerch/working-schema-post.sql \
+  usr/local/share/getomerch/working-policies.csv \
+  usr/local/share/getomerch/supabase-public-catalog.jsonl \
   var/lib/getomerch/deploy-registry.jsonl \
   var/lib/getomerch/deploy-current.json \
+  var/lib/getomerch/rehearsals \
   var/lib/getomerch/audit 2>/dev/null || true
 
 log "packing recent deploy logs"
@@ -200,21 +272,42 @@ else
   tar -C "$TMP_DIR" -czf "$DEPLOY_LOGS_ARCHIVE" no-deploy-logs.txt
 fi
 
-if [[ -n "$SUPABASE_DATABASE_URL" ]]; then
-  log "exporting Supabase schema and merch data"
-  pg_dump --schema-only --no-owner --no-acl "$SUPABASE_DATABASE_URL" > "$TMP_DIR/supabase/$SUPABASE_SCHEMA_FILE"
-  pg_dump --data-only --no-owner --no-acl -Fc -t 'public.merch_*' "$SUPABASE_DATABASE_URL" > "$TMP_DIR/supabase/$SUPABASE_DATA_FILE"
-  psql "$SUPABASE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -F $'\t' -Atc \
-    "select schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check from pg_policies where schemaname = 'public' and tablename like 'merch_%' order by schemaname, tablename, policyname" \
-    > "$TMP_DIR/supabase/$SUPABASE_POLICIES_FILE"
+SUPABASE_REST_URL="${GETOMERCH_SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-${SUPABASE_URL:-}}}"
+SUPABASE_SERVER_KEY="${GETOMERCH_SUPABASE_SERVICE_ROLE_KEY:-${GETOMERCH_SUPABASE_SERVER_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-}}}"
+if [[ -n "$SUPABASE_REST_URL" && -n "$SUPABASE_SERVER_KEY" ]]; then
+  [[ -x "$LOGICAL_EXPORT_BIN" ]] || {
+    log "logical export helper is missing: $LOGICAL_EXPORT_BIN"
+    exit 1
+  }
+  log "exporting Supabase exact working allowlist through the server-side REST path"
+  install -d -m 0700 "$TMP_DIR/working-export"
+  timeout 10m "$LOGICAL_EXPORT_BIN" working "$WORKING_TABLES_FILE" "$TMP_DIR/working-export"
+  cp "$TMP_DIR/working-export/schema.sql" "$TMP_DIR/supabase/$SUPABASE_SCHEMA_FILE"
+  cp "$TMP_DIR/working-export/counts.tsv" "$TMP_DIR/supabase/$SUPABASE_COUNTS_FILE"
+  cp "$TMP_DIR/working-export/policies.tsv" "$TMP_DIR/supabase/$SUPABASE_POLICIES_FILE"
+  cp "$TMP_DIR/working-export/export.tar.gz" "$TMP_DIR/supabase/$SUPABASE_DATA_FILE"
+  if [[ "$INCLUDE_FULL_SUPABASE_DUMP" == "true" ]]; then
+    log "exporting full Supabase forensic catalog and all user-table data"
+    [[ -r "$FORENSIC_TABLES_FILE" ]] || {
+      log "forensic table list is missing: $FORENSIC_TABLES_FILE"
+      exit 1
+    }
+    install -d -m 0700 "$TMP_DIR/full-export"
+    timeout 15m "$LOGICAL_EXPORT_BIN" forensic "$FORENSIC_TABLES_FILE" "$TMP_DIR/full-export"
+    cp "$TMP_DIR/full-export/export.tar.gz" "$TMP_DIR/supabase/$SUPABASE_FULL_DUMP_FILE"
+  fi
   SUPABASE_EXPORT_STATUS="ok"
 else
   cat > "$TMP_DIR/supabase/README.txt" <<'README'
-Supabase export was skipped because GETOMERCH_SUPABASE_DATABASE_URL is not set.
+Supabase export was skipped because the REST URL or server-side key is not set.
 
-Add /etc/getomerch/backup.env with a server-side Postgres connection string:
+The backup process reads the production admin env. It requires:
 
-  GETOMERCH_SUPABASE_DATABASE_URL=postgresql://...
+  NEXT_PUBLIC_SUPABASE_URL=https://PROJECT.supabase.co
+  GETOMERCH_SUPABASE_SERVICE_ROLE_KEY=...
+
+GETOMERCH_SUPABASE_SERVER_KEY is also supported. Never expose either key as a
+NEXT_PUBLIC variable.
 
 Then rerun:
 
@@ -222,7 +315,8 @@ Then rerun:
 README
 fi
 
-python3 - "$TMP_DIR/manifest.json" "$SUPABASE_EXPORT_STATUS" <<'PY'
+python3 - "$TMP_DIR/manifest.json" "$SUPABASE_EXPORT_STATUS" "$TMP_DIR/supabase" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -230,6 +324,25 @@ from pathlib import Path
 path = Path(sys.argv[1])
 data = json.loads(path.read_text())
 data["supabase"]["exportStatus"] = sys.argv[2]
+data["supabase"]["exportMethod"] = "supabase-rest-with-reviewed-schema-snapshot"
+data["supabase"]["consistency"] = "keyset pagination with exact count before/after each table; restore validates constraints, counts, and business invariants"
+supabase_dir = Path(sys.argv[3])
+files = {}
+for field in ("schemaFile", "workingDumpFile", "fullProjectDumpFile", "policiesFile", "countsFile"):
+    filename = data["supabase"].get(field)
+    file_path = supabase_dir / filename if filename else None
+    if not file_path or not file_path.is_file():
+        continue
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    files[field] = {
+        "name": filename,
+        "sizeBytes": file_path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+data["supabase"]["files"] = files
 path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
 
@@ -279,13 +392,18 @@ if [[ -f "$EXTERNAL_ENV_FILE" ]]; then
   if [[ -z "${YANDEX_S3_BUCKET:-}" || -z "${YANDEX_S3_ENDPOINT:-}" ]]; then
     external_status="skipped_missing_bucket_or_endpoint"
   else
-    prefix="${GETOMERCH_BACKUP_S3_PREFIX:-${YANDEX_S3_PREFIX:-}}"
-    prefix="${prefix#/}"
-    prefix="${prefix%/}"
-    if [[ -n "$prefix" ]]; then
-      prefix="${prefix}/getomerch"
+    if [[ -n "${GETOMERCH_BACKUP_S3_PREFIX:-}" ]]; then
+      prefix="${GETOMERCH_BACKUP_S3_PREFIX#/}"
+      prefix="${prefix%/}"
     else
-      prefix="getomerch"
+      prefix="${YANDEX_S3_PREFIX:-}"
+      prefix="${prefix#/}"
+      prefix="${prefix%/}"
+      if [[ -n "$prefix" ]]; then
+        prefix="${prefix}/getomerch"
+      else
+        prefix="getomerch"
+      fi
     fi
     external_destination="s3://${YANDEX_S3_BUCKET}/${prefix}/$(basename "$FINAL_ARCHIVE")"
 

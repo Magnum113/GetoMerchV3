@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+BACKUP_ROOT="${GETOMERCH_BACKUP_ROOT:-/var/backups/getomerch}"
+KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
+WORKING_TABLES_FILE="${GETOMERCH_WORKING_TABLES_FILE:-/usr/local/share/getomerch/working-tables.txt}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+REPORT_DIR="$BACKUP_ROOT/restore-drills"
+TMP_DIR="$(mktemp -d "$BACKUP_ROOT/.restore-drill-${RUN_ID}.XXXXXX")"
+DB_NAME="getomerch_restore_drill_$(date -u +%Y%m%d_%H%M%S)"
+REPORT_FILE="$REPORT_DIR/restore-drill-${RUN_ID}.txt"
+START_EPOCH="$(date +%s)"
+DB_CREATED=false
+STATUS=failed
+
+install -d -m 0700 "$REPORT_DIR"
+
+cleanup() {
+  if [[ "$DB_CREATED" == true ]]; then
+    runuser -u postgres -- dropdb --if-exists "$DB_NAME" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+
+finish_report() {
+  local rc="$1"
+  local elapsed
+  elapsed="$(($(date +%s) - START_EPOCH))"
+  {
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "status=$STATUS"
+    echo "exit_code=$rc"
+    echo "elapsed_seconds=$elapsed"
+  } >> "$REPORT_FILE"
+}
+
+on_exit() {
+  local rc="$?"
+  trap - EXIT
+  finish_report "$rc"
+  cleanup
+  exit "$rc"
+}
+trap on_exit EXIT
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+for command in gpg psql python3 runuser sha256sum tar; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
+done
+
+[[ -s "$KEY_FILE" ]] || fail "backup key is missing: $KEY_FILE"
+[[ -r "$WORKING_TABLES_FILE" ]] || fail "working table allowlist is missing: $WORKING_TABLES_FILE"
+
+declare -A ALLOWED_TABLES=()
+declare -a ORDERED_TABLES=()
+while IFS= read -r table; do
+  [[ "$table" =~ ^merch_[a-z0-9_]+$ ]] || continue
+  ALLOWED_TABLES["$table"]=1
+  ORDERED_TABLES+=("$table")
+done < "$WORKING_TABLES_FILE"
+[[ "${#ALLOWED_TABLES[@]}" -eq 20 && "${#ORDERED_TABLES[@]}" -eq 20 ]] || \
+  fail "working table allowlist must contain 20 unique tables"
+
+ARCHIVE="${1:-}"
+if [[ -z "$ARCHIVE" ]]; then
+  ARCHIVE="$(find "$BACKUP_ROOT/daily" -maxdepth 1 -type f -name 'getomerch-backup-*.tar.gz.gpg' -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 {print $2}')"
+fi
+
+[[ -n "$ARCHIVE" && -s "$ARCHIVE" ]] || fail "backup archive was not found"
+[[ -s "$ARCHIVE.sha256" ]] || fail "backup checksum was not found"
+
+{
+  echo "restore_drill_id=$RUN_ID"
+  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "backup_archive=$(basename "$ARCHIVE")"
+  echo "temporary_database=$DB_NAME"
+} > "$REPORT_FILE"
+
+sha256sum -c "$ARCHIVE.sha256" >/dev/null
+
+PLAIN_ARCHIVE="$TMP_DIR/backup.tar.gz"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --decrypt --output "$PLAIN_ARCHIVE" "$ARCHIVE" >/dev/null 2>&1
+
+tar -xzf "$PLAIN_ARCHIVE" -C "$TMP_DIR" manifest.json supabase-export.tar.gz SHA256SUMS
+(
+  cd "$TMP_DIR"
+  sha256sum -c SHA256SUMS --ignore-missing >/dev/null
+)
+
+install -d -m 0700 "$TMP_DIR/supabase"
+tar -xzf "$TMP_DIR/supabase-export.tar.gz" -C "$TMP_DIR/supabase"
+
+readarray -t manifest_values < <(python3 - "$TMP_DIR/manifest.json" "$TMP_DIR/supabase" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+supabase_dir = Path(sys.argv[2])
+manifest = json.loads(manifest_path.read_text())
+supabase = manifest.get("supabase", {})
+if supabase.get("exportStatus") != "ok":
+    raise SystemExit("Supabase export status is not ok")
+
+files = supabase.get("files", {})
+for field, metadata in files.items():
+    path = supabase_dir / metadata["name"]
+    if not path.is_file():
+        raise SystemExit(f"Missing exported file: {metadata['name']}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != metadata["sha256"]:
+        raise SystemExit(f"Checksum mismatch: {metadata['name']}")
+
+print(supabase["workingDumpFile"])
+print(supabase["fullProjectDumpFile"])
+print(supabase["countsFile"])
+print(supabase["workingTableCount"])
+PY
+)
+
+[[ "${#manifest_values[@]}" -eq 4 ]] || fail "manifest does not describe the required Supabase files"
+WORKING_DUMP="$TMP_DIR/supabase/${manifest_values[0]}"
+FULL_DUMP="$TMP_DIR/supabase/${manifest_values[1]}"
+COUNTS_FILE="$TMP_DIR/supabase/${manifest_values[2]}"
+EXPECTED_TABLE_COUNT="${manifest_values[3]}"
+
+tar -tzf "$WORKING_DUMP" >/dev/null
+if [[ -s "$FULL_DUMP" ]]; then
+  tar -tzf "$FULL_DUMP" >/dev/null
+  echo "full_project_dump_catalog=ok" >> "$REPORT_FILE"
+else
+  echo "full_project_dump_catalog=not_included" >> "$REPORT_FILE"
+fi
+
+install -d -m 0700 "$TMP_DIR/working"
+tar -xzf "$WORKING_DUMP" -C "$TMP_DIR/working"
+[[ -s "$TMP_DIR/working/schema.sql" ]] || fail "working schema is missing"
+[[ -s "$TMP_DIR/working/schema-pre.sql" ]] || fail "working pre-data schema is missing"
+[[ -s "$TMP_DIR/working/schema-post.sql" ]] || fail "working post-data schema is missing"
+[[ -s "$TMP_DIR/working/counts.tsv" ]] || fail "working counts are missing"
+[[ -s "$TMP_DIR/working/rows.ndjson" ]] || fail "working row export is missing"
+
+runuser -u postgres -- createdb --template=template0 "$DB_NAME"
+DB_CREATED=true
+cat "$TMP_DIR/working/schema-pre.sql" | runuser -u postgres -- psql \
+  "$DB_NAME" -X -v ON_ERROR_STOP=1 >/dev/null
+
+runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -c \
+  'CREATE TABLE public.getomerch_restore_payload (table_name text NOT NULL, payload jsonb NOT NULL)' >/dev/null
+python3 - "$TMP_DIR/working/rows.ndjson" "$TMP_DIR/working/rows.csv" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+with source.open() as input_handle, target.open("w", newline="") as output_handle:
+    writer = csv.writer(output_handle)
+    writer.writerow(("table_name", "payload"))
+    for line_number, line in enumerate(input_handle, 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        table = row.get("table_name")
+        payload = row.get("payload")
+        if not isinstance(table, str) or not isinstance(payload, dict):
+            raise SystemExit(f"invalid row export at line {line_number}")
+        writer.writerow((table, json.dumps(payload, ensure_ascii=False, separators=(",", ":"))))
+PY
+cat "$TMP_DIR/working/rows.csv" | runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 \
+  -c 'COPY public.getomerch_restore_payload (table_name, payload) FROM STDIN WITH (FORMAT csv, HEADER true)' >/dev/null
+
+for table in "${ORDERED_TABLES[@]}"; do
+  runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -c \
+    "INSERT INTO public.\"${table}\" SELECT (jsonb_populate_record(NULL::public.\"${table}\", payload)).* FROM public.getomerch_restore_payload WHERE table_name = '${table}'" \
+    >/dev/null
+done
+runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -c \
+  'DROP TABLE public.getomerch_restore_payload' >/dev/null
+
+cat "$TMP_DIR/working/schema-post.sql" | runuser -u postgres -- psql \
+  "$DB_NAME" -X -v ON_ERROR_STOP=1 >/dev/null
+
+ACTUAL_TABLE_COUNT="$(
+  runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -Atc \
+    "select count(*) from pg_tables where schemaname='public' and tablename like 'merch_%'"
+)"
+[[ "$ACTUAL_TABLE_COUNT" == "$EXPECTED_TABLE_COUNT" ]] || \
+  fail "restored table count mismatch: expected $EXPECTED_TABLE_COUNT, got $ACTUAL_TABLE_COUNT"
+
+COUNT_MISMATCHES=0
+COUNT_ROWS=0
+while IFS=$'\t' read -r table expected; do
+  [[ "$table" =~ ^merch_[a-z0-9_]+$ ]] || fail "unsafe table name in counts file"
+  [[ -n "${ALLOWED_TABLES[$table]:-}" ]] || fail "table outside working allowlist: $table"
+  COUNT_ROWS=$((COUNT_ROWS + 1))
+  actual="$(runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -Atc \
+    "select count(*) from public.\"${table}\"")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "count_mismatch=${table}:${expected}:${actual}" >> "$REPORT_FILE"
+    COUNT_MISMATCHES=$((COUNT_MISMATCHES + 1))
+  fi
+done < "$TMP_DIR/working/counts.tsv"
+[[ "$COUNT_ROWS" -eq 20 ]] || fail "counts file must contain exactly 20 tables"
+[[ "$COUNT_MISMATCHES" -eq 0 ]] || fail "$COUNT_MISMATCHES table count mismatches"
+
+INVARIANT_SQL=$(cat <<'SQL'
+select 'negative_product_inventory', count(*) from public.merch_inventory where quantity < 0
+union all select 'negative_print_inventory', count(*) from public.merch_print_inventory where quantity < 0
+union all select 'duplicate_sku', count(*) from (select sku from public.merch_products group by sku having count(*) > 1) s
+union all select 'duplicate_ozon_sku', count(*) from (select ozon_sku from public.merch_products where ozon_sku is not null group by ozon_sku having count(*) > 1) s
+union all select 'duplicate_posting_number', count(*) from (select posting_number from public.merch_ozon_orders group by posting_number having count(*) > 1) s
+union all select 'duplicate_finance_operation', count(*) from (select operation_id from public.merch_ozon_finance_operations group by operation_id having count(*) > 1) s
+order by 1
+SQL
+)
+
+INVARIANT_RESULT="$(runuser -u postgres -- psql "$DB_NAME" -X -v ON_ERROR_STOP=1 -F $'\t' -Atc "$INVARIANT_SQL")"
+printf '%s\n' "$INVARIANT_RESULT" | sed 's/^/invariant=/' >> "$REPORT_FILE"
+if printf '%s\n' "$INVARIANT_RESULT" | awk -F $'\t' '$2 != 0 {exit 1}'; then
+  :
+else
+  fail "one or more restored data invariants failed"
+fi
+
+echo "restored_table_count=$ACTUAL_TABLE_COUNT" >> "$REPORT_FILE"
+echo "row_count_comparison=ok" >> "$REPORT_FILE"
+STATUS=success

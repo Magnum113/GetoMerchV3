@@ -39,6 +39,7 @@ build_dir="${GETOMERCH_BUILD_DIR:-$base_dir/build-source}"
 releases_dir="${GETOMERCH_RELEASES_DIR:-$base_dir/releases}"
 current_link="${GETOMERCH_CURRENT_LINK:-$base_dir/current}"
 service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
+worker_unit="${GETOMERCH_WORKER_UNIT:-getomerch-worker.service}"
 log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
 current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
@@ -266,9 +267,13 @@ const forbiddenNames = [
   "KOMUI_STAGE_BASIC_AUTH",
   "OZON_API_KEY",
   "PERFORMANCE_CLIENT_SECRET",
+  "GETOMERCH_DATABASE_URL",
+  "GETOMERCH_MIGRATOR_DATABASE_URL",
+  "GETOMERCH_BACKUP_DATABASE_URL",
   "GETOMERCH_SUPABASE_DATABASE_URL",
   "GETOMERCH_SUPABASE_SERVICE_ROLE_KEY",
   "GETOMERCH_SUPABASE_SERVER_KEY",
+  "GETOMERCH_INTERNAL_SERVICE_TOKEN",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_SERVICE_ROLE",
   "SUPABASE_SERVER_KEY",
@@ -433,6 +438,9 @@ rollback_previous() {
     log "restoring previous release $previous_current"
     ln -sfnT "$previous_current" "$current_link"
     systemctl restart "$service_unit" || true
+    if systemctl is-enabled --quiet "$worker_unit" 2>/dev/null; then
+      systemctl restart "$worker_unit" || true
+    fi
   fi
 }
 
@@ -544,6 +552,10 @@ log "activating release"
 ln -sfnT "$release_dir" "$current_link"
 activated=1
 systemctl restart "$service_unit"
+if systemctl is-enabled --quiet "$worker_unit" 2>/dev/null; then
+  systemctl restart "$worker_unit"
+  add_check "$worker_unit restarted"
+fi
 
 log "waiting for service"
 for _ in $(seq 1 30); do

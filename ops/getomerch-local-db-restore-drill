@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+SOURCE_DB="${GETOMERCH_RESTORE_SOURCE_DB:-getomerch_rehearsal}"
+EXPECTED_VERSION="${GETOMERCH_EXPECTED_MIGRATION_VERSION:-0003}"
+BACKUP_ROOT="${GETOMERCH_DATABASE_BACKUP_ROOT:-/var/backups/getomerch/database}"
+REPORT_ROOT="${GETOMERCH_PREPRODUCTION_REPORT_ROOT:-/var/lib/getomerch/preproduction}"
+KEY_FILE="${GETOMERCH_BACKUP_KEY_FILE:-/etc/komui/backup.key}"
+MIGRATION_RUNNER="${GETOMERCH_MIGRATION_RUNNER:-/usr/local/lib/getomerch/database/db/scripts/migrate.mjs}"
+DATA_CHECK_FILE="${GETOMERCH_DATA_CHECK_FILE:-/usr/local/lib/getomerch/database/db/checks/0001_getomerch_data_integrity.sql}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+RESTORE_DB="getomerch_stage9_restore_$(date -u +%Y%m%d_%H%M%S)"
+RUN_DIR="$REPORT_ROOT/local-restore-$RUN_ID"
+REPORT_FILE="$RUN_DIR/report.env"
+TMP_DIR="$(mktemp -d /var/tmp/getomerch-local-restore-${RUN_ID}.XXXXXX)"
+PLAIN_DUMP="$TMP_DIR/$SOURCE_DB.dump"
+ENCRYPTED_DUMP="$BACKUP_ROOT/getomerch-db-${SOURCE_DB}-${RUN_ID}.dump.gpg"
+RESTORED=false
+STATUS=failed
+START_EPOCH="$(date +%s)"
+
+install -d -m 0700 "$BACKUP_ROOT" "$RUN_DIR"
+chown root:postgres "$TMP_DIR"
+chmod 0770 "$TMP_DIR"
+
+cleanup() {
+  if [[ "$RESTORED" == true ]]; then
+    runuser -u postgres -- dropdb --force --if-exists "$RESTORE_DB" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+
+on_exit() {
+  local rc="$?"
+  trap - EXIT
+  {
+    echo "finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "status=$STATUS"
+    echo "exit_code=$rc"
+    echo "elapsed_seconds=$(($(date +%s) - START_EPOCH))"
+  } >> "$REPORT_FILE"
+  cleanup
+  exit "$rc"
+}
+trap on_exit EXIT
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in createdb dropdb gpg node pg_dump pg_restore psql runuser sha256sum; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ "$SOURCE_DB" =~ ^getomerch_(rehearsal|production)$ ]] || fail "unsafe source database"
+[[ "$EXPECTED_VERSION" =~ ^[0-9]{4}$ ]] || fail "unsafe expected migration version"
+[[ -s "$KEY_FILE" ]] || fail "backup encryption key is missing"
+[[ -r "$MIGRATION_RUNNER" && -r "$DATA_CHECK_FILE" ]] || fail "migration checks are missing"
+[[ "$(runuser -u postgres -- psql -X -d postgres -Atc "select count(*) from pg_database where datname='$SOURCE_DB'")" == 1 ]] || \
+  fail "source database is missing"
+
+exec 9>/run/lock/getomerch-local-db-restore.lock
+flock -n 9 || fail "another local restore drill is running"
+
+{
+  echo "restore_drill_id=$RUN_ID"
+  echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "source_database=$SOURCE_DB"
+  echo "restore_database=$RESTORE_DB"
+  echo "expected_migration_version=$EXPECTED_VERSION"
+  echo "encrypted_dump=$(basename "$ENCRYPTED_DUMP")"
+} > "$REPORT_FILE"
+
+table_manifest() {
+  local database="$1"
+  while IFS='|' read -r schema table; do
+    [[ "$schema" =~ ^[a-z_][a-z0-9_]*$ && "$table" =~ ^[a-z_][a-z0-9_]*$ ]] || \
+      fail "unsafe table name in manifest"
+    count="$(runuser -u postgres -- psql -X -d "$database" -Atc \
+      "select count(*) from \"$schema\".\"$table\"")"
+    printf '%s.%s|%s\n' "$schema" "$table" "$count"
+  done < <(runuser -u postgres -- psql -X -d "$database" -AtF '|' -c \
+    "select schemaname, tablename from pg_catalog.pg_tables where schemaname in ('public','getomerch_meta','getomerch_audit','getomerch_jobs') order by schemaname, tablename")
+}
+
+log "capturing source manifest and custom-format dump"
+table_manifest "$SOURCE_DB" > "$RUN_DIR/source-counts.tsv"
+SOURCE_TABLES="$(wc -l < "$RUN_DIR/source-counts.tsv" | tr -d ' ')"
+[[ "$SOURCE_TABLES" -ge 25 ]] || fail "source database has an incomplete table set"
+SOURCE_VERSION="$(runuser -u postgres -- psql -X -d "$SOURCE_DB" -Atc \
+  'select coalesce(max(version), '\''none'\'') from getomerch_meta.schema_migrations')"
+[[ "$SOURCE_VERSION" == "$EXPECTED_VERSION" ]] || \
+  fail "source migration version is $SOURCE_VERSION, expected $EXPECTED_VERSION"
+
+runuser -u postgres -- pg_dump -Fc --no-owner --file="$PLAIN_DUMP" "$SOURCE_DB"
+[[ -s "$PLAIN_DUMP" ]] || fail "pg_dump produced an empty file"
+PLAIN_SHA256="$(sha256sum "$PLAIN_DUMP" | awk '{print $1}')"
+echo "plain_dump_sha256=$PLAIN_SHA256" >> "$REPORT_FILE"
+
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --symmetric --cipher-algo AES256 \
+  --output "$ENCRYPTED_DUMP" "$PLAIN_DUMP"
+(
+  cd "$BACKUP_ROOT"
+  sha256sum "$(basename "$ENCRYPTED_DUMP")" > "$(basename "$ENCRYPTED_DUMP.sha256")"
+)
+chmod 0600 "$ENCRYPTED_DUMP" "$ENCRYPTED_DUMP.sha256"
+
+log "verifying encrypted archive and restoring into a disposable database"
+(
+  cd "$BACKUP_ROOT"
+  sha256sum -c "$(basename "$ENCRYPTED_DUMP.sha256")" >/dev/null
+)
+rm -f "$PLAIN_DUMP"
+gpg --batch --yes --pinentry-mode loopback \
+  --passphrase-file "$KEY_FILE" \
+  --decrypt --output "$PLAIN_DUMP" "$ENCRYPTED_DUMP" >/dev/null 2>&1
+[[ "$(sha256sum "$PLAIN_DUMP" | awk '{print $1}')" == "$PLAIN_SHA256" ]] || \
+  fail "decrypted dump checksum mismatch"
+chown postgres:postgres "$PLAIN_DUMP"
+chmod 0600 "$PLAIN_DUMP"
+
+runuser -u postgres -- createdb --owner=getomerch_owner --template=template0 "$RESTORE_DB"
+RESTORED=true
+runuser -u postgres -- pg_restore --exit-on-error --no-owner \
+  --role=getomerch_owner --dbname="$RESTORE_DB" "$PLAIN_DUMP"
+runuser -u postgres -- psql -X -d "$RESTORE_DB" -c 'ANALYZE' >/dev/null
+
+table_manifest "$RESTORE_DB" > "$RUN_DIR/restored-counts.tsv"
+cmp -s "$RUN_DIR/source-counts.tsv" "$RUN_DIR/restored-counts.tsv" || \
+  fail "restored table counts differ from source"
+
+RESTORED_VERSION="$(runuser -u postgres -- psql -X -d "$RESTORE_DB" -Atc \
+  'select coalesce(max(version), '\''none'\'') from getomerch_meta.schema_migrations')"
+[[ "$RESTORED_VERSION" == "$EXPECTED_VERSION" ]] || fail "restored migration version differs"
+
+log "running migration, data and runtime-role checks on restored database"
+runuser -u postgres -- env \
+  PGHOST=/var/run/postgresql PGPORT=5432 PGDATABASE="$RESTORE_DB" PGUSER=postgres \
+  PGSSLMODE=disable GETOMERCH_DATABASE_SSL=false \
+  GETOMERCH_MIGRATION_ROLE=getomerch_owner \
+  node "$MIGRATION_RUNNER" verify > "$RUN_DIR/migration-verify.log"
+runuser -u postgres -- psql -X -d "$RESTORE_DB" -AtF $'\t' \
+  < "$DATA_CHECK_FILE" > "$RUN_DIR/data-integrity.tsv"
+if ! awk -F $'\t' '$2 != "t" {print; failed=1} END {exit failed}' "$RUN_DIR/data-integrity.tsv"; then
+  fail "restored database failed data integrity checks"
+fi
+runuser -u postgres -- psql -X -d "$RESTORE_DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+SET ROLE getomerch_app;
+SELECT count(*) FROM public.merch_products;
+SELECT count(*) FROM getomerch_jobs.jobs;
+RESET ROLE;
+SET ROLE getomerch_backup;
+SELECT count(*) FROM public.merch_products;
+RESET ROLE;
+SQL
+
+echo "source_table_count=$SOURCE_TABLES" >> "$REPORT_FILE"
+echo "restored_table_count=$SOURCE_TABLES" >> "$REPORT_FILE"
+echo "row_count_comparison=ok" >> "$REPORT_FILE"
+echo "migration_verify=ok" >> "$REPORT_FILE"
+echo "data_integrity=ok" >> "$REPORT_FILE"
+echo "runtime_role_checks=ok" >> "$REPORT_FILE"
+STATUS=success
+log "local PostgreSQL backup/restore drill completed"

@@ -40,8 +40,8 @@
 | Графики | **recharts** | 2.x | Для аналитики (`PeriodChart`, `ExpenseDonut`, `Sparkline`). Обёрнуты тонким `ChartContainer`/`ChartTooltipCard` в `components/ui/chart.tsx` для подхвата CSS-переменных темы |
 | Тосты | **sonner** | — | Везде `toast.success/error(...)`, не `alert()` |
 | Формы | Локальный state + точечная валидация | — | Для коротких форм пишем «руками». Если форма становится сложной (≥5 полей с валидацией), добавляем form/validation-библиотеки отдельным осознанным решением |
-| БД | **Supabase Postgres** | — | RLS включён везде; админский UI работает через server-side BFF, чтобы можно было закрыть anon-доступ |
-| Клиент БД | `@supabase/supabase-js` (server-only), `pg` для точечных read-path | — | Браузер ходит в `/api/admin/...`; Supabase client и прямой Postgres pool создаются только на сервере |
+| БД | **Supabase Postgres** сейчас; локальный PostgreSQL после cutover | — | Supabase RLS действует в текущем runtime; целевая БД изолируется server-side ролями |
+| Клиент БД | `@supabase/supabase-js` (server-only), `pg` | — | Браузер ходит в `/api/admin/...`; после миграции доменные read/write-path будут использовать локальный `pg` |
 | Дата/время | `Intl.DateTimeFormat('ru-RU')` | — | Форматирование держим в `src/lib/utils.ts`, отдельную библиотеку дат не тащим без необходимости |
 
 **Не добавлять без причины:** другие UI-киты (MUI, AntD, Mantine), CSS-фреймворки кроме Tailwind, ORM поверх Supabase (Prisma, Drizzle), state-менеджеры (Redux, Zustand, Jotai) — пока нечего шарить между страницами. `pg` уже используется как низкоуровневый server-only read-path, это не повод добавлять ORM.
@@ -54,7 +54,8 @@
 src/
   app/                      # Next.js App Router
     api/auth/               # login/logout для production-админки
-    api/admin/              # BFF для админских Supabase-запросов
+    api/admin/              # BFF с единым database/service layer
+      jobs/                 # list/detail/cancel durable background jobs
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
       sync-prices/          # POST → /v5/product/info/prices
       sync-orders/          # POST → /v3/posting/fbs/list + /v2/posting/fbo/list
@@ -92,14 +93,35 @@ src/
     admin/postgres.ts       # server-only pg Pool для прямых чтений Supabase Postgres
     admin/product-postgres.ts # server-only гидрация товаров для direct Postgres route
     admin/supabase-api.ts   # server-side Supabase REST helper для BFF fallback
+    db/
+      repositories/        # явные PostgreSQL/Supabase queries и row mapping
+      services/            # domain read operations и strict shadow compare
+      pool.ts               # lazy pool только к целевой server DB
+      transaction.ts        # transaction helper server mutation-path
+    jobs/                  # durable queue, claim, heartbeat, retry и worker
+    ozon/                  # server-side Ozon client и sync/import services
     auth/                   # password hash + signed HttpOnly cookie session
-  middleware.ts             # защита страниц и /api/* через admin session cookie
+  middleware.ts             # admin cookie; service token только для 5 Ozon routes
 ops/
   getomerch-deploy-from-git # production deploy на server release
   getomerch-deploy-status   # status/smoke текущего admin контура
   getomerch-rollback        # rollback на предыдущий успешный release
+  getomerch-postgres-bootstrap # изолированные DB-роли, HBA и target БД
+  getomerch-db-healthcheck  # SELECT 1 + имя БД + migration version
+  getomerch-data-rehearsal  # rollback-safe импорт snapshot в rehearsal
+  getomerch-server-write-rehearsal # disposable mutation/jobs/Ozon regression
+  getomerch-local-db-restore-drill # encrypted native pg_dump/restore check
+  getomerch-supabase-rollback-rehearsal # pre-write rollback runtime
+  systemd/                  # worker unit templates; production пока не включён
+db/
+  migrations/               # целевые server PostgreSQL migrations
+  checks/                    # read-only проверки фактической схемы
+  scripts/                   # status/up/verify и clean rehearsal
 scripts/
   generate-admin-password-hash.mjs # генерация ADMIN_AUTH_PASSWORD_HASH
+  getomerch-worker.ts       # отдельный процесс durable Ozon jobs
+  check-db-jobs.mjs         # queue/concurrency/retry/integration checks
+  check-ozon-dry-run.mjs    # guarded real Ozon smoke без DB writes
 supabase/
   migrations/               # SQL-миграции, имя: <YYYYMMDDHHMM>_<snake_case>.sql
 ```
@@ -383,17 +405,25 @@ supabase/
 
 - Все методы возвращают доменные типы из `lib/types.ts`, не «сырые» строки PostgREST
 - Ошибки оборачиваем `toError(...)` → у любой возвращённой ошибки есть `.message`
-- Для составных операций (production, ship) — выполняем последовательно с
-  предварительной валидацией остатков. Если что-то падает посреди — данные
-  могут остаться частично применёнными. **TODO:** перевести критичные операции
-  в Postgres RPC с транзакцией (см. раздел «Долги»).
-- Bulk-операции (например, bulk receive) — параллелим через `Promise.all`,
-  если задачи независимы (разные SKU). Сериализуем, если затрагивают тот же
-  ресурс.
+- До server cutover клиентские mutations идут через `/api/admin/rpc`; BFF
+  добавляет request/idempotency headers и выбирает Supabase либо server
+  write-source по runtime flag.
+- Server mutations реализованы в `src/lib/db/mutations` и выполняют каждую
+  составную бизнес-операцию в одной SQL-транзакции.
+- Остатки создаются idempotent UPSERT и блокируются через детерминированный
+  `SELECT ... FOR UPDATE`; произвольные business errors не ретраятся.
+- Bulk-операции могут выполняться параллельно только для независимых ресурсов.
+  Конкурирующие операции над одной строкой остатка сериализует PostgreSQL.
 
 Серверные роуты (`src/app/api/ozon/*`) — единственное место, где живут ключи
 Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID`; локально из `.env.local`, в production
 из `/etc/getomerch/admin-production.env`). С клиента к Ozon не ходим напрямую.
+
+При `GETOMERCH_DB_WRITE_SOURCE=server` долгие Ozon route создают запись в
+`getomerch_jobs.jobs`, возвращают `202`, а `src/lib/api.ts` опрашивает
+`/api/admin/jobs/<id>`. Worker забирает job через `FOR UPDATE SKIP LOCKED` и
+обновляет progress/heartbeat. При production default `supabase` сохраняется
+прежний синхронный route до отдельного cutover.
 
 ---
 
@@ -532,35 +562,48 @@ Ozon (`OZON_API_KEY`, `OZON_CLIEN_ID`; локально из `.env.local`, в pr
 - Один `cn(...)` хелпер из `lib/utils.ts` — объединение Tailwind-классов. Любой conditional className — через него
 - Не использовать `style={...}` кроме случаев с динамическим цветом (`backgroundColor: hex_code`)
 
-### 7.4. Бэкенд / Supabase
+### 7.4. Бэкенд / миграции БД
 
-- Все DDL — через миграции в `supabase/migrations/`. Имя: `<YYYYMMDDHHMM>_<snake_case>.sql`
-- Применять через MCP-инструмент `apply_migration` или CLI `supabase db push`
-- RLS включён везде с `for all using (true) with check (true)` — однопользовательский режим, без аутентификации
+- Пока production работает с Supabase, новое DDL оформляется миграцией в
+  `supabase/migrations/` и отдельной следующей миграцией в `db/migrations/`.
+- `db/migrations/0001_getomerch_baseline.sql` неизменяем; исправления и новые
+  объекты добавляются только миграцией с большим номером.
+- Server PostgreSQL migrations применяются отдельной deploy-командой
+  `npm run db:migrate:up` под `getomerch_migrator`, не при старте Next.js.
+- Перед применением обязательны `npm run db:rehearsal` и
+  `npm run db:migrate:verify`.
+- В текущем Supabase production RLS включён с открытыми policy; в целевой
+  локальной БД эти policy и Supabase-роли отсутствуют, доступ ограничивается
+  server-side ролями PostgreSQL.
 - Все таблицы — префикс `merch_`
 - Колонки snake_case
 - Все FK прописывать явно с правильным `ON DELETE` (см. правило 15)
 - Любой `select` с join: при двух FK на одну таблицу — обязательно `relation!fk_column(...)`,
   иначе PostgREST вернёт `PGRST201`. Пример в `api.listTransactions` (две связи на `merch_products`)
 
-#### Direct Postgres read-path
+#### Переходный read-path
 
-Production-админка может читать часть тяжёлых списков напрямую из Supabase
-Postgres через `pg`. Это включается только на сервере, когда задан
-`GETOMERCH_SUPABASE_DATABASE_URL`; проверка в коде — `hasAdminPostgres()` из
-`src/lib/admin/postgres.ts`. Если env отсутствует, route handlers должны
-оставлять Supabase REST fallback.
+Все admin read-route и read-only RPC используют `src/lib/db`. Один runtime flag
+выбирает Supabase adapter либо локальный PostgreSQL adapter. Production до
+cutover использует Supabase; отдельный rehearsal process использует локальную
+БД и одновременно сравнивает полный результат с Supabase.
 
-Текущий direct read-path используется в:
+```env
+GETOMERCH_DB_READ_SOURCE=supabase|server
+GETOMERCH_DB_WRITE_SOURCE=supabase|server
+GETOMERCH_DB_SHADOW_COMPARE=false|true
+GETOMERCH_DB_SHADOW_COMPARE_STRICT=false|true
+```
 
-- `/api/admin/ozon/orders` — список Ozon-заказов;
-- `/api/admin/inventory` — основной список остатков;
-- `/api/admin/designs/product-counts` — счётчики товаров по дизайнам;
-- `/api/admin/products/blank-matches` — подбор заготовок;
-- `/api/admin/inventory/matrix` — hybrid path: товары и справочники через
-  Supabase REST, агрегат положительных остатков через direct `pg`.
+Server write-source разрешён только при наличии локальной
+`GETOMERCH_DATABASE_URL` и использует транзакционный mutation layer. До
+production cutover его включают только в изолированных rehearsal/candidate
+process; production defaults остаются `supabase/supabase/false`. Read
+repositories обязаны использовать явные колонки, параметризованные фильтры,
+детерминированный порядок, batch hydration и pagination.
 
-Текущие production-настройки для Supabase pooler:
+Старый direct доступ к той же Supabase DB пока остается для ограниченных
+legacy/sync веток и использует transaction pooler:
 
 ```env
 GETOMERCH_SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<region>.pooler.supabase.com:6543/postgres
@@ -578,20 +621,10 @@ GETOMERCH_POSTGRES_POOL_MAX_USES=1
   pooler был нестабилен при переиспользовании соединений;
 - не делать `SELECT *` по таблицам с тяжёлыми `jsonb`, особенно
   `merch_ozon_orders.raw`; выбирать только нужные колонки;
-- не использовать `to_jsonb(table)` и широкие join-гидрации через pooler:
-  для товаров текущий паттерн — получить базовые строки и догидрировать через
-  `hydrateProductsViaPostgres()` из `src/lib/admin/product-postgres.ts`;
-- справочники товаров маленькие, поэтому direct hydration сейчас читает их
-  целиком, а не через `WHERE id = ANY(...)`, потому что фильтрованные запросы
-  к lookup-таблицам через pooler давали случайные зависания;
-- для `/api/admin/inventory/matrix` не возвращать старую полную
-  `hydrateProductsViaPostgres()`-схему: через pooler чтение product rows и
-  широкая гидрация давали timeout/500. Текущий паттерн — товары страницами по
-  50 через Supabase REST, lookup один раз, stock aggregate через `pg`,
-  `AbortController` timeout 3 секунды и 3 попытки;
-- client-side лимиты всё ещё консервативные, но не аварийные:
-  `orders=50`, `inventory=10`. Увеличивать их надо отдельным шагом после
-  нормальной full pagination для списков, а не вместе с matrix.
+- не использовать `to_jsonb(table)` и широкие join-гидрации;
+- Ozon orders/finance/import list не должны читать `raw jsonb`;
+- matrix строится из явного списка product dimensions и одной SQL-агрегации;
+- добавлять индекс только после `EXPLAIN (ANALYZE, BUFFERS)`.
 
 ### 7.5. Git
 
@@ -658,6 +691,13 @@ UI — на русском (целевой пользователь говори
   `https://seller.ozon.ru/app/postings/{fbs|fbo}?postingDetails={posting_number}`.
   Сегмент выбирается по `merch_ozon_orders.source`
 - Запросы только с сервера. С клиента — через `fetch('/api/ozon/...')`
+- Общий `src/lib/ozon/client.ts` задаёт timeout/AbortSignal и bounded retry
+  только для `408`, `429`, `5xx` и временных network errors; validation и
+  бизнес-ошибки не повторяются
+- Server write-path использует durable jobs для orders/finance/prices/import,
+  active dedupe, idempotency, progress, cancellation и stale heartbeat recovery
+- Внутренний Bearer token принимается только пятью точными Ozon route и
+  повторно проверяется самим Route Handler; остальные API требуют admin cookie
 - Кнопка «Обновить данные Ozon» в дашборде запускает sync-orders (180 дней,
   `scope=all`) + sync-finance параллельно
 
@@ -725,9 +765,11 @@ env: /etc/getomerch/admin-production.env
 command: npm start -- --hostname 127.0.0.1 --port 3100
 ```
 
-`/etc/getomerch/admin-production.env` — единственный runtime env
+`/etc/getomerch/admin-production.env` — единственный подключенный runtime env
 production-админки. В нём лежат auth-секреты, ключи Supabase/Ozon/KOMUI и
-direct Postgres URL для read-path. После изменения env нужен:
+direct Postgres URL к Supabase для read-path. Целевой локальный
+`/etc/getomerch/database.env` намеренно не подключен к systemd unit до
+production cutover. После изменения активного env нужен:
 
 ```bash
 sudo systemctl restart getomerch-admin.service
@@ -833,27 +875,120 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
 
 ### 11.6. Данные и backup
 
-Основная БД админки всё ещё Supabase. На сервере не создан отдельный Postgres
-для таблиц `merch_*`, `ozon_*`, расходов и производства. Поэтому:
+Основная рабочая БД админки всё ещё Supabase. На сервере уже создан отдельный
+изолированный PostgreSQL-контур, но он еще не является production runtime:
+
+- `getomerch_rehearsal` содержит migrations `0001`–`0003`, проверенную
+  point-in-time копию 6 621 строки из 20 таблиц Supabase, `getomerch_audit` и
+  private `getomerch_jobs` schemas; это не live replica;
+- `getomerch_production` существует, но намеренно не содержит schema и данных;
+- объекты принадлежат NOLOGIN-роли `getomerch_owner`;
+- `getomerch_migrator` выполняет DDL через явный `SET ROLE`;
+- `getomerch_app` имеет только runtime CRUD, а `getomerch_backup` — чтение;
+- `/etc/postgresql/17/main/pg_hba_getomerch.conf` разрешает новым ролям только
+  локальные подключения к GetoMerch БД и блокирует GetoMerch <-> KOMUI;
+- app/migrator/backup env хранятся раздельно в `/etc/getomerch`, принадлежат
+  root и имеют права `0600`;
+- `/usr/local/sbin/getomerch-db-healthcheck` проверяет `SELECT 1`, точное имя
+  БД и migration version без вывода URL;
+- `/usr/local/sbin/getomerch-data-rehearsal` строит candidate DB, импортирует
+  allowlist snapshot, сверяет fingerprints/integrity и сохраняет предыдущую
+  rehearsal для rollback до финального healthcheck;
+- bootstrap использует `pg_reload_conf()`, не перезапускает PostgreSQL и
+  проверяет неизменность ролей/БД `komui_*`.
+
+Текущий runtime и backup при этом устроены так:
 
 - selected BFF read-path подключается напрямую к Supabase Postgres из
   `/etc/getomerch/admin-production.env`, но это всё равно та же Supabase-база;
 - `getomerch-backup.timer` запускает `/usr/local/sbin/getomerch-backup`;
 - backup админки хранится в `/var/backups/getomerch` и выгружается в Yandex
-  Object Storage отдельным prefix `getomerch`;
-- encrypted archive включает `/etc/getomerch/admin-production.env`,
+  Object Storage под prefix `getomerch/admin-production`;
+- encrypted archive включает `/etc/getomerch/admin-production.env`, root-only
+  DB env, HBA/config, migration bundle, bootstrap/healthcheck,
   `getomerch-admin.service`, nginx vhost, deploy registry/current state,
   manifest active release и свежие deploy-логи;
-- Supabase `pg_dump` выполняется только если на сервере задан
-  `GETOMERCH_SUPABASE_DATABASE_URL` в `/etc/getomerch/backup.env`;
-- пока DB URL не задан именно в `backup.env`, backup остаётся
-  инфраструктурным и кладёт marker о пропущенном Supabase export;
-- перенос БД админки на сервер — отдельный будущий проект.
+- daily backup читает ровно 20 рабочих таблиц через server-side Supabase REST,
+  используя URL и server key только из production env;
+- архив содержит reviewed DDL snapshot, policies, counts и manifest; URL и
+  server key не попадают в process arguments или manifest;
+- `/usr/local/sbin/getomerch-restore-drill` восстанавливает архив во временную
+  локальную БД, сверяет counts и business invariants и удаляет эту БД;
+- forensic-режим дополнительно сохраняет 31 текущую `public`-таблицу, catalog,
+  OpenAPI и Auth users, но не заменяет managed backup внутренних схем Supabase.
+
+Этапы 3 и 4 полного переноса завершены. Первый проверенный snapshot импортирован
+только в `getomerch_rehearsal`; `getomerch_production` и systemd runtime не
+изменены. Working REST export использует exact counts и второй полный проход с
+SHA-256, но до production cutover всё равно требуется writer freeze либо
+transaction-consistent direct dump. Подробности:
+`docs/ADMIN_MIGRATION_STAGE_4_REPORT_2026-07-16.md`.
+
+Этапы 5–9 завершены. Новый `src/lib/db` задает нейтральную границу:
+
+- repository владеет SQL/PostgREST и mapping;
+- service владеет операцией и shadow comparison;
+- Route Handler сохраняет auth, validation и HTTP contract;
+- локальный pool лениво читает только `GETOMERCH_DATABASE_URL`;
+- server adapter использует явные колонки, параметризованные filters и SQL
+  pagination;
+- server mutation layer владеет SQL-транзакциями, row locks, idempotency и
+  audit опасных операций.
+
+На эту границу переведены все admin read-route и read-only RPC: каталог,
+товары, остатки, матрица, движения, цех, Ozon, расходы, финансы и история
+импорта. Текущие admin RPC mutations также имеют server implementation, но
+production default остаётся Supabase. Отдельный runtime-only
+`getomerch-admin-rehearsal.service` использует `getomerch_rehearsal`, strict
+Supabase shadow и `127.0.0.1:3101`; nginx к нему не подключен, а persistent
+write-source оставлен Supabase. Server writes проверены на disposable БД 12/12
+группами concurrency/idempotency/fault tests. Ozon services и durable queue
+проверены ещё 10/10 integration groups; реальный Ozon smoke выполнялся только
+в dry-run, production worker не устанавливался. Проверки и метрики:
+`docs/ADMIN_MIGRATION_STAGE_6_REPORT_2026-07-16.md` и
+`docs/ADMIN_MIGRATION_STAGE_7_REPORT_2026-07-17.md` и
+`docs/ADMIN_MIGRATION_STAGE_8_REPORT_2026-07-17.md`.
+
+Этап 9 дважды повторил полный pre-production flow на свежем encrypted export.
+Отдельные root-only scripts проверяют disposable server writes, native
+PostgreSQL backup/restore и возврат приложения на Supabase до открытия записей.
+Candidate release `/opt/getomerch/rehearsals/stage9-20260717T104528Z` слушает
+только `127.0.0.1:3101`; production cutover и worker не выполнялись.
+Результаты: `docs/ADMIN_MIGRATION_STAGE_9_REPORT_2026-07-17.md`.
+
+### 11.7. Управляемый production cutover
+
+Release E добавляет runtime maintenance boundary и явную машину состояний
+cutover. `read_only` проверяется middleware, server mutation runner, durable
+queue и worker startup. Read API и login остаются доступны; UI получает
+актуальное состояние через `/api/admin/health` и показывает постоянную плашку.
+
+```text
+Supabase production
+  -> final encrypted/off-site archive
+  -> verified production candidate
+  -> getomerch_production (read_only)
+  -> read/API/KOMUI/Ozon connectivity smoke
+  -> encrypted local backup + restore drill
+  -> explicit Go
+  -> web writes, then worker
+```
+
+Состояние хранится root-only в `/var/lib/getomerch/cutover/state.json`.
+`abort` восстанавливает предыдущий env и пустую целевую БД только до
+`writesOpenedAt`. После этой отметки автоматический возврат на Supabase
+запрещен: используется forward-fix либо отдельный data replay.
+
+Локальный backup отделен от финального Supabase archive и backup магазина:
+`getomerch-database-backup.timer` работает hourly с read-only DB role и
+off-site prefix `getomerch/database/hourly`. Worker и этот timer устанавливаются
+заранее disabled; worker включается только после Go. Ozon sync timers первые
+24 часа не включаются.
 
 В `/etc/getomerch/admin-production.env` нельзя руками менять секреты без
 понимания, какие route handlers и внешние API их используют.
 
-### 11.7. Ozon-нюанс
+### 11.8. Ozon-нюанс
 
 Для всех футболок на Ozon должны использоваться габариты упаковки
 `300 x 230 x 40 мм` и вес `250 г`. Это бизнес-инвариант, который нужно
@@ -863,25 +998,30 @@ KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — толь�
 
 ## 12. Долги и известные ограничения
 
-- Транзакционности нет на уровне БД. Composite-операции (производство, отгрузка)
-  выполняются как серия HTTP-запросов к PostgREST. Если падение посередине —
-  данные неконсистентны. План: вынести в Postgres RPC (`create function … language plpgsql`)
-- Аутентификации нет. RLS открыт `using (true)`. Если когда-то появится второй
-  пользователь — переписывать политики и добавлять auth
+- Production пока пишет через исторический Supabase mutation-path, поэтому
+  транзакционные гарантии этапа 7 начнут защищать реальные операции только
+  после write cutover. Server implementation уже проверена на rollback, locks,
+  idempotency и audit в изолированной PostgreSQL БД.
+- Транзакционные primitives для Ozon order snapshot и import run готовы, но
+  фактические sync/import routes, pagination, locks и run lifecycle относятся
+  к этапу 8.
+- У приложения есть единая owner-auth через signed HttpOnly cookie, но текущая
+  Supabase RLS остается открытой `using (true)`. До закрытия Supabase runtime
+  browser access должен оставаться только через BFF; целевой PostgreSQL
+  ограничивается ролями и HBA, а не Supabase policies.
 - Нет soft-delete у товаров. Удалённые SKU исчезают навсегда (история сохраняется
   через `SET NULL` в транзакциях)
 - Дашборд строит матрицу из всего каталога — если в каталоге много «фантомных»
   SKU (не использующихся), они засоряют матрицу. Решение для будущего:
   флаг `is_active` или фильтр «модели с движениями за N дней»
-- Bulk-приёмка делает `findOrCreateProduct` + `receive` для каждой ячейки. При
-  конкурентных вызовах с одинаковым комбо может быть race и UNIQUE violation
-  на `sku`. В bulk-форме каждая ячейка уникальна (разный размер), но в общем
-  случае стоит вынести в Postgres RPC
-- Direct Postgres стабилизировал основные read-path для `/orders`, списка
-  `/inventory` и stock-части `/api/admin/inventory/matrix`. Матрица сейчас
-  намеренно hybrid: товары/lookup через Supabase REST с короткими retry,
-  остатки через `pg`. Следующий отдельный шаг — нормальная full pagination для
-  списков (`orders`, `inventory`) вместо временных client-side лимитов.
+- В данных есть пять исторических групп одинаковых finished product
+  combinations, поэтому общий unique index для finished-combo пока не введён.
+  Server `findOrCreateProduct` использует transaction advisory lock и
+  `UNIQUE(sku/ozon_sku)`; исторические дубли требуют отдельного data
+  remediation после подтверждения владельцем.
+- Новый repository layer стабилизировал `/orders`, `/inventory` и matrix в
+  rehearsal; старый hybrid route удален. Production получит этот код отдельным
+  release, но источник данных до cutover останется Supabase.
 - Если каталог вырастет на порядки, matrix лучше вынести в Postgres RPC или
   materialized summary, но текущий объём закрыт без старой полной pg-гидрации
   товаров.

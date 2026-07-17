@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+UNIT_NAME="getomerch-admin-rehearsal.service"
+UNIT_PATH="/run/systemd/system/$UNIT_NAME"
+RELEASE_LINK="/opt/getomerch/rehearsals/current"
+ADMIN_ENV="/etc/getomerch/admin-production.env"
+DATABASE_ENV="/etc/getomerch/database-rehearsal.env"
+PORT="3101"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+require_root() {
+  [[ "${EUID:-$(id -u)}" -eq 0 ]] || fail "run as root"
+}
+
+release_path() {
+  local target
+  target="$(readlink -f "$RELEASE_LINK" 2>/dev/null || true)"
+  [[ "$target" =~ ^/opt/getomerch/rehearsals/stage[0-9]+- ]] || fail "invalid rehearsal release link"
+  [[ -f "$target/package.json" && -d "$target/.next" ]] || fail "rehearsal release is not built"
+  printf '%s\n' "$target"
+}
+
+validate_environment() {
+  for path in "$ADMIN_ENV" "$DATABASE_ENV"; do
+    [[ -s "$path" ]] || fail "missing env file: $path"
+    [[ "$(stat -c '%a:%U:%G' "$path")" == "600:root:root" ]] || fail "unsafe env permissions: $path"
+  done
+  grep -Eq '^GETOMERCH_DATABASE_URL=' "$DATABASE_ENV" || fail "rehearsal database URL is missing"
+  grep -Eq '^PGDATABASE=getomerch_rehearsal$' "$DATABASE_ENV" || fail "database env does not target getomerch_rehearsal"
+}
+
+start_service() {
+  local target
+  target="$(release_path)"
+  validate_environment
+
+  if systemctl is-active --quiet "$UNIT_NAME"; then
+    fail "$UNIT_NAME is already active"
+  fi
+  if ss -ltnH "( sport = :$PORT )" | grep -q .; then
+    fail "port $PORT is already in use"
+  fi
+
+  cat > "$UNIT_PATH" <<UNIT
+[Unit]
+Description=GetoMerch Admin database rehearsal
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=getomerch
+Group=getomerch
+WorkingDirectory=$target
+EnvironmentFile=$ADMIN_ENV
+EnvironmentFile=$DATABASE_ENV
+Environment=GETOMERCH_DB_READ_SOURCE=server
+Environment=GETOMERCH_DB_WRITE_SOURCE=supabase
+Environment=GETOMERCH_DB_SHADOW_COMPARE=true
+Environment=GETOMERCH_DB_SHADOW_COMPARE_STRICT=true
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start -- --hostname 127.0.0.1 --port $PORT
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UNIT
+  chmod 0644 "$UNIT_PATH"
+  systemctl daemon-reload
+  systemctl start "$UNIT_NAME"
+
+  for _attempt in $(seq 1 30); do
+    if curl --silent --output /dev/null --connect-timeout 1 "http://127.0.0.1:$PORT/login"; then
+      break
+    fi
+    sleep 1
+  done
+  systemctl is-active --quiet "$UNIT_NAME" || fail "$UNIT_NAME did not start"
+  ss -ltnH "( sport = :$PORT )" | awk -v expected="127.0.0.1:$PORT" '$4 == expected {found=1} END {exit !found}' \
+    || fail "rehearsal process is not bound to loopback"
+  echo "rehearsal service started: $target"
+}
+
+stop_service() {
+  systemctl stop "$UNIT_NAME" 2>/dev/null || true
+  rm -f "$UNIT_PATH"
+  systemctl daemon-reload
+  systemctl reset-failed "$UNIT_NAME" 2>/dev/null || true
+  echo "rehearsal service stopped"
+}
+
+show_status() {
+  local state target listener
+  state="$(systemctl is-active "$UNIT_NAME" 2>/dev/null || true)"
+  target="$(readlink -f "$RELEASE_LINK" 2>/dev/null || true)"
+  listener="no"
+  ss -ltnH "( sport = :$PORT )" | awk -v expected="127.0.0.1:$PORT" '$4 == expected {found=1} END {exit !found}' \
+    && listener="yes"
+  printf 'service=%s\nrelease=%s\nloopback_listener=%s\n' "$state" "$target" "$listener"
+}
+
+run_contract_test() {
+  local target test_unit
+  target="$(release_path)"
+  systemctl is-active --quiet "$UNIT_NAME" || fail "$UNIT_NAME is not active"
+  [[ -x "$target/scripts/check-db-repositories.mjs" ]] || fail "repository contract test is missing"
+  test_unit="getomerch-repository-contract-$(date -u +%Y%m%dT%H%M%SZ)"
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="$test_unit" \
+    --property=User=getomerch \
+    --property=Group=getomerch \
+    --property="WorkingDirectory=$target" \
+    --property="EnvironmentFile=$ADMIN_ENV" \
+    --setenv="ADMIN_BFF_BASE_URL=http://127.0.0.1:$PORT" \
+    --setenv=EXPECTED_DB_READ_SOURCE=server \
+    /usr/bin/node scripts/check-db-repositories.mjs
+}
+
+require_root
+case "${1:-}" in
+  start) start_service ;;
+  stop) stop_service ;;
+  restart) stop_service; start_service ;;
+  status) show_status ;;
+  test) run_contract_test ;;
+  *) fail "usage: $0 {start|stop|restart|status|test}" ;;
+esac

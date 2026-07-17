@@ -1,16 +1,20 @@
-# GetoMerch — документация БД (Supabase Postgres)
+# GetoMerch — документация рабочей БД
 
 Полная справка по каждой таблице: назначение, колонки, ограничения,
-внешние ключи, индексы и где это используется в коде. Все таблицы живут в
-схеме `public` с префиксом `merch_`. RLS включён везде с открытой политикой
-`for all using (true) with check (true)` (однопользовательский режим — нет
-аутентификации).
+внешние ключи, индексы и где это используется в коде. Все 20 бизнес-таблиц
+живут в схеме `public` с префиксом `merch_`; служебные audit/jobs объекты
+целевого PostgreSQL вынесены в приватные схемы. В текущем Supabase production RLS включён
+с открытой политикой `for all using (true) with check (true)`. В целевом
+локальном PostgreSQL эти policies не переносятся: доступ будет только через
+server-side роли.
 
 ID — `uuid` с дефолтом `gen_random_uuid()`. Временные метки — `timestamptz`
 с дефолтом `now()`. Денежные суммы — `numeric` (без масштаба, чтобы не
 терять копейки).
 
-Скрипт миграций — `supabase/migrations/<YYYYMMDDHHMM>_<snake_case>.sql`.
+Текущий Supabase production сохраняет исторические миграции в
+`supabase/migrations/`. Воспроизводимый baseline будущего серверного PostgreSQL
+и новый migration runner находятся в `db/`; подробности — в `db/README.md`.
 
 ---
 
@@ -22,8 +26,12 @@ Production-админка теперь отдельно развёрнута н�
 
 На сервере хранятся код, releases, env, deploy registry и логи:
 `/opt/getomerch`, `/etc/getomerch/admin-production.env`,
-`/var/lib/getomerch/*`, `/var/log/getomerch/*`. Таблицы `merch_*` и связанные
-Ozon-данные при этом продолжают жить в Supabase `public`.
+`/var/lib/getomerch/*`, `/var/log/getomerch/*`. Также уже созданы изолированные
+`getomerch_rehearsal` и `getomerch_production`. Rehearsal содержит migrations
+`0001`–`0003`, проверенную point-in-time копию 6 621 строки,
+`getomerch_audit` и `getomerch_jobs`, но активные `merch_*` и Ozon-данные
+по-прежнему изменяются только в Supabase `public`; локальная копия не является
+live replica.
 
 Production-приложение использует два server-side способа доступа к этой же
 Supabase-базе:
@@ -47,9 +55,17 @@ DB URL для runtime-приложения и DB URL для `pg_dump` backup л�
 - `service_role` и любые секретные ключи Supabase не класть в `NEXT_PUBLIC_*`;
 - `GETOMERCH_SUPABASE_DATABASE_URL` тоже secret: не выводить в client bundle,
   логи, screenshots и публичные документы;
-- изменения схемы админки по-прежнему оформлять через `supabase/migrations/`;
-- перенос БД админки на серверный Postgres — отдельный будущий проект, не часть
-  текущего deploy-контура.
+- до cutover каждое новое DDL-изменение оформлять одновременно миграцией
+  текущего Supabase и следующей forward-only миграцией в `db/migrations`;
+- не изменять зафиксированный `db/migrations/0001_getomerch_baseline.sql`;
+- server migration runner не запускается автоматически при старте приложения;
+- локальные DB env разделены по app/migrator/backup и не подключаются к
+  production systemd unit до cutover;
+- роли GetoMerch ограничены HBA и не имеют доступа к базам KOMUI;
+- перенос БД идет по `docs/ADMIN_FULL_SERVER_MIGRATION_PLAN.md`; этапы 3–9 уже
+  создали контур, проверили два полных import cycle, read/mutation paths, Ozon,
+  durable jobs, native restore и Supabase rollback, но production runtime и
+  worker не переключены.
 
 ---
 
@@ -857,46 +873,160 @@ merch_expense_categories ──< merch_expenses.category_id  (SET NULL)
 ### Доступ из приложения
 
 Клиентский React-код не ходит в Supabase напрямую для админских данных. Он
-вызывает `src/lib/api.ts`, а тот ходит в `/api/admin/...`. Route handlers уже
-решают, использовать Supabase REST fallback или direct Postgres read-path.
+вызывает `src/lib/api.ts`, а тот ходит в `/api/admin/...`. Все read-route и
+read-only RPC используют сервисы и repositories из `src/lib/db`; источник
+выбирается server-side runtime flag.
 
 Direct Postgres правила для таблиц:
 
 - не делать `SELECT *` по `merch_ozon_orders`: колонка `raw jsonb` тяжёлая и
   не нужна для обычного списка заказов;
 - не собирать товары через `to_jsonb(table)`/широкие join в pooler-режиме;
-- для товаров использовать явный список колонок из
-  `ADMIN_PRODUCT_COLUMNS` и догидрацию справочниками в
-  `src/lib/admin/product-postgres.ts`;
+- для товаров использовать `PRODUCT_COLUMNS` из
+  `src/lib/db/repositories/products.ts` и batch-догидрацию справочниками;
 - справочники (`merch_product_categories`, `merch_fabric_types`,
   `merch_colors`, `merch_sizes`, `merch_designs`,
   `merch_decoration_types`) маленькие, поэтому их можно читать целиком в
   server-side hydration;
-- `/api/admin/inventory/matrix` не использует полную direct pg-гидрацию
-  товаров: product rows читаются через Supabase REST страницами по 50 с
-  retry, lookup-таблицы читаются один раз, а `merch_inventory` агрегируется
-  через `pg` по положительным остаткам;
+- `/api/admin/inventory/matrix` использует явные product dimensions и одну
+  агрегацию `merch_inventory`; Supabase adapter выполняет ограниченную
+  пагинацию, PostgreSQL adapter — прямые SQL-запросы;
 - если объём каталога сильно вырастет, matrix можно вынести в отдельную
   Postgres RPC/materialized summary, но это уже оптимизация следующего уровня,
   а не текущий blocker.
 
 ### Транзакционность
 
-Сейчас её нет на уровне БД для composite-операций (`produce` = списать
-заготовку + добавить готовое + списать принт + записать в журнал). Каждая
-операция — отдельный HTTP-запрос к PostgREST. Падение посередине →
-неконсистентность. План на будущее (см. ARCHITECTURE 12): вынести в
-Postgres RPC (`create function ... language plpgsql`) и обернуть в
-транзакцию.
+В server mutation-path composite-операции выполняются одной SQL-транзакцией:
+приёмка, перемещение, продажа/списание, производство, цех и Ozon FBS. Перед
+изменением строки остатков блокируются детерминированным
+`SELECT ... FOR UPDATE`; retry выполняется только для `40001`/`40P01` и имеет
+жёсткий лимит.
+
+Production пока использует Supabase write-source, поэтому эти гарантии начнут
+защищать реальные операции только после отдельного cutover. На server write-
+source фактические Ozon sync/import routes уже используют эти primitives через
+durable queue; current Supabase production сохраняет прежний fallback.
+
+### Idempotency и audit
+
+Migration `0002_mutation_safety.sql` добавляет отдельную схему
+`getomerch_audit`:
+
+- `operation_requests` хранит idempotency key, hash операции, безопасный
+  session fingerprint и сохранённый response;
+- `audit_log` хранит actor, operation/entity, request ID, before/after,
+  timestamp и `succeeded`/`failed` без cookie и секретов;
+- `getomerch_app` может только читать/добавлять нужные записи и завершать
+  request ledger; `getomerch_backup` имеет read-only доступ.
+
+Один idempotency key с тем же payload возвращает сохранённый результат, с
+другим payload — conflict. Audit failure записывается отдельной короткой
+транзакцией уже после rollback бизнес-операции.
+
+### Durable background jobs
+
+Migration `0003_background_jobs.sql` добавляет приватную схему
+`getomerch_jobs`, не входящую в allowlist 20 переносимых business tables:
+
+- `jobs` — очередь Ozon orders/finance/prices/import с payload/result,
+  idempotency, active dedupe, attempts, progress, heartbeat и cancellation;
+- `job_events` — безопасный журнал жизненного цикла job;
+- claim выполняется через `FOR UPDATE SKIP LOCKED`, поэтому несколько workers
+  не забирают одну запись;
+- partial indexes обслуживают active dedupe, очередь, stale heartbeat и
+  terminal retention;
+- `prune_finished_jobs` удаляет terminal jobs пакетами и не принимает период
+  хранения меньше 7 дней;
+- `getomerch_app` имеет только runtime read/write/execute grants,
+  `getomerch_backup` — read-only, `PUBLIC` не имеет доступа к схеме.
+
+Worker не хранит network secrets в job payload/result и ретраит только
+временные Ozon/network ошибки. Production worker до cutover не установлен.
+Проверки: `db/checks/0003_background_jobs.sql` и
+`scripts/check-db-jobs.mjs`.
+
+### Production cutover и backup локальной БД
+
+Подготовленный этап 10 не использует dual-write. До команды Go приложение
+переводится в `GETOMERCH_MAINTENANCE_MODE=read_only`: чтение работает, а
+mutation RPC, durable queue, Ozon/KOMUI apply routes и worker не могут писать.
+Финальный snapshot загружается через тот же проверенный candidate-import с
+counts, полными fingerprints, migration verify и data invariants.
+
+После импорта `getomerch_production` подключается к web-service отдельным
+systemd drop-in с `/etc/getomerch/database.env`. App работает под
+`getomerch_app`; migration и backup credentials не попадают в web process.
+Первый write разрешается только после read smoke, rollback-only transaction,
+Ozon read-only connectivity, KOMUI checks и успешного восстановления первого
+зашифрованного local backup.
+
+`getomerch-database-backup` использует `/etc/getomerch/database-backup.env` и
+роль `getomerch_backup`, выполняет `pg_dump -Fc`, сохраняет migration version и
+counts всех таблиц `public/getomerch_meta/getomerch_audit/getomerch_jobs`,
+шифрует весь пакет и требует успешный off-site upload. Расписание — hourly,
+первичный RPO — до 60 минут. `getomerch-database-restore-drill` восстанавливает
+именно созданный timer-архив, а не делает новый dump перед проверкой.
 
 ### Миграции
 
-- Папка `supabase/migrations/`
-- Имя: `<YYYYMMDDHHMM>_<snake_case>.sql`
-- Применять через MCP-инструмент `apply_migration` или через CLI
-  `supabase db push`
-- Любая правка схемы (`ALTER TABLE`, `CREATE INDEX`, новые колонки) —
-  только через миграцию, никаких ad-hoc DDL в проде
-- Data-only правки (например, бекфилл новой колонки) — допустимо через
-  `execute_sql`, но в production стоит оформлять миграцией, чтобы было
-  воспроизводимо
+Пока source of truth — Supabase, DDL оформляется в двух потоках:
+
+- `supabase/migrations/<YYYYMMDDHHMM>_<snake_case>.sql` — изменение текущего
+  production Supabase;
+- `db/migrations/<NNNN>_<snake_case>.sql` — forward-only изменение целевого
+  server PostgreSQL.
+
+Baseline `db/migrations/0001_getomerch_baseline.sql` неизменяем. Server-
+миграции применяются только отдельным runner под `getomerch_migrator`:
+
+```bash
+npm run db:migrate:status
+npm run db:migrate:up
+npm run db:migrate:verify
+```
+
+Они не запускаются при старте Next.js. Перед production migration обязательны
+rehearsal и проверка checksum. Ad-hoc DDL запрещен; data backfill также следует
+оформлять воспроизводимой migration или отдельным версионируемым import-
+скриптом. Фактические роли, HBA и состояния target БД описаны в
+`docs/ADMIN_MIGRATION_STAGE_3_REPORT_2026-07-16.md`.
+
+Первая data rehearsal выполнена через rollback-safe candidate DB. Для каждой
+таблицы совпали count, PK SHA-256, row SHA-256 и временные диапазоны; отдельно
+проверены 90 `NOT NULL`, 31 FK и бизнес-агрегаты. Отчёт и точные counts:
+`docs/ADMIN_MIGRATION_STAGE_4_REPORT_2026-07-16.md`.
+
+### Независимый runtime database layer
+
+С этапа 5 новый код должен идти через `src/lib/db`, а не встраивать SQL или
+Supabase SDK непосредственно в domain service. Граница разделена так:
+
+- `pool.ts` — lazy server-only pool к `GETOMERCH_DATABASE_URL`;
+- `transaction.ts` — transaction boundary и rollback;
+- `repositories/*` — query, явные колонки, pagination и row mapping;
+- `services/*` — операция и временный shadow compare;
+- Route Handler — admin auth, HTTP validation и прежний response contract.
+
+Переходные flags:
+
+```env
+GETOMERCH_DB_READ_SOURCE=supabase|server
+GETOMERCH_DB_WRITE_SOURCE=supabase|server
+GETOMERCH_DB_SHADOW_COMPARE=false|true
+GETOMERCH_DB_SHADOW_COMPARE_STRICT=false|true
+```
+
+Production defaults остаются `supabase/supabase/false`. Server writes разрешены
+только при наличии локальной `GETOMERCH_DATABASE_URL`; до cutover их включают
+только в изолированном candidate/test process. Strict shadow применяется к
+rehearsal: полные canonical results сравниваются по SHA-256, но строки, SQL и
+credentials в log не выводятся.
+
+Проверенный test process использует `getomerch_rehearsal`, роль
+`getomerch_app`, `127.0.0.1:3101` и не имеет публичного route. Все read-домены
+и read-only RPC проходят одинаковые repository contracts в Supabase и local
+PostgreSQL. Server mutations отдельно прошли 12 групп commit/rollback,
+concurrency, idempotency, audit и FBO isolation tests. Результаты:
+`docs/ADMIN_MIGRATION_STAGE_6_REPORT_2026-07-16.md` и
+`docs/ADMIN_MIGRATION_STAGE_7_REPORT_2026-07-17.md`.

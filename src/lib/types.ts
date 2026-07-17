@@ -82,6 +82,7 @@ export interface Product {
   decoration_type_id: string | null;
   sku: string | null;
   ozon_sku: number | null;
+  legacy_skus?: string[];
   design_version: string | null;
   hoodie_fit: string | null;
   hoodie_fabric: string | null;
@@ -146,7 +147,7 @@ export interface WorkshopOrder {
 export interface WorkshopOrderItem {
   id: string;
   order_id: string;
-  blank_product_id: string;
+  blank_product_id: string | null;
   design_id: string;
   decoration_type_id: string;
   result_product_id: string | null;
@@ -155,7 +156,7 @@ export interface WorkshopOrderItem {
   design_version: string | null;
   hoodie_fit: string | null;
   hoodie_fabric: string | null;
-  blank_product?: Product;
+  blank_product?: Product | null;
   design?: Design;
   decoration_type?: DecorationType;
   result_product?: Product | null;

@@ -1,12 +1,11 @@
 import "server-only";
 
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
-
-const OZON_BASE = "https://api-seller.ozon.ru";
+import { ozonPost as resilientOzonPost } from "@/lib/ozon/client";
 
 type JsonObject = Record<string, unknown>;
 
-type CatalogRow = {
+export type CatalogRow = {
   id: string;
   name: string;
   slug?: string;
@@ -60,7 +59,7 @@ type OzonPriceItem = {
   };
 };
 
-type OzonProduct = {
+export type OzonProduct = {
   offerId: string;
   productId: number | null;
   ozonSku: number | null;
@@ -73,7 +72,7 @@ type OzonProduct = {
   raw: JsonObject;
 };
 
-type ParsedOffer = {
+export type ParsedOffer = {
   designCode: string;
   garmentCode: string;
   decorCode: string;
@@ -88,12 +87,12 @@ type ParsedOffer = {
   hoodieFabric: string | null;
 };
 
-type ImportAction =
+export type ImportAction =
   | { type: "create_design"; code: string; designType: "print" | "embroidery"; name: string; imageUrl: string | null }
   | { type: "create_product"; payload: ProductInsertPlan }
   | { type: "update_product"; productId: string; patch: ProductUpdatePlan };
 
-type ProductInsertPlan = {
+export type ProductInsertPlan = {
   sku: string;
   ozonSku: number | null;
   categoryId: string;
@@ -109,7 +108,7 @@ type ProductInsertPlan = {
   hoodieFabric: string | null;
 };
 
-type ProductUpdatePlan = {
+export type ProductUpdatePlan = {
   sku?: string;
   addLegacySku?: string;
   ozonSku?: number;
@@ -180,7 +179,7 @@ type DesignOverride = {
   imageUrl?: string | null;
 };
 
-type Catalog = {
+export type Catalog = {
   categoriesBySlug: Map<string, CatalogRow>;
   fabricsBySlug: Map<string, CatalogRow>;
   colorsByCode: Map<string, CatalogRow>;
@@ -194,26 +193,6 @@ type Catalog = {
 
 function supabase() {
   return getAdminSupabaseClient();
-}
-
-async function ozonPost<T>(path: string, body: unknown): Promise<T> {
-  const clientId = process.env.OZON_CLIEN_ID ?? process.env.OZON_CLIENT_ID;
-  const apiKey = process.env.OZON_API_KEY;
-  if (!clientId || !apiKey) throw new Error("OZON_API_KEY / OZON_CLIEN_ID не настроены");
-
-  const res = await fetch(`${OZON_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Client-Id": clientId,
-      "Api-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Ozon ${path} ${res.status}: ${text}`);
-  return (text ? JSON.parse(text) : {}) as T;
 }
 
 function asArray<T>(value: T[] | null | undefined): T[] {
@@ -232,43 +211,61 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-async function fetchOzonProducts(): Promise<OzonProduct[]> {
+export async function fetchOzonProducts(options: {
+  signal?: AbortSignal;
+  onProgress?: (progress: Record<string, unknown>) => void | Promise<void>;
+} = {}): Promise<OzonProduct[]> {
   const offerIds: string[] = [];
   let lastId = "";
-  while (true) {
-    const r = await ozonPost<{ result?: { items?: { offer_id?: string }[]; last_id?: string } }>("/v3/product/list", {
+  const seenLastIds = new Set<string>();
+  for (let page = 1; page <= 10_000; page += 1) {
+    const r = await resilientOzonPost<{ result?: { items?: { offer_id?: string }[]; last_id?: string } }>("/v3/product/list", {
       filter: { visibility: "ALL" },
       last_id: lastId,
       limit: 1000,
-    });
+    }, { signal: options.signal });
     const items = r.result?.items ?? [];
     for (const item of items) if (item.offer_id) offerIds.push(String(item.offer_id));
-    lastId = r.result?.last_id ?? "";
-    if (!lastId || items.length === 0) break;
+    await options.onProgress?.({ phase: "fetch_product_ids", page, fetched: offerIds.length });
+    const nextLastId = r.result?.last_id ?? "";
+    if (!nextLastId || items.length === 0) break;
+    if (seenLastIds.has(nextLastId)) throw new Error("Ozon product pagination cursor repeated");
+    seenLastIds.add(nextLastId);
+    lastId = nextLastId;
+    if (page === 10_000) throw new Error("Ozon product pagination exceeded safety guard");
   }
 
   const infoByOffer = new Map<string, OzonInfoItem>();
-  for (const part of chunks(offerIds, 1000)) {
-    const r = await ozonPost<{ items?: OzonInfoItem[]; result?: { items?: OzonInfoItem[] } }>("/v3/product/info/list", {
+  const offerChunks = chunks(offerIds, 1000);
+  for (let index = 0; index < offerChunks.length; index += 1) {
+    const part = offerChunks[index];
+    const r = await resilientOzonPost<{ items?: OzonInfoItem[]; result?: { items?: OzonInfoItem[] } }>("/v3/product/info/list", {
       offer_id: part,
-    });
+    }, { signal: options.signal });
     for (const item of r.items ?? r.result?.items ?? []) {
       if (item.offer_id) infoByOffer.set(String(item.offer_id), item);
     }
+    await options.onProgress?.({ phase: "fetch_product_info", batch: index + 1, batches: offerChunks.length });
   }
 
   const priceByOffer = new Map<string, OzonPriceItem>();
   let cursor = "";
-  while (true) {
-    const r = await ozonPost<{ items?: OzonPriceItem[]; cursor?: string }>("/v5/product/info/prices", {
+  const seenPriceCursors = new Set<string>();
+  for (let page = 1; page <= 10_000; page += 1) {
+    const r = await resilientOzonPost<{ items?: OzonPriceItem[]; cursor?: string }>("/v5/product/info/prices", {
       filter: { visibility: "ALL" },
       cursor,
       limit: 1000,
-    });
+    }, { signal: options.signal });
     const items = r.items ?? [];
     for (const item of items) if (item.offer_id) priceByOffer.set(String(item.offer_id), item);
-    if (!r.cursor || items.length === 0) break;
-    cursor = r.cursor;
+    await options.onProgress?.({ phase: "fetch_product_prices", page, fetched: priceByOffer.size });
+    const nextCursor = r.cursor ?? "";
+    if (!nextCursor) break;
+    if (seenPriceCursors.has(nextCursor)) throw new Error("Ozon import price cursor repeated");
+    seenPriceCursors.add(nextCursor);
+    cursor = nextCursor;
+    if (page === 10_000) throw new Error("Ozon import price pagination exceeded safety guard");
   }
 
   return offerIds.map((offerId) => {
@@ -486,7 +483,7 @@ function expectedMatches(product: ProductRow, expected: {
   return mismatches;
 }
 
-function buildItemPlan(ozon: OzonProduct, catalog: Catalog): OzonImportItem {
+export function buildItemPlan(ozon: OzonProduct, catalog: Catalog): OzonImportItem {
   const parsed = parseOfferId(ozon.offerId);
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -627,7 +624,7 @@ function buildItemPlan(ozon: OzonProduct, catalog: Catalog): OzonImportItem {
   };
 }
 
-function summarize(items: OzonImportItem[]): OzonImportSummary {
+export function summarize(items: OzonImportItem[]): OzonImportSummary {
   const createDesignKeys = new Set<string>();
   let createProducts = 0;
   let updateProducts = 0;
@@ -658,7 +655,7 @@ function summarize(items: OzonImportItem[]): OzonImportSummary {
   };
 }
 
-function collectDesignSuggestions(items: OzonImportItem[]): DesignSuggestion[] {
+export function collectDesignSuggestions(items: OzonImportItem[]): DesignSuggestion[] {
   const map = new Map<string, DesignSuggestion>();
   for (const item of items) {
     for (const action of item.actions) {
@@ -737,7 +734,7 @@ export async function createOzonImportPreview(): Promise<OzonImportPreview> {
   };
 }
 
-function normalizeStoredItem(row: JsonObject): OzonImportItem {
+export function normalizeStoredItem(row: JsonObject): OzonImportItem {
   const plan = (row.plan ?? {}) as { actions?: ImportAction[] };
   return {
     id: String(row.id),

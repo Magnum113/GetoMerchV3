@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyState } from "@/components/ui/empty-state";
 import { errorMessage, formatDate } from "@/lib/utils";
 import type { DesignSuggestion, OzonImportApplyResult, OzonImportItem, OzonImportPreview } from "@/lib/ozon-import";
+import { api } from "@/lib/api";
 
 type Filter = "all" | "new_design" | "new_product" | "update" | "conflict" | "noop";
 
@@ -75,27 +76,6 @@ function makeDesignDrafts(suggestions: DesignSuggestion[]) {
   ) as Record<string, DesignDraft>;
 }
 
-async function readJsonResponse<T>(res: Response): Promise<T> {
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      const plain = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      throw new Error(plain.slice(0, 220) || `Сервер вернул не JSON (${res.status})`);
-    }
-  }
-  if (!res.ok) {
-    const message =
-      data && typeof data === "object" && "error" in data && typeof (data as { error?: unknown }).error === "string"
-        ? (data as { error: string }).error
-        : `Ошибка API ${res.status}`;
-    throw new Error(message);
-  }
-  return data as T;
-}
-
 export default function OzonImportPage() {
   const [preview, setPreview] = useState<OzonImportPreview | null>(null);
   const [drafts, setDrafts] = useState<Record<string, DesignDraft>>({});
@@ -110,8 +90,7 @@ export default function OzonImportPage() {
     setApplyResult(null);
     const t = toast.loading("Сканирую товары Ozon…");
     try {
-      const res = await fetch("/api/ozon/import/preview", { method: "POST" });
-      const next = await readJsonResponse<OzonImportPreview>(res);
+      const next = await api.createOzonImportPreview();
       setPreview(next);
       setDrafts(makeDesignDrafts(next.designSuggestions));
       toast.success(
@@ -136,12 +115,7 @@ export default function OzonImportPage() {
           { name: draft.name.trim(), imageUrl: draft.imageUrl.trim() || null },
         ]),
       );
-      const res = await fetch("/api/ozon/import/apply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId: preview.runId, designOverrides }),
-      });
-      const result = await readJsonResponse<OzonImportApplyResult>(res);
+      const result = await api.applyOzonImport(preview.runId, designOverrides);
       setApplyResult(result);
       toast.success(
         `Импорт применён: ${result.summary.createdDesigns} дизайнов, ${result.summary.createdProducts} SKU, ${result.summary.updatedProducts} обновлений`,

@@ -4,79 +4,29 @@ import {
   AdminApiError,
   adminErrorResponse,
   adminJson,
-  assertNoSupabaseError,
   requireUuidParam,
 } from "@/lib/admin/http";
-import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
-import { ADMIN_PRODUCT_COLUMNS, hydrateProductsViaPostgres } from "@/lib/admin/product-postgres";
-import { hydrateProducts } from "@/lib/admin/product-hydration";
-import { getAdminSupabaseClient } from "@/lib/supabase/server";
-import type { Product } from "@/lib/types";
+import type { BlankMatchKey } from "@/lib/db/repositories/products";
+import { createDatabaseReadServices } from "@/lib/db/services/runtime";
 
 export const dynamic = "force-dynamic";
-
-type BlankMatchKey = {
-  category_id: string;
-  fabric_id: string;
-  color_id: string;
-  size_id: string;
-};
-
-const PAGE_SIZE = 500;
-const MAX_BLANKS = 10_000;
 
 export async function POST(request: NextRequest) {
   try {
     await requireAdminSession();
     const keys = parseKeys(await request.json().catch(() => null));
     if (keys.length === 0) return adminJson({ data: [] });
-
-    if (hasAdminPostgres()) {
-      return adminJson({ data: await fetchBlankProductsViaPostgres(keys) });
-    }
-
-    const wanted = new Set(keys.map((key) => blankKey(key)));
-    const blanks = await fetchBlankProducts();
-    const matched = blanks.filter((product) => wanted.has(blankKey(product)));
-    return adminJson({ data: await hydrateProducts(matched) });
+    const data = await createDatabaseReadServices().products.findBlankMatches(keys);
+    return adminJson({ data });
   } catch (error) {
     return adminErrorResponse(error);
   }
-}
-
-async function fetchBlankProductsViaPostgres(keys: BlankMatchKey[]) {
-  const result = await adminDbQuery<Product>(
-    `
-      WITH wanted AS (
-        SELECT *
-        FROM jsonb_to_recordset($1::jsonb) AS x(
-          category_id uuid,
-          fabric_id uuid,
-          color_id uuid,
-          size_id uuid
-        )
-      )
-      SELECT ${ADMIN_PRODUCT_COLUMNS}
-      FROM merch_products p
-      JOIN wanted w
-        ON w.category_id = p.category_id
-       AND w.fabric_id = p.fabric_id
-       AND w.color_id = p.color_id
-       AND w.size_id = p.size_id
-      WHERE p.is_blank = true
-      ORDER BY p.sku
-    `,
-    [JSON.stringify(keys)],
-  );
-
-  return hydrateProductsViaPostgres(result.rows);
 }
 
 function parseKeys(payload: unknown): BlankMatchKey[] {
   if (!payload || typeof payload !== "object") {
     throw new AdminApiError(400, "bad_request", "Invalid request body");
   }
-
   const rawKeys = (payload as { keys?: unknown }).keys;
   if (!Array.isArray(rawKeys)) {
     throw new AdminApiError(400, "bad_request", "keys must be an array");
@@ -99,7 +49,6 @@ function parseKeys(payload: unknown): BlankMatchKey[] {
     };
     unique.set(blankKey(key), key);
   }
-
   return Array.from(unique.values());
 }
 
@@ -110,28 +59,6 @@ function requireUuidField(value: unknown, name: string) {
   const parsed = requireUuidParam(value, name);
   if (!parsed) throw new AdminApiError(400, "bad_request", `Invalid ${name}`);
   return parsed;
-}
-
-async function fetchBlankProducts() {
-  const out: Product[] = [];
-  let offset = 0;
-
-  while (out.length < MAX_BLANKS) {
-    const { data, error } = await getAdminSupabaseClient()
-      .from("merch_products")
-      .select("*")
-      .eq("is_blank", true)
-      .order("sku", { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
-    assertNoSupabaseError(error);
-
-    const page = (data ?? []) as Product[];
-    out.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-
-  return out;
 }
 
 function blankKey(product: BlankMatchKey) {

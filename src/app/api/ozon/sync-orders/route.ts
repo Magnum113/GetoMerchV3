@@ -3,6 +3,8 @@ import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
 import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
+import { getDatabaseRuntimeConfig } from "@/lib/db/config";
+import { enqueueOzonJob } from "@/lib/jobs/http";
 
 export const dynamic = "force-dynamic";
 
@@ -307,15 +309,37 @@ function toError(error: unknown, label: string) {
 
 export async function POST(req: Request) {
   try {
-    await requireAdminSession();
     const startedAt = Date.now();
     const startedAtIso = new Date(startedAt).toISOString();
+    const url = new URL(req.url);
+    const rawScope = url.searchParams.get("scope");
+    if (rawScope && rawScope !== "active" && rawScope !== "all") {
+      throw new AdminApiError(400, "bad_request", "scope must be active or all");
+    }
+    const scope = rawScope === "all" ? "all" : "active";
+    const days = parseDays(url.searchParams.get("days"));
+    const dryRun = parseBoolean(url.searchParams.get("dryRun"), "dryRun");
+
+    if (getDatabaseRuntimeConfig().writeSource === "server") {
+      const queued = await enqueueOzonJob(req, {
+        type: "ozon_orders_sync",
+        dedupeKey: `orders:${scope}:${days}:${dryRun ? "dry" : "apply"}`,
+        payload: { scope, days, dryRun },
+        maxAttempts: 4,
+      });
+      return NextResponse.json({
+        ok: true,
+        queued: true,
+        reused: queued.reused,
+        jobId: queued.job.id,
+        status: queued.job.status,
+      }, { status: 202 });
+    }
+
+    await requireAdminSession();
     if (!process.env.OZON_API_KEY || !process.env.OZON_CLIEN_ID) {
       return NextResponse.json({ error: "OZON_API_KEY / OZON_CLIEN_ID не настроены в .env.local" }, { status: 500 });
     }
-    const url = new URL(req.url);
-    const scope = url.searchParams.get("scope") === "all" ? "all" : "active";
-    const days = Math.min(180, Math.max(1, Number(url.searchParams.get("days") ?? 60)));
 
     const supabase = getAdminSupabaseClient();
 
@@ -512,6 +536,25 @@ export async function POST(req: Request) {
     console.error("[sync-orders]", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
+}
+
+function parseDays(value: string | null) {
+  if (value == null || value === "") return 60;
+  if (!/^\d+$/.test(value)) {
+    throw new AdminApiError(400, "bad_request", "days must be an integer between 1 and 180");
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 180) {
+    throw new AdminApiError(400, "bad_request", "days must be an integer between 1 and 180");
+  }
+  return parsed;
+}
+
+function parseBoolean(value: string | null, name: string) {
+  if (value == null || value === "") return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new AdminApiError(400, "bad_request", `${name} must be true or false`);
 }
 
 function collectOfferIds(postings: OzonPosting[]) {
