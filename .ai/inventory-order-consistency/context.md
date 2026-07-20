@@ -44,6 +44,7 @@ hoodie variants in its grouping key.
 ## Secondary reservation risk
 
 `api.listOzonOrders()` loaded only the 50 newest persisted orders. Production
-currently has 625 persisted orders and 15 active FBS orders. All current active
-orders happened to be in the returned window, but an older active order could be
+currently has 703 persisted orders and 15 active FBS orders; the latest full
+sync fetched 625 orders in its configured window. All current active orders
+happened to be in the returned window, but an older active order could be
 excluded from stock reservation and make later orders appear fulfillable.

@@ -174,6 +174,7 @@ async function checkInventory() {
       `Inventory matrix totals differ: blank ${actualBlank}/${expectedBlank}, finished ${actualFinished}/${expectedFinished}`,
     );
   }
+  console.log(`metrics - inventory rows=${allInventory.length} units=${expectedBlank + expectedFinished}`);
 }
 
 function matrixUnits(rows) {
@@ -198,9 +199,11 @@ async function checkOperations() {
 async function checkOzonOrders() {
   const ids = new Set();
   let offset = 0;
+  let pages = 0;
   for (let pageNumber = 0; pageNumber < 200; pageNumber++) {
     const orders = await getJson(`/api/admin/ozon/orders?limit=25&offset=${offset}`);
     assertArray(orders.data, "Ozon orders");
+    pages += 1;
     if (orders.meta?.limit !== 25 || orders.meta?.offset !== offset ||
         typeof orders.meta?.hasMore !== "boolean") {
       throw new Error("Ozon orders pagination metadata changed");
@@ -218,6 +221,7 @@ async function checkOzonOrders() {
     offset = orders.meta.nextOffset;
     if (pageNumber === 199) throw new Error("Ozon orders pagination exceeded 200 pages");
   }
+  console.log(`metrics - Ozon orders rows=${ids.size} pages=${pages}`);
 }
 
 async function checkFinance() {
