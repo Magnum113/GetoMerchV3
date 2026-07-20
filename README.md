@@ -320,6 +320,12 @@ Rollback admin prod
 Эти кнопки вызывают те же команды `getomerch-*`. Сам публичный магазин KOMUI
 при этом не деплоится.
 
+`Status admin prod` показывает человекочитаемую сводку: доступность login и
+защищенного API, состояние web/worker/PostgreSQL/nginx, hourly backup timer,
+последнюю off-site копию, failed units, совпадение с `origin/main`, последний
+release и заполнение диска. Полный технический вывод остается доступен через
+`sudo /usr/local/sbin/getomerch-deploy-status`.
+
 Важные нюансы:
 
 - `admin.komui.ru` закрыт собственной авторизацией Next.js:
@@ -335,6 +341,11 @@ Rollback admin prod
 - Матрица остатков больше не использует старый hybrid route: server adapter
   читает явные product columns и один SQL aggregate остатков, Supabase adapter
   использует ограниченную пагинацию. Оба возвращают один API contract.
+- Список положительных остатков загружается страницами через
+  `/api/admin/inventory`; `/orders` и вкладка `Изделия` всегда дочитывают все
+  страницы и не строят наличие по произвольным первым строкам.
+- Эквивалентные legacy/new SKU суммируются в ячейке матрицы, а реальные варианты
+  худи (`hoodie_fit`/`hoodie_fabric`) выводятся отдельными строками.
 - `getomerch_production` является текущим runtime source of truth;
   `/etc/getomerch/database.env` подключён к web и worker systemd units.
   `getomerch_rehearsal` остаётся изолированной проверочной копией.

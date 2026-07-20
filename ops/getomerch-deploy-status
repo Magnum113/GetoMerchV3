@@ -6,6 +6,7 @@ current_link="${GETOMERCH_CURRENT_LINK:-/opt/getomerch/current}"
 releases_dir="${GETOMERCH_RELEASES_DIR:-/opt/getomerch/releases}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
 current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
+database_backup_state_path="${GETOMERCH_DATABASE_BACKUP_STATE:-/var/lib/getomerch/database-backup-latest.json}"
 service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
 npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
@@ -56,15 +57,51 @@ done
 
 echo
 echo "services:"
-for unit in "$service_unit" nginx; do
-  printf "%s: %s\n" "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
+for unit in \
+  "$service_unit" \
+  getomerch-worker.service \
+  getomerch-database-backup.timer \
+  postgresql \
+  nginx; do
+  status="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  printf "%s: %s\n" "$unit" "${status:-unknown}"
 done
+
+echo
+echo "health:"
+failed_units="$(systemctl --failed --no-legend --plain 2>/dev/null | awk 'NF {print $1}' | paste -sd ',' -)"
+if [[ -n "$failed_units" ]]; then
+  echo "failed units: $failed_units"
+else
+  echo "failed units: 0"
+fi
 
 echo
 echo "smoke:"
 curl -sS -o /dev/null -w "admin /: %{http_code} -> %{redirect_url}\n" --max-time 10 https://admin.komui.ru/ || true
 curl -sS -o /dev/null -w "admin /login: %{http_code}\n" --max-time 10 https://admin.komui.ru/login || true
 curl -sS -o /dev/null -w "admin protected API without cookie: %{http_code}\n" --max-time 10 https://admin.komui.ru/api/komui/runtime || true
+
+echo
+echo "database backup:"
+if [[ -f "$database_backup_state_path" ]]; then
+  if ! python3 - "$database_backup_state_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+print(f"status: {data.get('status', '')}")
+print(f"updatedAt: {data.get('updatedAt', '')}")
+print(f"external status: {data.get('externalStatus', '')}")
+print(f"backup id: {data.get('backupId', '')}")
+PY
+  then
+    echo "state: invalid"
+  fi
+else
+  echo "state: not found"
+fi
 
 echo
 echo "registry:"

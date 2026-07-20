@@ -41,6 +41,12 @@ type ProductPage = {
   hasMore: boolean;
 };
 
+type InventoryPage = {
+  items: Inventory[];
+  nextOffset: number | null;
+  hasMore: boolean;
+};
+
 type BlankMatchKey = {
   category_id: string;
   fabric_id: string;
@@ -168,6 +174,44 @@ async function adminGetAllProducts(filters?: ProductListFilters) {
   }
 
   return out;
+}
+
+async function adminGetInventoryPage(warehouseId?: string, offset = 0): Promise<InventoryPage> {
+  const payload = await adminGetPayload<Inventory[]>("/api/admin/inventory", {
+    limit: 200,
+    offset,
+    warehouse_id: warehouseId,
+  });
+  return {
+    items: payload.data ?? [],
+    nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
+    hasMore: payload.meta?.hasMore === true,
+  };
+}
+
+async function adminGetAllInventory(warehouseId?: string) {
+  const maxRows = 10_000;
+  const rows: Inventory[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+
+  while (rows.length < maxRows) {
+    const page = await adminGetInventoryPage(warehouseId, offset);
+    for (const item of page.items) {
+      if (seenIds.has(item.id)) {
+        throw new Error("Остатки изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
+      }
+      seenIds.add(item.id);
+      rows.push(item);
+    }
+    if (!page.hasMore || page.nextOffset == null) return rows;
+    if (page.nextOffset <= offset) {
+      throw new Error("Сервер вернул некорректную пагинацию остатков.");
+    }
+    offset = page.nextOffset;
+  }
+
+  throw new Error("Остатков больше 10 000 строк. Полная загрузка остановлена, чтобы не показать неполные данные.");
 }
 
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -308,8 +352,7 @@ export const api = {
   deleteProduct: (id: string) => adminRpc<void>("deleteProduct", [id]),
 
   // ---------- INVENTORY ----------
-  listInventory: (warehouseId?: string) =>
-    adminGet<Inventory[]>("/api/admin/inventory", { limit: 10, warehouse_id: warehouseId }),
+  listInventory: (warehouseId?: string) => adminGetAllInventory(warehouseId),
   listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix", {}, 180_000),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),

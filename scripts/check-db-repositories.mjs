@@ -126,9 +126,31 @@ async function checkProducts() {
 }
 
 async function checkInventory() {
-  const inventory = await getJson("/api/admin/inventory?limit=50");
-  assertArray(inventory.data, "inventory");
-  for (const row of inventory.data) {
+  const pageSize = 7;
+  const allInventory = [];
+  const inventoryIds = new Set();
+  let offset = 0;
+  for (let pageNumber = 0; pageNumber < 200; pageNumber++) {
+    const inventory = await getJson(`/api/admin/inventory?limit=${pageSize}&offset=${offset}`);
+    assertArray(inventory.data, "inventory");
+    if (inventory.meta?.limit !== pageSize || inventory.meta?.offset !== offset ||
+        typeof inventory.meta?.hasMore !== "boolean") {
+      throw new Error("Inventory pagination metadata changed");
+    }
+    for (const row of inventory.data) {
+      if (inventoryIds.has(row.id)) throw new Error(`Inventory pagination returned duplicate ${row.id}`);
+      inventoryIds.add(row.id);
+      allInventory.push(row);
+    }
+    if (!inventory.meta.hasMore) break;
+    if (typeof inventory.meta.nextOffset !== "number" || inventory.meta.nextOffset <= offset) {
+      throw new Error("Inventory pagination did not advance");
+    }
+    offset = inventory.meta.nextOffset;
+    if (pageNumber === 199) throw new Error("Inventory pagination exceeded 200 pages");
+  }
+
+  for (const row of allInventory) {
     if (typeof row.id !== "string" || typeof row.quantity !== "number") {
       throw new Error("Invalid inventory row");
     }
@@ -138,6 +160,30 @@ async function checkInventory() {
   const matrix = await getJson("/api/admin/inventory/matrix");
   assertArray(matrix.data?.blankRows, "matrix blankRows");
   assertArray(matrix.data?.finishedRows, "matrix finishedRows");
+
+  const expectedBlank = allInventory
+    .filter((row) => row.product?.is_blank === true)
+    .reduce((sum, row) => sum + row.quantity, 0);
+  const expectedFinished = allInventory
+    .filter((row) => row.product?.is_blank === false)
+    .reduce((sum, row) => sum + row.quantity, 0);
+  const actualBlank = matrixUnits(matrix.data.blankRows);
+  const actualFinished = matrixUnits(matrix.data.finishedRows);
+  if (actualBlank !== expectedBlank || actualFinished !== expectedFinished) {
+    throw new Error(
+      `Inventory matrix totals differ: blank ${actualBlank}/${expectedBlank}, finished ${actualFinished}/${expectedFinished}`,
+    );
+  }
+}
+
+function matrixUnits(rows) {
+  return rows.reduce((rowTotal, row) => rowTotal + Object.values(row.cells ?? {}).reduce(
+    (cellTotal, cell) => cellTotal + Object.values(cell.byWh ?? {}).reduce(
+      (warehouseTotal, quantity) => warehouseTotal + Number(quantity || 0),
+      0,
+    ),
+    0,
+  ), 0);
 }
 
 async function checkOperations() {

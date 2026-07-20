@@ -190,7 +190,11 @@ async function dispatchReadAction(
       });
     }
     case "listInventory":
-      return services.inventory.listInventory({ limit: 1000, warehouseId: stringArg(args[0]) });
+      return (await services.inventory.listInventory({
+        limit: 1000,
+        offset: 0,
+        warehouseId: stringArg(args[0]),
+      })).rows;
     case "getInventoryFor":
       return services.inventory.getInventoryFor(requiredString(args[0]), requiredString(args[1]));
     case "listTransactions":

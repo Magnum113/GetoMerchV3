@@ -12,7 +12,7 @@ const checks = [
   { name: "health with valid cookie returns 200", run: () => expectStatus("/api/admin/health", 200, authCookie()) },
   { name: "products pagination with valid cookie returns cursor metadata", run: () => expectProductsPagination() },
   { name: "Ozon orders page data with valid cookie returns 200", run: () => expectStatus("/api/admin/ozon/orders?limit=5", 200, authCookie()) },
-  { name: "inventory page data with valid cookie returns 200", run: () => expectStatus("/api/admin/inventory?limit=10", 200, authCookie()) },
+  { name: "inventory pagination with valid cookie is complete and non-overlapping", run: () => expectInventoryPagination() },
   { name: "design product counts with valid cookie returns array", run: () => expectDesignProductCounts() },
   { name: "blank matches with valid cookie accepts empty key set", run: () => expectBlankMatches() },
   { name: "inventory matrix with valid cookie returns rows", run: () => expectInventoryMatrix() },
@@ -93,6 +93,30 @@ async function expectProductsPagination() {
     if (second.data.length === 0) throw new Error("Expected second products page");
     if (second.data[0]?.id === first.data[0]?.id) {
       throw new Error("Expected cursor to move to a different products page");
+    }
+  }
+}
+
+async function expectInventoryPagination() {
+  const first = await expectJson("/api/admin/inventory?limit=7&offset=0", 200, authCookie());
+  if (!Array.isArray(first.data)) throw new Error("Expected inventory data array");
+  if (!first.meta || first.meta.limit !== 7 || first.meta.offset !== 0 ||
+      typeof first.meta.hasMore !== "boolean") {
+    throw new Error("Expected inventory pagination metadata");
+  }
+
+  if (first.meta.hasMore) {
+    if (typeof first.meta.nextOffset !== "number" || first.meta.nextOffset <= 0) {
+      throw new Error("Expected advancing inventory nextOffset");
+    }
+    const second = await expectJson(
+      `/api/admin/inventory?limit=7&offset=${first.meta.nextOffset}`,
+      200,
+      authCookie(),
+    );
+    const firstIds = new Set(first.data.map((row) => row.id));
+    if (!Array.isArray(second.data) || second.data.some((row) => firstIds.has(row.id))) {
+      throw new Error("Expected non-overlapping inventory pages");
     }
   }
 }

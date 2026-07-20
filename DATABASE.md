@@ -886,6 +886,11 @@ Direct Postgres правила для таблиц:
 - `/api/admin/inventory/matrix` использует явные product dimensions и одну
   агрегацию `merch_inventory`; Supabase adapter выполняет ограниченную
   пагинацию, PostgreSQL adapter — прямые SQL-запросы;
+- `/api/admin/inventory` использует bounded pagination с детерминированным
+  порядком; страницы `/orders` и `/inventory` дочитывают все страницы перед
+  расчётом наличия;
+- matrix суммирует эквивалентные legacy/new SKU внутри одной ячейки и разделяет
+  finished-варианты по `design_version`, `hoodie_fit`, `hoodie_fabric`;
 - если объём каталога сильно вырастет, matrix можно вынести в отдельную
   Postgres RPC/materialized summary, но это уже оптимизация следующего уровня,
   а не текущий blocker.

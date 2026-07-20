@@ -294,6 +294,21 @@ Production cutover выполнен `2026-07-17`:
 выключенными; выполняются monitoring, ручные sync и контроль hourly backup.
 Supabase сохраняется frozen минимум 30 дней и не получает production writes.
 
+Первый timer-driven database backup в `2026-07-17T14:00:02Z` выявил дефект
+systemd sandbox: `gpg` пытался создать `/root/.gnupg`, недоступный при
+`ProtectHome=true`. Backup-скрипт переведен на закрытый `GNUPGHOME` внутри
+`/var/backups/getomerch/database`; повторный запуск через тот же systemd unit
+успешно создал и выгрузил off-site backup `20260717T143943Z`. Полный restore
+drill завершился успешно, `komui-healthcheck` снова сообщает `SUMMARY OK`,
+failed units отсутствуют.
+
+На этапе стабилизации также выявлен UI-регресс остатков: `/orders` и вкладка
+`Изделия` запрашивали только 10 из 64 положительных строк, хотя matrix читала
+полный набор. Frozen Supabase и local PostgreSQL сверены по каждой складской
+паре: изделия `124 - 1 = 123`, принты `50 - 5 = 45`, расхождений `0`, потери
+данных нет. Inventory list переведен на bounded pagination, а matrix aggregation
+защищена от перезаписи эквивалентных SKU.
+
 ## 15. Текущие риски и обязательные гейты
 
 | Риск / действие | Когда закрыть | Состояние |
@@ -325,8 +340,8 @@ encrypted off-site upload и отдельным restore drill. Supabase REST exp
 | Production worker | `active/enabled`; первый orders job `succeeded` за 1 attempt |
 | `getomerch-backup.timer` | inactive; Supabase frozen archive сохранён |
 | Последний полный Supabase backup | `getomerch-backup-20260717T130637Z.tar.gz.gpg`, encrypted и uploaded off-site |
-| Последний native DB backup | `getomerch-database-backup-20260717T131251Z.tar.gz.gpg`, encrypted и uploaded off-site |
-| Последний native DB restore | `20260717T131254Z`, migrations/counts/integrity/roles успешно |
+| Последний native DB backup | `getomerch-database-backup-20260717T143943Z.tar.gz.gpg`, encrypted и uploaded off-site |
+| Последний native DB restore | `20260717T144008Z`, migrations/counts/integrity/roles успешно |
 | Постоянная rehearsal БД | migrations `0001`–`0003`, 20 business tables, 6 621 source rows, audit/jobs schemas, fingerprints совпали |
 | Final production import report | `/var/lib/getomerch/cutover/imports/20260717T130717Z/`, status success |
 | `komui_production` | не изменялась |
@@ -356,3 +371,5 @@ encrypted off-site upload и отдельным restore drill. Supabase REST exp
 | `2026-07-17` | Этап 9 завершен: два полных pre-production цикла, native backup/restore и Supabase rollback прошли без production cutover |
 | `2026-07-17` | Подготовка этапа 10 завершена: Release E установлен, maintenance/cutover/backup проверены, production target возвращен пустым; `prepare` и `go` не запускались |
 | `2026-07-17` | Этап 10 завершен: local PostgreSQL live, первый Ozon job и post-write backup/restore успешны; начат этап 11 |
+| `2026-07-17` | На этапе 11 исправлен timer-driven backup под `ProtectHome=true`: выделен закрытый `GNUPGHOME`, повторные backup/off-site upload/restore drill и KOMUI healthcheck успешны |
+| `2026-07-20` | Подтверждена целостность inventory после cutover; исправлены десятистрочный inventory snapshot для `/orders`/`/inventory`, pagination и агрегация duplicate SKU в matrix |

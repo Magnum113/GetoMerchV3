@@ -601,6 +601,13 @@ defaults после cutover — `server/server/false`. Read
 repositories обязаны использовать явные колонки, параметризованные фильтры,
 детерминированный порядок, batch hydration и pagination.
 
+`/api/admin/inventory` возвращает bounded page и `offset/nextOffset/hasMore`.
+Клиентские `/orders` и `/inventory` используют общий bounded page loop, поэтому
+availability и список изделий получают один полный снимок положительных
+остатков. Matrix aggregation суммирует остатки эквивалентных SKU, а
+`design_version`, `hoodie_fit` и `hoodie_fabric` входят в ключ реального
+finished-варианта.
+
 Старый direct доступ к Supabase DB временно остаётся только для ограниченных
 legacy/diagnostic веток периода стабилизации и использует transaction pooler:
 
@@ -872,15 +879,23 @@ Rollback admin prod
 KOMUI, а кнопки `Deploy admin prod` / `Rollback admin prod` — только к этой
 админке.
 
+Ответ `Status admin prod` форматируется ботом как операционная сводка, а не как
+сырой stdout. Он проверяет web, worker, PostgreSQL, nginx, database backup timer,
+failed systemd units, HTTP auth smoke, свежесть off-site backup, Git/release и
+свободное место. Для диагностики полный вывод сохраняется в
+`getomerch-deploy-status`.
+
 ### 11.6. Данные и backup
 
-Основная рабочая БД админки всё ещё Supabase. На сервере уже создан отдельный
-изолированный PostgreSQL-контур, но он еще не является production runtime:
+С `2026-07-17 13:08 UTC` основной рабочей БД админки является локальная
+`getomerch_production`. Supabase зафиксирован как read-only archive/diagnostic
+source минимум на 30 дней и не участвует в production runtime:
 
-- `getomerch_rehearsal` содержит migrations `0001`–`0003`, проверенную
-  point-in-time копию 6 621 строки из 20 таблиц Supabase, `getomerch_audit` и
-  private `getomerch_jobs` schemas; это не live replica;
-- `getomerch_production` существует, но намеренно не содержит schema и данных;
+- `getomerch_production` содержит live production data, `getomerch_audit` и
+  private `getomerch_jobs` schemas; web и worker работают в режиме
+  `GETOMERCH_DB_READ_SOURCE=server` / `GETOMERCH_DB_WRITE_SOURCE=server`;
+- `getomerch_rehearsal` остаётся изолированной проверочной БД для migration и
+  restore drill; это не live replica и не источник production reads/writes;
 - объекты принадлежат NOLOGIN-роли `getomerch_owner`;
 - `getomerch_migrator` выполняет DDL через явный `SET ROLE`;
 - `getomerch_app` имеет только runtime CRUD, а `getomerch_backup` — чтение;

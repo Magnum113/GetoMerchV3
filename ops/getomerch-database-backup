@@ -20,6 +20,7 @@ DAILY_DIR="$BACKUP_ROOT/daily"
 WEEKLY_DIR="$BACKUP_ROOT/weekly"
 MONTHLY_DIR="$BACKUP_ROOT/monthly"
 LOG_DIR="$BACKUP_ROOT/logs"
+GNUPG_DIR="$BACKUP_ROOT/.gnupg"
 TMP_DIR="$(mktemp -d /var/tmp/getomerch-database-backup-${RUN_ID}.XXXXXX)"
 LOG_FILE="$LOG_DIR/getomerch-database-backup-${RUN_ID}.log"
 PLAIN_ARCHIVE="$TMP_DIR/getomerch-database-backup-${RUN_ID}.tar.gz"
@@ -65,7 +66,15 @@ done
 [[ "$(stat -c '%a:%U:%G' "$DATABASE_ENV")" == "600:root:root" ]] || \
   fail "unsafe database backup env permissions"
 
-install -d -m 0700 "$HOUR_DIR" "$DAILY_DIR" "$WEEKLY_DIR" "$MONTHLY_DIR" "$LOG_DIR" "$(dirname "$STATE_FILE")"
+install -d -m 0700 \
+  "$HOUR_DIR" \
+  "$DAILY_DIR" \
+  "$WEEKLY_DIR" \
+  "$MONTHLY_DIR" \
+  "$LOG_DIR" \
+  "$GNUPG_DIR" \
+  "$(dirname "$STATE_FILE")"
+export GNUPGHOME="$GNUPG_DIR"
 exec > >(tee "$LOG_FILE") 2>&1
 exec 9>/run/lock/getomerch-database-backup.lock
 flock -n 9 || fail "another local database backup is running"

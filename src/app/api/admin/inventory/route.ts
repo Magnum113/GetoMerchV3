@@ -4,6 +4,7 @@ import {
   adminErrorResponse,
   adminJson,
   parseLimitParam,
+  parseOffsetParam,
   requireUuidParam,
 } from "@/lib/admin/http";
 import { createDatabaseReadServices } from "@/lib/db/services/runtime";
@@ -14,13 +15,23 @@ export async function GET(request: NextRequest) {
   try {
     await requireAdminSession();
     const params = request.nextUrl.searchParams;
-    const limit = parseLimitParam(params.get("limit"), { defaultValue: 500, max: 1000 });
+    const limit = parseLimitParam(params.get("limit"), { defaultValue: 200, max: 500 });
+    const offset = parseOffsetParam(params.get("offset"));
     const warehouseId = requireUuidParam(params.get("warehouse_id"), "warehouse_id");
-    const data = await createDatabaseReadServices().inventory.listInventory({
+    const page = await createDatabaseReadServices().inventory.listInventory({
       limit,
+      offset,
       warehouseId,
     });
-    return adminJson({ data, meta: { limit } });
+    return adminJson({
+      data: page.rows,
+      meta: {
+        limit,
+        offset,
+        nextOffset: page.hasMore ? offset + limit : null,
+        hasMore: page.hasMore,
+      },
+    });
   } catch (error) {
     return adminErrorResponse(error);
   }

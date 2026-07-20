@@ -15,7 +15,13 @@ import type {
 
 export type InventoryListOptions = {
   limit: number;
+  offset: number;
   warehouseId?: string;
+};
+
+export type InventoryPage = {
+  rows: Inventory[];
+  hasMore: boolean;
 };
 
 type InventoryRow = Omit<Inventory, "product" | "warehouse">;
@@ -32,10 +38,13 @@ type MatrixProduct = Pick<
   | "decoration_type_id"
   | "sku"
   | "is_blank"
+  | "design_version"
+  | "hoodie_fit"
+  | "hoodie_fabric"
 >;
 
 export interface InventoryRepository {
-  listInventory(options: InventoryListOptions): Promise<Inventory[]>;
+  listInventory(options: InventoryListOptions): Promise<InventoryPage>;
   getInventoryFor(productId: string, warehouseId: string): Promise<number>;
   listPrintInventory(warehouseId?: string): Promise<PrintInventory[]>;
   getPrintInventoryFor(designId: string, warehouseId: string): Promise<number>;
@@ -57,11 +66,16 @@ export class PostgresInventoryRepository implements InventoryRepository {
         WHERE quantity > 0
           AND ($2::uuid IS NULL OR warehouse_id = $2)
         ORDER BY updated_at DESC, id DESC
-        LIMIT $1
+        LIMIT $1 OFFSET $3
       `,
-      [options.limit, options.warehouseId ?? null],
+      [options.limit + 1, options.warehouseId ?? null, options.offset],
     );
-    return hydrateInventory(result.rows, this.catalog, this.products);
+    const hasMore = result.rows.length > options.limit;
+    const rows = hasMore ? result.rows.slice(0, options.limit) : result.rows;
+    return {
+      rows: await hydrateInventory(rows, this.catalog, this.products),
+      hasMore,
+    };
   }
 
   async getInventoryFor(productId: string, warehouseId: string) {
@@ -109,7 +123,8 @@ export class PostgresInventoryRepository implements InventoryRepository {
       this.query<MatrixProduct>(
         `
           SELECT id, category_id, fabric_id, color_id, size_id, design_id,
-                 decoration_type_id, sku, is_blank
+                 decoration_type_id, sku, is_blank, design_version,
+                 hoodie_fit, hoodie_fabric
           FROM merch_products
           ORDER BY sku COLLATE "C" ASC NULLS LAST, id
         `,
@@ -143,11 +158,17 @@ export class SupabaseInventoryRepository implements InventoryRepository {
       .gt("quantity", 0)
       .order("updated_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(options.limit);
+      .range(options.offset, options.offset + options.limit);
     if (options.warehouseId) query = query.eq("warehouse_id", options.warehouseId);
     const { data, error } = await query;
     if (error) throw repositoryError(error);
-    return hydrateInventory((data ?? []) as InventoryRow[], this.catalog, this.products);
+    const result = (data ?? []) as InventoryRow[];
+    const hasMore = result.length > options.limit;
+    const rows = hasMore ? result.slice(0, options.limit) : result;
+    return {
+      rows: await hydrateInventory(rows, this.catalog, this.products),
+      hasMore,
+    };
   }
 
   async getInventoryFor(productId: string, warehouseId: string) {
@@ -200,7 +221,7 @@ export class SupabaseInventoryRepository implements InventoryRepository {
     for (let offset = 0; offset < 20_000; offset += pageSize) {
       const { data, error } = await this.client
         .from("merch_products")
-        .select("id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank")
+        .select("id,category_id,fabric_id,color_id,size_id,design_id,decoration_type_id,sku,is_blank,design_version,hoodie_fit,hoodie_fabric")
         .order("sku")
         .order("id")
         .range(offset, offset + pageSize - 1);
@@ -286,28 +307,49 @@ function buildInventoryMatrix(
     if (!product.is_blank && !product.sku) continue;
     const key = product.is_blank
       ? `b|${product.category_id}|${product.fabric_id}|${product.color_id}`
-      : `f|${product.category_id}|${product.fabric_id}|${product.color_id}|${product.design_id}|${product.decoration_type_id}`;
+      : [
+          "f",
+          product.category_id,
+          product.fabric_id,
+          product.color_id,
+          product.design_id,
+          product.decoration_type_id,
+          product.design_version ?? "",
+          product.hoodie_fit ?? "",
+          product.hoodie_fabric ?? "",
+        ].join("|");
     let row = groups.get(key);
     if (!row) {
       const design = product.design_id ? designs.get(product.design_id) : null;
       const decoration = product.decoration_type_id
         ? decorationTypes.get(product.decoration_type_id)
         : null;
+      const variantLabel = [
+        product.design_version && product.design_version !== "V01" ? product.design_version : null,
+        product.hoodie_fit,
+        product.hoodie_fabric,
+      ]
+        .filter(Boolean)
+        .join(" / ");
       row = {
         key,
         isBlank: product.is_blank,
         label: `${categories.get(product.category_id)?.name ?? ""} ${fabrics.get(product.fabric_id)?.name?.toLowerCase() ?? ""}`,
         subLabel: colors.get(product.color_id)?.name ?? "",
         hex: colors.get(product.color_id)?.hex_code ?? null,
-        designLabel: product.is_blank ? null : `${decoration?.name ?? ""}: ${design?.name ?? ""}`,
+        designLabel: product.is_blank
+          ? null
+          : `${decoration?.name ?? ""}: ${design?.name ?? ""}${variantLabel ? ` · ${variantLabel}` : ""}`,
         cells: {},
       };
       groups.set(key, row);
     }
-    row.cells[product.size_id] = {
-      hasProduct: true,
-      byWh: stockByProduct.get(product.id) ?? {},
-    };
+    const cell = row.cells[product.size_id] ?? { hasProduct: false, byWh: {} };
+    cell.hasProduct = true;
+    for (const [warehouseId, quantity] of Object.entries(stockByProduct.get(product.id) ?? {})) {
+      cell.byWh[warehouseId] = (cell.byWh[warehouseId] ?? 0) + quantity;
+    }
+    row.cells[product.size_id] = cell;
   }
 
   const rows = Array.from(groups.values()).sort((left, right) => {
