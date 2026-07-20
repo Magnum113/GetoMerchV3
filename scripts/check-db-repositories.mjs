@@ -225,14 +225,43 @@ async function checkOzonOrders() {
 }
 
 async function checkFinance() {
-  for (const path of [
-    "/api/admin/expenses?limit=200",
-    "/api/admin/finance/ozon?limit=200",
-    "/api/admin/import/ozon/runs?limit=50",
-  ]) {
-    const payload = await getJson(path);
-    assertArray(payload.data, path);
+  const from = new Date(Date.now() - 370 * 86_400_000).toISOString();
+  const to = new Date().toISOString();
+  const finance = await collectOffsetPages(
+    `/api/admin/finance/ozon?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    73,
+    "finance operations",
+  );
+  const expenses = await collectOffsetPages("/api/admin/expenses", 73, "expenses");
+  const imports = await getJson("/api/admin/import/ozon/runs?limit=50");
+  assertArray(imports.data, "import runs");
+  console.log(`metrics - finance rows=${finance.length} expenses=${expenses.length}`);
+}
+
+async function collectOffsetPages(path, pageSize, label) {
+  const rows = [];
+  const ids = new Set();
+  let offset = 0;
+  for (let pageNumber = 0; pageNumber < 1000; pageNumber++) {
+    const separator = path.includes("?") ? "&" : "?";
+    const payload = await getJson(`${path}${separator}limit=${pageSize}&offset=${offset}`);
+    assertArray(payload.data, label);
+    if (payload.meta?.limit !== pageSize || payload.meta?.offset !== offset ||
+        typeof payload.meta?.hasMore !== "boolean") {
+      throw new Error(`${label} pagination metadata changed`);
+    }
+    for (const row of payload.data) {
+      if (ids.has(row.id)) throw new Error(`${label} pagination returned duplicate ${row.id}`);
+      ids.add(row.id);
+      rows.push(row);
+    }
+    if (!payload.meta.hasMore) return rows;
+    if (typeof payload.meta.nextOffset !== "number" || payload.meta.nextOffset <= offset) {
+      throw new Error(`${label} pagination did not advance`);
+    }
+    offset = payload.meta.nextOffset;
   }
+  throw new Error(`${label} pagination exceeded 1000 pages`);
 }
 
 async function checkReadOnlyRpc() {

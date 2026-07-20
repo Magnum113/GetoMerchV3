@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, BarChart3, PackageX, PieChart, RefreshCw, Sparkles, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import {
   delta,
   expenseBreakdown,
   formatDateRange,
+  isoDate,
   nonRedemptionByProduct,
   ordersRevenueSummary,
   ordersSummary,
@@ -66,23 +67,37 @@ export default function AnalyticsDashboardPage() {
   const [gran, setGran] = useState<Granularity | "auto">("auto");
   const [ordersMode, setOrdersMode] = useState<"orders" | "revenue">("orders");
   const [showAllNonRedemptionProducts, setShowAllNonRedemptionProducts] = useState(false);
+  const reloadSequence = useRef(0);
 
   const filter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
   const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
+  const dataWindow = useMemo(() => {
+    const from = new Date(Math.min(filter.from.getTime(), prevFilter.from.getTime()));
+    const toExclusive = new Date(Math.max(filter.to.getTime(), prevFilter.to.getTime()));
+    const toInclusive = new Date(toExclusive.getTime() - 1);
+    return {
+      financeFrom: from.toISOString(),
+      financeTo: toExclusive.toISOString(),
+      expenseFrom: isoDate(from),
+      expenseTo: isoDate(toInclusive),
+    };
+  }, [filter, prevFilter]);
 
   async function reload() {
+    const sequence = ++reloadSequence.current;
     setLoading(true);
     try {
       const [ord, opsAll, exp, cats, sync, sku, invRows, whRows] = await Promise.all([
         api.listOzonOrders(),
-        api.listFinanceOperations(),
-        api.listExpenses(),
+        api.listFinanceOperations({ from: dataWindow.financeFrom, to: dataWindow.financeTo }),
+        api.listExpenses({ from: dataWindow.expenseFrom, to: dataWindow.expenseTo }),
         api.listExpenseCategories(),
         api.lastFinanceSyncAt(),
         api.listOzonSkuProductMap(),
         api.listInventory(),
         api.listWarehouses(),
       ]);
+      if (sequence !== reloadSequence.current) return;
       setOrders(ord);
       setOps(opsAll);
       setExpenses(exp);
@@ -92,15 +107,15 @@ export default function AnalyticsDashboardPage() {
       setInventory(invRows);
       setWarehouses(whRows);
     } catch (e) {
-      toast.error(errorMessage(e));
+      if (sequence === reloadSequence.current) toast.error(errorMessage(e));
     } finally {
-      setLoading(false);
+      if (sequence === reloadSequence.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     reload();
-  }, []);
+  }, [preset]);
 
   async function sync() {
     setSyncing(true);

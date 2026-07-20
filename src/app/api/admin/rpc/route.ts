@@ -227,20 +227,22 @@ async function dispatchReadAction(
     }
     case "listExpenses": {
       const filters = objectArg(args[0]);
-      return services.expenses.list({
+      return (await services.expenses.list({
         limit: 1000,
+        offset: 0,
         from: stringArg(filters.from),
         to: stringArg(filters.to),
         categoryId: stringArg(filters.categoryId),
-      });
+      })).rows;
     }
     case "listFinanceOperations": {
       const filters = objectArg(args[0]);
-      return services.finance.list({
+      return (await services.finance.list({
         limit: 1000,
+        offset: 0,
         from: stringArg(filters.from),
         to: stringArg(filters.to),
-      });
+      })).rows;
     }
     case "listOzonSkuProductMap":
       return services.finance.listOzonSkuProductMap();

@@ -8,9 +8,15 @@ import type { OzonFinanceOperation, Product } from "@/lib/types";
 
 export type FinanceListOptions = {
   limit: number;
+  offset: number;
   from?: string;
   to?: string;
   postingNumber?: string;
+};
+
+export type FinancePage = {
+  rows: OzonFinanceOperation[];
+  hasMore: boolean;
 };
 
 export type OzonSkuProduct = { ozon_sku: string; product: Product };
@@ -21,7 +27,7 @@ const FINANCE_SELECT =
   "id,operation_id,operation_type,operation_type_name,operation_date,posting_number,accruals_for_sale,sale_commission,amount,services,items,synced_at";
 
 export interface FinanceRepository {
-  list(options: FinanceListOptions): Promise<OzonFinanceOperation[]>;
+  list(options: FinanceListOptions): Promise<FinancePage>;
   listOzonSkuProductMap(): Promise<OzonSkuProduct[]>;
   lastSyncAt(): Promise<string | null>;
 }
@@ -33,7 +39,7 @@ export class PostgresFinanceRepository implements FinanceRepository {
   ) {}
 
   async list(options: FinanceListOptions) {
-    return (
+    const result = (
       await this.query<OzonFinanceOperation>(
         `
           SELECT id, operation_id::float8 AS operation_id, operation_type,
@@ -43,14 +49,25 @@ export class PostgresFinanceRepository implements FinanceRepository {
                  amount::float8 AS amount, services, items, synced_at
           FROM merch_ozon_finance_operations
           WHERE ($2::timestamptz IS NULL OR operation_date >= $2)
-            AND ($3::timestamptz IS NULL OR operation_date <= $3)
+            AND ($3::timestamptz IS NULL OR operation_date < $3)
             AND ($4::text IS NULL OR posting_number = $4)
           ORDER BY operation_date DESC, id DESC
-          LIMIT $1
+          LIMIT $1 OFFSET $5
         `,
-        [options.limit, options.from ?? null, options.to ?? null, options.postingNumber ?? null],
+        [
+          options.limit + 1,
+          options.from ?? null,
+          options.to ?? null,
+          options.postingNumber ?? null,
+          options.offset,
+        ],
       )
     ).rows;
+    const hasMore = result.length > options.limit;
+    return {
+      rows: hasMore ? result.slice(0, options.limit) : result,
+      hasMore,
+    };
   }
 
   async listOzonSkuProductMap() {
@@ -87,13 +104,18 @@ export class SupabaseFinanceRepository implements FinanceRepository {
       .select(FINANCE_SELECT)
       .order("operation_date", { ascending: false })
       .order("id", { ascending: false })
-      .limit(options.limit);
+      .range(options.offset, options.offset + options.limit);
     if (options.from) query = query.gte("operation_date", options.from);
-    if (options.to) query = query.lte("operation_date", options.to);
+    if (options.to) query = query.lt("operation_date", options.to);
     if (options.postingNumber) query = query.eq("posting_number", options.postingNumber);
     const { data, error } = await query;
     if (error) throw repositoryError(error);
-    return (data ?? []) as unknown as OzonFinanceOperation[];
+    const result = (data ?? []) as unknown as OzonFinanceOperation[];
+    const hasMore = result.length > options.limit;
+    return {
+      rows: hasMore ? result.slice(0, options.limit) : result,
+      hasMore,
+    };
   }
 
   async listOzonSkuProductMap() {

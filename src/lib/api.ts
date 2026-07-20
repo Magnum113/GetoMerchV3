@@ -53,6 +53,21 @@ type OzonOrderPage = {
   hasMore: boolean;
 };
 
+type ExpenseFilters = { from?: string; to?: string; categoryId?: string };
+type FinanceFilters = { from?: string; to?: string };
+
+type ExpensePage = {
+  items: Expense[];
+  nextOffset: number | null;
+  hasMore: boolean;
+};
+
+type FinancePage = {
+  items: OzonFinanceOperation[];
+  nextOffset: number | null;
+  hasMore: boolean;
+};
+
 type BlankMatchKey = {
   category_id: string;
   fabric_id: string;
@@ -255,6 +270,81 @@ async function adminGetAllOzonOrders() {
   }
 
   throw new Error("Заказов больше 10 000. Полная загрузка остановлена, чтобы не показать неполные данные.");
+}
+
+async function adminGetExpensesPage(filters: ExpenseFilters = {}, offset = 0): Promise<ExpensePage> {
+  const payload = await adminGetPayload<Expense[]>("/api/admin/expenses", {
+    limit: 500,
+    offset,
+    from: filters.from,
+    to: filters.to,
+    category_id: filters.categoryId,
+  });
+  return {
+    items: payload.data ?? [],
+    nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
+    hasMore: payload.meta?.hasMore === true,
+  };
+}
+
+async function adminGetAllExpenses(filters: ExpenseFilters = {}) {
+  const maxRows = 50_000;
+  const rows: Expense[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+
+  while (rows.length < maxRows) {
+    const page = await adminGetExpensesPage(filters, offset);
+    for (const item of page.items) {
+      if (seenIds.has(item.id)) {
+        throw new Error("Расходы изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
+      }
+      seenIds.add(item.id);
+      rows.push(item);
+    }
+    if (!page.hasMore || page.nextOffset == null) return rows;
+    if (page.nextOffset <= offset) throw new Error("Сервер вернул некорректную пагинацию расходов.");
+    offset = page.nextOffset;
+  }
+
+  throw new Error("Расходов больше 50 000. Уточните период, чтобы не показать неполные данные.");
+}
+
+async function adminGetFinancePage(filters: FinanceFilters = {}, offset = 0): Promise<FinancePage> {
+  const payload = await adminGetPayload<OzonFinanceOperation[]>("/api/admin/finance/ozon", {
+    limit: 500,
+    offset,
+    from: filters.from,
+    to: filters.to,
+  });
+  return {
+    items: payload.data ?? [],
+    nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
+    hasMore: payload.meta?.hasMore === true,
+  };
+}
+
+async function adminGetAllFinanceOperations(filters: FinanceFilters = {}) {
+  const maxRows = 50_000;
+  const rows: OzonFinanceOperation[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+
+  while (rows.length < maxRows) {
+    const page = await adminGetFinancePage(filters, offset);
+    for (const item of page.items) {
+      if (seenIds.has(item.id)) {
+        throw new Error("Финансовые операции изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
+      }
+      seenIds.add(item.id);
+      rows.push(item);
+    }
+    if (!page.hasMore || page.nextOffset == null) return rows;
+    if (page.nextOffset <= offset) throw new Error("Сервер вернул некорректную пагинацию финансовых операций.");
+    offset = page.nextOffset;
+  }
+
+  throw new Error("Финансовых операций больше 50 000. Уточните период, чтобы не показать неполные данные.");
 }
 
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -577,13 +667,7 @@ export const api = {
     patch: { name?: string; color?: string | null; sort_order?: number; archived?: boolean },
   ) => adminRpc<void>("updateExpenseCategory", [id, patch]),
   deleteExpenseCategory: (id: string) => adminRpc<void>("deleteExpenseCategory", [id]),
-  listExpenses: (filters?: { from?: string; to?: string; categoryId?: string }) =>
-    adminGet<Expense[]>("/api/admin/expenses", {
-      limit: 1000,
-      from: filters?.from,
-      to: filters?.to,
-      category_id: filters?.categoryId,
-    }),
+  listExpenses: (filters: ExpenseFilters = {}) => adminGetAllExpenses(filters),
   createExpense: (input: { categoryId: string | null; amount: number; occurredAt: string; description?: string | null }) =>
     adminRpc<void>("createExpense", [input]),
   updateExpense: (
@@ -591,12 +675,7 @@ export const api = {
     patch: { categoryId?: string | null; amount?: number; occurredAt?: string; description?: string | null },
   ) => adminRpc<void>("updateExpense", [id, patch]),
   deleteExpense: (id: string) => adminRpc<void>("deleteExpense", [id]),
-  listFinanceOperations: (filters?: { from?: string; to?: string }) =>
-    adminGet<OzonFinanceOperation[]>("/api/admin/finance/ozon", {
-      limit: 1000,
-      from: filters?.from,
-      to: filters?.to,
-    }),
+  listFinanceOperations: (filters: FinanceFilters = {}) => adminGetAllFinanceOperations(filters),
   listOzonSkuProductMap: () =>
     adminRpc<Array<{ ozon_sku: string; product: Product }>>("listOzonSkuProductMap"),
   lastFinanceSyncAt: () => adminRpc<string | null>("lastFinanceSyncAt"),

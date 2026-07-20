@@ -311,6 +311,12 @@ failed units отсутствуют.
 заменён bounded pagination: все активные FBS-заказы участвуют в резервировании
 остатков независимо от позиции в истории.
 
+Годовой dashboard дополнительно был ограничен 1000 последними finance rows:
+при 2148 операциях за 2026 год API возвращал данные только начиная с 18 июня.
+Finance/expenses переведены на bounded pagination с date-window текущего и
+предыдущего периода; лимит страницы сохранён как защита, усечение результата
+устранено.
+
 ## 15. Текущие риски и обязательные гейты
 
 | Риск / действие | Когда закрыть | Состояние |
@@ -375,3 +381,4 @@ encrypted off-site upload и отдельным restore drill. Supabase REST exp
 | `2026-07-17` | Этап 10 завершен: local PostgreSQL live, первый Ozon job и post-write backup/restore успешны; начат этап 11 |
 | `2026-07-17` | На этапе 11 исправлен timer-driven backup под `ProtectHome=true`: выделен закрытый `GNUPGHOME`, повторные backup/off-site upload/restore drill и KOMUI healthcheck успешны |
 | `2026-07-20` | Подтверждена целостность inventory после cutover; исправлены десятистрочный inventory snapshot для `/orders`/`/inventory`, pagination и агрегация duplicate SKU в matrix |
+| `2026-07-20` | Устранено усечение годовой аналитики: finance/expenses pagination и period-scoped loading заменили жёсткий клиентский лимит 1000 строк |

@@ -16,6 +16,8 @@ const checks = [
   { name: "design product counts with valid cookie returns array", run: () => expectDesignProductCounts() },
   { name: "blank matches with valid cookie accepts empty key set", run: () => expectBlankMatches() },
   { name: "inventory matrix with valid cookie returns rows", run: () => expectInventoryMatrix() },
+  { name: "expenses pagination with valid cookie returns metadata", run: () => expectOffsetPagination("/api/admin/expenses", "expenses") },
+  { name: "finance pagination with valid cookie is non-overlapping", run: () => expectOffsetPagination("/api/admin/finance/ozon", "finance") },
   {
     name: "admin RPC without cookie returns 401",
     run: () => expectStatus("/api/admin/rpc", 401, undefined, rpcInit("listWarehouses")),
@@ -140,6 +142,28 @@ async function expectInventoryPagination() {
     if (!Array.isArray(second.data) || second.data.some((row) => firstIds.has(row.id))) {
       throw new Error("Expected non-overlapping inventory pages");
     }
+  }
+}
+
+async function expectOffsetPagination(path, label) {
+  const first = await expectJson(`${path}?limit=7&offset=0`, 200, authCookie());
+  if (!Array.isArray(first.data)) throw new Error(`Expected ${label} data array`);
+  if (!first.meta || first.meta.limit !== 7 || first.meta.offset !== 0 ||
+      typeof first.meta.hasMore !== "boolean") {
+    throw new Error(`Expected ${label} pagination metadata`);
+  }
+  if (!first.meta.hasMore) return;
+  if (typeof first.meta.nextOffset !== "number" || first.meta.nextOffset <= 0) {
+    throw new Error(`Expected advancing ${label} nextOffset`);
+  }
+  const second = await expectJson(
+    `${path}?limit=7&offset=${first.meta.nextOffset}`,
+    200,
+    authCookie(),
+  );
+  const firstIds = new Set(first.data.map((row) => row.id));
+  if (!Array.isArray(second.data) || second.data.some((row) => firstIds.has(row.id))) {
+    throw new Error(`Expected non-overlapping ${label} pages`);
   }
 }
 

@@ -8,9 +8,15 @@ import type { Expense } from "@/lib/types";
 
 export type ExpenseListOptions = {
   limit: number;
+  offset: number;
   from?: string;
   to?: string;
   categoryId?: string;
+};
+
+export type ExpensePage = {
+  rows: Expense[];
+  hasMore: boolean;
 };
 
 type ExpenseRow = Omit<Expense, "category">;
@@ -18,7 +24,7 @@ type ExpenseRow = Omit<Expense, "category">;
 const EXPENSE_SELECT = "id,category_id,amount,occurred_at,description,created_at";
 
 export interface ExpenseRepository {
-  list(options: ExpenseListOptions): Promise<Expense[]>;
+  list(options: ExpenseListOptions): Promise<ExpensePage>;
 }
 
 export class PostgresExpenseRepository implements ExpenseRepository {
@@ -28,7 +34,7 @@ export class PostgresExpenseRepository implements ExpenseRepository {
   ) {}
 
   async list(options: ExpenseListOptions) {
-    const rows = (
+    const result = (
       await this.query<ExpenseRow>(
         `
           SELECT id, category_id, amount::float8 AS amount, occurred_at,
@@ -38,12 +44,20 @@ export class PostgresExpenseRepository implements ExpenseRepository {
             AND ($3::date IS NULL OR occurred_at <= $3)
             AND ($4::uuid IS NULL OR category_id = $4)
           ORDER BY occurred_at DESC, created_at DESC, id DESC
-          LIMIT $1
+          LIMIT $1 OFFSET $5
         `,
-        [options.limit, options.from ?? null, options.to ?? null, options.categoryId ?? null],
+        [
+          options.limit + 1,
+          options.from ?? null,
+          options.to ?? null,
+          options.categoryId ?? null,
+          options.offset,
+        ],
       )
     ).rows;
-    return hydrateExpenses(rows, this.catalog);
+    const hasMore = result.length > options.limit;
+    const rows = hasMore ? result.slice(0, options.limit) : result;
+    return { rows: await hydrateExpenses(rows, this.catalog), hasMore };
   }
 }
 
@@ -60,13 +74,16 @@ export class SupabaseExpenseRepository implements ExpenseRepository {
       .order("occurred_at", { ascending: false })
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(options.limit);
+      .range(options.offset, options.offset + options.limit);
     if (options.from) query = query.gte("occurred_at", options.from);
     if (options.to) query = query.lte("occurred_at", options.to);
     if (options.categoryId) query = query.eq("category_id", options.categoryId);
     const { data, error } = await query;
     if (error) throw repositoryError(error);
-    return hydrateExpenses((data ?? []) as ExpenseRow[], this.catalog);
+    const result = (data ?? []) as ExpenseRow[];
+    const hasMore = result.length > options.limit;
+    const rows = hasMore ? result.slice(0, options.limit) : result;
+    return { rows: await hydrateExpenses(rows, this.catalog), hasMore };
   }
 }
 
