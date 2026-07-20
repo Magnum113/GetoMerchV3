@@ -15,9 +15,18 @@
 - Finished matrix keys include `design_version`, `hoodie_fit`, and
   `hoodie_fabric`, so physically different variants are not merged.
 
+## Ozon order reservation input
+
+- Added bounded pagination to `/api/admin/ozon/orders` and both repository
+  adapters.
+- The shared client now fetches every persisted order before the orders page or
+  dashboard derives counts and availability.
+- Added duplicate and page-progress guards equivalent to inventory loading.
+
 ## Verification
 
 - BFF smoke checks validate inventory page metadata and non-overlapping pages.
+- BFF and repository checks validate Ozon order pagination and page uniqueness.
 - Repository checks fetch every positive inventory row and require exact parity
   between list totals and matrix totals for blank and finished products.
 - Production migration reconciliation compared every product/warehouse and

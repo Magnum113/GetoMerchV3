@@ -47,6 +47,12 @@ type InventoryPage = {
   hasMore: boolean;
 };
 
+type OzonOrderPage = {
+  items: OzonOrder[];
+  nextOffset: number | null;
+  hasMore: boolean;
+};
+
 type BlankMatchKey = {
   category_id: string;
   fabric_id: string;
@@ -212,6 +218,43 @@ async function adminGetAllInventory(warehouseId?: string) {
   }
 
   throw new Error("Остатков больше 10 000 строк. Полная загрузка остановлена, чтобы не показать неполные данные.");
+}
+
+async function adminGetOzonOrdersPage(offset = 0): Promise<OzonOrderPage> {
+  const payload = await adminGetPayload<OzonOrder[]>("/api/admin/ozon/orders", {
+    limit: 200,
+    offset,
+  });
+  return {
+    items: payload.data ?? [],
+    nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
+    hasMore: payload.meta?.hasMore === true,
+  };
+}
+
+async function adminGetAllOzonOrders() {
+  const maxRows = 10_000;
+  const rows: OzonOrder[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+
+  while (rows.length < maxRows) {
+    const page = await adminGetOzonOrdersPage(offset);
+    for (const item of page.items) {
+      if (seenIds.has(item.id)) {
+        throw new Error("Заказы изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
+      }
+      seenIds.add(item.id);
+      rows.push(item);
+    }
+    if (!page.hasMore || page.nextOffset == null) return rows;
+    if (page.nextOffset <= offset) {
+      throw new Error("Сервер вернул некорректную пагинацию заказов.");
+    }
+    offset = page.nextOffset;
+  }
+
+  throw new Error("Заказов больше 10 000. Полная загрузка остановлена, чтобы не показать неполные данные.");
 }
 
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -421,7 +464,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminGet<OzonOrder[]>("/api/admin/ozon/orders", { limit: 50 }),
+  listOzonOrders: () => adminGetAllOzonOrders(),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),

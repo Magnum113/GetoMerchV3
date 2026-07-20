@@ -196,11 +196,27 @@ async function checkOperations() {
 }
 
 async function checkOzonOrders() {
-  const orders = await getJson("/api/admin/ozon/orders?limit=50");
-  assertArray(orders.data, "Ozon orders");
-  for (const order of orders.data) {
-    if (typeof order.posting_number !== "string") throw new Error("Invalid Ozon order");
-    assertArray(order.items, "Ozon order items");
+  const ids = new Set();
+  let offset = 0;
+  for (let pageNumber = 0; pageNumber < 200; pageNumber++) {
+    const orders = await getJson(`/api/admin/ozon/orders?limit=25&offset=${offset}`);
+    assertArray(orders.data, "Ozon orders");
+    if (orders.meta?.limit !== 25 || orders.meta?.offset !== offset ||
+        typeof orders.meta?.hasMore !== "boolean") {
+      throw new Error("Ozon orders pagination metadata changed");
+    }
+    for (const order of orders.data) {
+      if (ids.has(order.id)) throw new Error(`Ozon orders pagination returned duplicate ${order.id}`);
+      ids.add(order.id);
+      if (typeof order.posting_number !== "string") throw new Error("Invalid Ozon order");
+      assertArray(order.items, "Ozon order items");
+    }
+    if (!orders.meta.hasMore) break;
+    if (typeof orders.meta.nextOffset !== "number" || orders.meta.nextOffset <= offset) {
+      throw new Error("Ozon orders pagination did not advance");
+    }
+    offset = orders.meta.nextOffset;
+    if (pageNumber === 199) throw new Error("Ozon orders pagination exceeded 200 pages");
   }
 }
 

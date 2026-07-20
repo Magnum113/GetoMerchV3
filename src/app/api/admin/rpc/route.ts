@@ -211,7 +211,7 @@ async function dispatchReadAction(
     case "getWorkshopOrder":
       return services.workshop.get(requiredString(args[0]));
     case "listOzonOrders":
-      return services.ozonOrders.list({ limit: 200 });
+      return (await services.ozonOrders.list({ limit: 200, offset: 0 })).rows;
     case "findBlankFor": {
       const product = objectArg(args[0]) as Partial<Product>;
       return services.products.findBlank({

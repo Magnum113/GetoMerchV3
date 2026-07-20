@@ -889,6 +889,9 @@ Direct Postgres правила для таблиц:
 - `/api/admin/inventory` использует bounded pagination с детерминированным
   порядком; страницы `/orders` и `/inventory` дочитывают все страницы перед
   расчётом наличия;
+- `/api/admin/ozon/orders` также использует bounded pagination; расчёт
+  availability и аналитика получают полный набор сохранённых заказов вместо
+  первых 50 строк;
 - matrix суммирует эквивалентные legacy/new SKU внутри одной ячейки и разделяет
   finished-варианты по `design_version`, `hoodie_fit`, `hoodie_fabric`;
 - если объём каталога сильно вырастет, matrix можно вынести в отдельную

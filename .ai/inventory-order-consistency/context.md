@@ -40,3 +40,10 @@ The matrix groups finished products into cells and assigns each product to the
 cell. Duplicate legacy/new SKUs in one cell can overwrite an earlier stock map.
 The matrix must aggregate stock across equivalent SKUs and distinguish actual
 hoodie variants in its grouping key.
+
+## Secondary reservation risk
+
+`api.listOzonOrders()` loaded only the 50 newest persisted orders. Production
+currently has 625 persisted orders and 15 active FBS orders. All current active
+orders happened to be in the returned window, but an older active order could be
+excluded from stock reservation and make later orders appear fulfillable.

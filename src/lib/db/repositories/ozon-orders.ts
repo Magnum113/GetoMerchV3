@@ -8,8 +8,14 @@ import type { OzonOrder, OzonOrderItem, WorkshopOrder } from "@/lib/types";
 
 export type OzonOrderListOptions = {
   limit: number;
+  offset: number;
   status?: string;
   source?: string;
+};
+
+export type OzonOrderPage = {
+  rows: OzonOrder[];
+  hasMore: boolean;
 };
 
 type OzonOrderRow = Omit<OzonOrder, "items" | "workshop_order">;
@@ -27,7 +33,7 @@ const WORKSHOP_SELECT =
   "id,order_number,workshop_id,status,notes,created_at,sent_at,completed_at,received_at";
 
 export interface OzonOrderRepository {
-  list(options: OzonOrderListOptions): Promise<OzonOrder[]>;
+  list(options: OzonOrderListOptions): Promise<OzonOrderPage>;
 }
 
 export class PostgresOzonOrderRepository implements OzonOrderRepository {
@@ -37,7 +43,7 @@ export class PostgresOzonOrderRepository implements OzonOrderRepository {
   ) {}
 
   async list(options: OzonOrderListOptions) {
-    const orders = (
+    const result = (
       await this.query<OzonOrderRow>(
         `
           SELECT
@@ -50,18 +56,23 @@ export class PostgresOzonOrderRepository implements OzonOrderRepository {
           WHERE ($2::text IS NULL OR status = $2)
             AND ($3::text IS NULL OR source = $3)
           ORDER BY in_process_at DESC NULLS LAST, created_at DESC, id DESC
-          LIMIT $1
+          LIMIT $1 OFFSET $4
         `,
-        [options.limit, options.status ?? null, options.source ?? null],
+        [options.limit + 1, options.status ?? null, options.source ?? null, options.offset],
       )
     ).rows;
+    const hasMore = result.length > options.limit;
+    const orders = hasMore ? result.slice(0, options.limit) : result;
     const [items, workshopOrders] = await Promise.all([
       this.listItems(orders.map((order) => order.id)),
       this.listWorkshopOrders(
         orders.map((order) => order.workshop_order_id).filter(Boolean) as string[],
       ),
     ]);
-    return hydrateOrders(orders, items, workshopOrders, this.products);
+    return {
+      rows: await hydrateOrders(orders, items, workshopOrders, this.products),
+      hasMore,
+    };
   }
 
   private async listItems(orderIds: string[]) {
@@ -105,19 +116,24 @@ export class SupabaseOzonOrderRepository implements OzonOrderRepository {
       .order("in_process_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(options.limit);
+      .range(options.offset, options.offset + options.limit);
     if (options.status) query = query.eq("status", options.status);
     if (options.source) query = query.eq("source", options.source);
     const { data, error } = await query;
     if (error) throw repositoryError(error);
-    const orders = (data ?? []) as OzonOrderRow[];
+    const result = (data ?? []) as OzonOrderRow[];
+    const hasMore = result.length > options.limit;
+    const orders = hasMore ? result.slice(0, options.limit) : result;
     const [items, workshopOrders] = await Promise.all([
       this.listItems(orders.map((order) => order.id)),
       this.listWorkshopOrders(
         orders.map((order) => order.workshop_order_id).filter(Boolean) as string[],
       ),
     ]);
-    return hydrateOrders(orders, items, workshopOrders, this.products);
+    return {
+      rows: await hydrateOrders(orders, items, workshopOrders, this.products),
+      hasMore,
+    };
   }
 
   private async listItems(orderIds: string[]) {
