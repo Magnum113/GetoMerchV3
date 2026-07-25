@@ -161,7 +161,7 @@ select
   '20' as expected
 from actual
 union all
-select 'working_columns', column_count = 177, column_count::text, '177'
+select 'working_columns', column_count = 178, column_count::text, '178'
 from actual
 union all
 select 'working_defaults', default_count = 60, default_count::text, '60'
@@ -170,13 +170,13 @@ union all
 select 'working_not_null', not_null_count = 90, not_null_count::text, '90'
 from actual
 union all
-select 'working_constraints', constraint_count = 81, constraint_count::text, '81'
+select 'working_constraints', constraint_count = 82, constraint_count::text, '82'
 from actual
 union all
 select 'primary_keys', primary_key_count = 20, primary_key_count::text, '20'
 from actual
 union all
-select 'foreign_keys', foreign_key_count = 31, foreign_key_count::text, '31'
+select 'foreign_keys', foreign_key_count = 32, foreign_key_count::text, '32'
 from actual
 union all
 select
