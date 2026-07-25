@@ -27,6 +27,10 @@ export type WorkshopOrderItemInput = {
   designVersion: string | null;
   hoodieFit: string | null;
   hoodieFabric: string | null;
+  /** Заранее известный готовый товар (для позиций из заказа Ozon — конкретный product_id
+   *  позиции). При приёмке используется напрямую вместо поиска по атрибутам, чтобы дубли
+   *  finished-combo в каталоге не давали ambiguous_product_variant. null — ищем по атрибутам. */
+  targetProductId: string | null;
 };
 
 export type WorkshopOrderInput = {
@@ -55,6 +59,7 @@ type WorkshopItemRow = {
   design_version: string | null;
   hoodie_fit: string | null;
   hoodie_fabric: string | null;
+  target_product_id: string | null;
   category_id: string | null;
   fabric_id: string | null;
   color_id: string | null;
@@ -152,7 +157,8 @@ export async function createWorkshopOrderInternal(
         notes,
         design_version,
         hoodie_fit,
-        hoodie_fabric
+        hoodie_fabric,
+        target_product_id
       )
       SELECT
         $1::uuid,
@@ -163,7 +169,8 @@ export async function createWorkshopOrderInternal(
         item.notes,
         item.design_version,
         item.hoodie_fit,
-        item.hoodie_fabric
+        item.hoodie_fabric,
+        item.target_product_id
       FROM jsonb_to_recordset($2::jsonb) AS item(
         blank_product_id uuid,
         design_id uuid,
@@ -172,7 +179,8 @@ export async function createWorkshopOrderInternal(
         notes text,
         design_version text,
         hoodie_fit text,
-        hoodie_fabric text
+        hoodie_fabric text,
+        target_product_id uuid
       )
     `,
     [order.id, JSON.stringify(input.items.map((item) => ({
@@ -184,6 +192,7 @@ export async function createWorkshopOrderInternal(
       design_version: item.designVersion,
       hoodie_fit: item.hoodieFit,
       hoodie_fabric: item.hoodieFabric,
+      target_product_id: item.targetProductId,
     })))],
   );
   checkpoint("after_items");
@@ -286,6 +295,7 @@ export async function updateWorkshopOrderStatusInternal(
             item.design_version,
             item.hoodie_fit,
             item.hoodie_fabric,
+            item.target_product_id,
             blank.category_id,
             blank.fabric_id,
             blank.color_id,
@@ -303,29 +313,36 @@ export async function updateWorkshopOrderStatusInternal(
       if (!item.blank_product_id || !item.category_id || !item.fabric_id || !item.color_id || !item.size_id) {
         conflict("invalid_workshop_item", "У позиции заказа отсутствует заготовка.");
       }
-      const finished = await findOrCreateProductInternal(query, {
-        categoryId: item.category_id,
-        fabricId: item.fabric_id,
-        colorId: item.color_id,
-        sizeId: item.size_id,
-        designId: item.design_id,
-        decorationTypeId: item.decoration_type_id,
-        designVersion: item.design_version,
-        hoodieFit: item.hoodie_fit,
-        hoodieFabric: item.hoodie_fabric,
-      });
+      // Для позиций из Ozon целевой готовый товар зафиксирован при создании заказа
+      // (target_product_id) — используем его напрямую. Иначе (ручной заказ в цех) ищем/создаём
+      // по атрибутам. Поиск по атрибутам после миграции артикулов может вернуть несколько
+      // строк, если в каталоге остались дубли finished-combo, поэтому явный товар предпочтителен.
+      const finishedId = item.target_product_id
+        ?? (
+          await findOrCreateProductInternal(query, {
+            categoryId: item.category_id,
+            fabricId: item.fabric_id,
+            colorId: item.color_id,
+            sizeId: item.size_id,
+            designId: item.design_id,
+            decorationTypeId: item.decoration_type_id,
+            designVersion: item.design_version,
+            hoodieFit: item.hoodie_fit,
+            hoodieFabric: item.hoodie_fabric,
+          })
+        ).product.id;
       await query(
         "UPDATE merch_workshop_order_items SET result_product_id = $2::uuid WHERE id = $1::uuid",
-        [item.id, finished.product.id],
+        [item.id, finishedId],
       );
       await produceInternal(query, {
         blankProductId: item.blank_product_id,
-        finishedProductId: finished.product.id,
+        finishedProductId: finishedId,
         warehouseId: order.workshop_id,
         quantity: item.quantity,
         workshopOrderId: orderId,
       }, checkpoint);
-      productions.push({ itemId: item.id, productId: finished.product.id, quantity: item.quantity });
+      productions.push({ itemId: item.id, productId: finishedId, quantity: item.quantity });
     }
     checkpoint("after_production");
   }
@@ -360,6 +377,7 @@ function parseWorkshopOrder(raw: unknown): WorkshopOrderInput {
         designVersion: optionalString(item.designVersion, `items[${index}].designVersion`, 30),
         hoodieFit: item.hoodieFit == null ? null : oneOf(item.hoodieFit, ["REG", "CRP"] as const, `items[${index}].hoodieFit`),
         hoodieFabric: item.hoodieFabric == null ? null : oneOf(item.hoodieFabric, ["FLC", "NF"] as const, `items[${index}].hoodieFabric`),
+        targetProductId: item.targetProductId == null ? null : uuidValue(item.targetProductId, `items[${index}].targetProductId`),
       };
     }),
   };

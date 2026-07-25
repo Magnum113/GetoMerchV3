@@ -275,6 +275,10 @@ async function createWorkshopOrderFromOzon(
       designVersion: item.design_version,
       hoodieFit: item.hoodie_fit,
       hoodieFabric: item.hoodie_fabric,
+      // Позиция уже сопоставлена с конкретным готовым товаром Ozon (проверено выше) —
+      // фиксируем его, чтобы приёмка из цеха не искала товар по атрибутам и не спотыкалась
+      // о дубли finished-combo в каталоге.
+      targetProductId: item.product_id,
     });
   }
   if (workshopItems.length === 0) conflict("ozon_empty_order", "Нет позиций для цеха.");
