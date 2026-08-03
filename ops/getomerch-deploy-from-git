@@ -47,6 +47,7 @@ lock_path="${GETOMERCH_DEPLOY_LOCK_PATH:-/run/getomerch-admin-deploy.lock}"
 npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
 production_env_file="${GETOMERCH_PRODUCTION_ENV_FILE:-/etc/getomerch/admin-production.env}"
+database_env_file="${GETOMERCH_DATABASE_ENV_FILE:-/etc/getomerch/database.env}"
 min_free_mb="${GETOMERCH_MIN_FREE_MB:-2048}"
 keep_recent_successful="${GETOMERCH_KEEP_RECENT_SUCCESSFUL:-2}"
 npm_cache_max_mb="${GETOMERCH_NPM_CACHE_MAX_MB:-1024}"
@@ -209,7 +210,13 @@ PY
 
 read_env_var() {
   local key="$1"
-  node - "$production_env_file" "$key" <<'NODE'
+  read_env_var_from "$production_env_file" "$key"
+}
+
+read_env_var_from() {
+  local file="$1"
+  local key="$2"
+  node - "$file" "$key" <<'NODE'
 const fs = require("fs");
 
 const [, , file, key] = process.argv;
@@ -308,33 +315,27 @@ if (leakedNames.size > 0) {
 NODE
 }
 
-smoke_supabase_readonly() {
-  node <<'NODE'
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+smoke_server_database_readonly() {
+  [[ -r "$database_env_file" ]] || fail "database env file is not readable: $database_env_file"
 
-if (!url || !anon) {
-  throw new Error("public Supabase env is not loaded");
-}
+  local read_source
+  local write_source
+  local database_url
+  read_source="$(read_env_var GETOMERCH_DB_READ_SOURCE)" \
+    || fail "GETOMERCH_DB_READ_SOURCE is missing in $production_env_file"
+  write_source="$(read_env_var GETOMERCH_DB_WRITE_SOURCE)" \
+    || fail "GETOMERCH_DB_WRITE_SOURCE is missing in $production_env_file"
+  database_url="$(read_env_var_from "$database_env_file" GETOMERCH_DATABASE_URL)" \
+    || fail "GETOMERCH_DATABASE_URL is missing in $database_env_file"
 
-const endpoint = `${url.replace(/\/$/, "")}/rest/v1/merch_ozon_orders?select=id&limit=1`;
+  [[ "$read_source" == "server" ]] || fail "GETOMERCH_DB_READ_SOURCE must be server"
+  [[ "$write_source" == "server" ]] || fail "GETOMERCH_DB_WRITE_SOURCE must be server"
+  [[ -n "$database_url" ]] || fail "GETOMERCH_DATABASE_URL is empty"
 
-fetch(endpoint, {
-  headers: {
-    apikey: anon,
-    Authorization: `Bearer ${anon}`,
-    Accept: "application/json",
-  },
-}).then(async (response) => {
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Supabase read-only smoke failed with ${response.status}: ${text.slice(0, 160)}`);
-  }
-}).catch((error) => {
-  console.error(error.message || error);
-  process.exit(1);
-});
-NODE
+  PGCONNECT_TIMEOUT=10 psql --no-psqlrc "$database_url" \
+    --set=ON_ERROR_STOP=1 --tuples-only --no-align \
+    --command="SELECT id FROM public.merch_ozon_orders LIMIT 1" \
+    >/dev/null
 }
 
 record_event() {
@@ -527,9 +528,9 @@ log "checking client assets for server-only env leaks"
 assert_client_supabase_config
 add_check "client assets do not contain server-only env names"
 
-log "checking Supabase read-only access"
-smoke_supabase_readonly
-add_check "Supabase read-only smoke"
+log "checking server PostgreSQL read-only access"
+smoke_server_database_readonly
+add_check "server PostgreSQL read-only smoke"
 
 log "creating release $release_dir"
 assert_disk_space "release creation"
