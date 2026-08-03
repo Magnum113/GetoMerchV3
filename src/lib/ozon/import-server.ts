@@ -24,7 +24,7 @@ type ProductRow = {
   design_id: string | null;
   decoration_type_id: string | null;
   sku: string | null;
-  ozon_sku: number | null;
+  ozon_sku: number | string | null;
   legacy_skus: string[] | null;
   design_version: string | null;
   hoodie_fit: string | null;

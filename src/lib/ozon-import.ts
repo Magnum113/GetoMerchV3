@@ -23,7 +23,7 @@ type ProductRow = {
   design_id: string | null;
   decoration_type_id: string | null;
   sku: string | null;
-  ozon_sku: number | null;
+  ozon_sku: number | string | null;
   legacy_skus: string[] | null;
   design_version: string | null;
   hoodie_fit: string | null;
@@ -513,7 +513,12 @@ export function buildItemPlan(ozon: OzonProduct, catalog: Catalog): OzonImportIt
   warnings.push(...refs.warnings);
 
   const design = refs.design ?? null;
-  if (product && ozon.ozonSku && product.ozon_sku && product.ozon_sku !== ozon.ozonSku) {
+  if (
+    product
+    && ozon.ozonSku != null
+    && product.ozon_sku != null
+    && String(product.ozon_sku) !== String(ozon.ozonSku)
+  ) {
     errors.push(`Ozon SKU ${ozon.ozonSku} уже не совпадает с привязанным ${product.ozon_sku}`);
   }
 
@@ -599,7 +604,7 @@ export function buildItemPlan(ozon: OzonProduct, catalog: Catalog): OzonImportIt
   }
 
   const patch: ProductUpdatePlan = {};
-  if (ozon.ozonSku && !product.ozon_sku) patch.ozonSku = ozon.ozonSku;
+  if (ozon.ozonSku != null && product.ozon_sku == null) patch.ozonSku = ozon.ozonSku;
   if (ozon.salePrice != null && Number(product.sale_price ?? 0) !== ozon.salePrice) patch.salePrice = ozon.salePrice;
   if (reason === "ozon_sku" && product.sku !== ozon.offerId) {
     if (product.sku) patch.addLegacySku = product.sku;
