@@ -69,6 +69,46 @@ const changed = buildItemPlan({ ...ozon, ozonSku: 3298863963 }, catalog);
 assert.equal(changed.status, "conflict");
 assert.match(changed.errors[0] ?? "", /уже не совпадает/);
 
+const catalogWithoutDesigns: Catalog = {
+  ...catalog,
+  fabricsBySlug: new Map([
+    ...catalog.fabricsBySlug,
+    ["vrn", row("fabric-washed", "Варенка", { slug: "vrn" })],
+  ]),
+  colorsByCode: new Map([
+    ...catalog.colorsByCode,
+    ["WGRY", row("color-washed-grey", "Серая варенка")],
+  ]),
+  sizesByName: new Map([
+    ...catalog.sizesByName,
+    ["XXL", row("size-xxl", "XXL")],
+  ]),
+  designsByCodeType: new Map(),
+  productsBySku: new Map(),
+  productsByLegacySku: new Map(),
+  productsByOzonSku: new Map(),
+};
+assert.equal(
+  newDesignName(buildItemPlan({
+    ...ozon,
+    offerId: "D26-TSH-PRT-BLK-L",
+    productId: 5757571808,
+    ozonSku: 5296811985,
+    name: "Черная футболка с принтом Сатору Годжо на спине L",
+  }, catalogWithoutDesigns)),
+  "Принт Сатору Годжо на спине",
+);
+assert.equal(
+  newDesignName(buildItemPlan({
+    ...ozon,
+    offerId: "D27-TSH-PRT-WGRY-XXL",
+    productId: 5757576480,
+    ozonSku: 5296815687,
+    name: "Вареная футболка с принтом Мадара Учиха ЧБ XXL",
+  }, catalogWithoutDesigns)),
+  "Принт Мадара Учиха ЧБ",
+);
+
 const allSelection: OzonImportSelection = {
   createDesigns: true,
   createProducts: true,
@@ -151,4 +191,8 @@ function row(
   extra: Partial<CatalogRow> = {},
 ): CatalogRow {
   return { id, name, ...extra };
+}
+
+function newDesignName(plan: ReturnType<typeof buildItemPlan>) {
+  return plan.actions.find((action) => action.type === "create_design")?.name;
 }

@@ -423,17 +423,21 @@ function cleanDesignName(productName: string, parsed: ParsedOffer) {
   const label = parsed.designType === "print" ? "Принт" : "Вышивка";
   const fallback = `${label} ${parsed.designCode}`;
   const cleaned = productName
-    .replace(/\b(размер|р-р)\s*(XS|S|M|L|XL|XXL|XXXL|2XL|3XL)\b/gi, "")
-    .replace(/\b(XS|S|M|L|XL|XXL|XXXL|2XL|3XL)\b/g, "")
-    .replace(/\b(футболка|футболку|толстовка|толстовку|худи|свитшот)\b/gi, "")
-    .replace(/\b(вареная|варёная|варенка|варёнка|варенная|варёная|черная|чёрная|белая|серая|синяя|бежевая)\b/gi, "")
-    .replace(/\b(черный|чёрный|белый|серый|синий|бежевый)\b/gi, "")
-    .replace(/\b(с\s+принтом|с\s+вышивкой|принтом|вышивкой|принт|вышивка)\b/gi, "")
+    .replace(wordPattern("(?:размер|р-р)\\s*(?:XXXL|XXL|XL|XS|3XL|2XL|S|M|L)"), " ")
+    .replace(wordPattern("(?:XXXL|XXL|XL|XS|3XL|2XL|S|M|L)"), " ")
+    .replace(wordPattern("(?:футболка|футболку|толстовка|толстовку|худи|свитшот)"), " ")
+    .replace(wordPattern("(?:вареная|варёная|варенка|варёнка|варенная|черная|чёрная|белая|серая|синяя|бежевая)"), " ")
+    .replace(wordPattern("(?:черный|чёрный|белый|серый|синий|бежевый)"), " ")
+    .replace(wordPattern("(?:с\\s+принтом|с\\s+вышивкой|принтом|вышивкой|принт|вышивка)"), " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!cleaned) return fallback;
   const normalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   return `${label} ${normalized}`;
+}
+
+function wordPattern(source: string) {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${source}(?![\\p{L}\\p{N}])`, "giu");
 }
 
 function findProduct(catalog: Catalog, ozon: OzonProduct) {
