@@ -3,6 +3,11 @@ import "server-only";
 import type { DatabaseQueryExecutor } from "@/lib/db/pool";
 import { updateColumns } from "@/lib/db/mutations/crud";
 import { runServerMutation, type ServerMutationContext } from "@/lib/db/mutations/runner";
+import type { ImportAction } from "@/lib/ozon-import";
+import {
+  selectedOzonImportActions,
+  type OzonImportSelection,
+} from "@/lib/ozon/import-selection";
 import {
   conflict,
   moneyValue,
@@ -58,6 +63,8 @@ type ImportSummary = {
   createdDesigns: number;
   createdProducts: number;
   updatedProducts: number;
+  updatedIdentifiers: number;
+  updatedPrices: number;
   skipped: number;
   errors: number;
 };
@@ -214,11 +221,12 @@ export async function syncOzonOrderSnapshot(
 export async function applyOzonImportRun(
   context: ServerMutationContext,
   runId: string,
-  overrides: Record<string, { name?: string; imageUrl?: string | null }> = {},
+  overrides: Record<string, { name?: string; imageUrl?: string | null }>,
+  selection: OzonImportSelection,
 ) {
   return runServerMutation({
     operation: "ozon.import.apply",
-    payload: { runId, overrides },
+    payload: { runId, overrides, selection },
     context,
     execute: async (query, checkpoint) => {
       const id = uuidValue(runId, "runId");
@@ -259,15 +267,21 @@ export async function applyOzonImportRun(
         createdDesigns: 0,
         createdProducts: 0,
         updatedProducts: 0,
+        updatedIdentifiers: 0,
+        updatedPrices: 0,
         skipped: 0,
         errors: 0,
       };
       const designIds = new Map<string, string>();
-      const actionsByItem = new Map<string, Record<string, unknown>[]>();
+      const actionsByItem = new Map<string, ImportAction[]>();
       for (const item of items) {
-        const actions = Array.isArray(item.plan?.actions)
+        const plannedActions = Array.isArray(item.plan?.actions)
           ? item.plan!.actions!.map((action) => objectValue(action, "import action"))
           : [];
+        const actions = selectedOzonImportActions(
+          plannedActions as unknown as ImportAction[],
+          selection,
+        );
         actionsByItem.set(item.id, actions);
         for (const action of actions) {
           if (action.type !== "create_design") continue;
@@ -300,12 +314,19 @@ export async function applyOzonImportRun(
             if (created) summary.createdProducts += 1;
             changed ||= created;
           } else if (action.type === "update_product") {
+            const hasPrice = "salePrice" in action.patch;
+            const hasIdentifiers = ["sku", "ozonSku", "addLegacySku"]
+              .some((key) => key in action.patch);
             const updated = await applyUpdateProduct(
               query,
               uuidValue(action.productId, "productId"),
-              objectValue(action.patch, "product patch"),
+              action.patch,
             );
-            if (updated) summary.updatedProducts += 1;
+            if (updated) {
+              summary.updatedProducts += 1;
+              if (hasPrice) summary.updatedPrices += 1;
+              if (hasIdentifiers) summary.updatedIdentifiers += 1;
+            }
             changed ||= updated;
           } else {
             conflict("invalid_import_plan", `Неизвестное действие импорта для ${item.offer_id}.`);
@@ -331,7 +352,13 @@ export async function applyOzonImportRun(
         [id, JSON.stringify(summary)],
       );
       checkpoint("after_run");
-      const result = { runId: id, status: "applied" as const, summary, errors: [] as unknown[] };
+      const result = {
+        runId: id,
+        status: "applied" as const,
+        selection,
+        summary,
+        errors: [] as unknown[],
+      };
       return {
         data: result,
         audit: {

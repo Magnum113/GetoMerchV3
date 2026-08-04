@@ -4,12 +4,14 @@ import { AdminApiError, adminErrorResponse } from "@/lib/admin/http";
 import { applyOzonImport } from "@/lib/ozon-import";
 import { getDatabaseRuntimeConfig } from "@/lib/db/config";
 import { enqueueOzonJob } from "@/lib/jobs/http";
+import { parseOzonImportSelection } from "@/lib/ozon/import-selection";
 
 export const dynamic = "force-dynamic";
 
 type ApplyBody = {
   runId?: string;
   designOverrides?: Record<string, { name?: string; imageUrl?: string | null }>;
+  selection?: unknown;
 };
 
 export async function POST(req: Request) {
@@ -24,12 +26,26 @@ export async function POST(req: Request) {
     if (!isDesignOverrides(body.designOverrides)) {
       throw new AdminApiError(400, "bad_request", "Invalid design overrides");
     }
+    let selection;
+    try {
+      selection = parseOzonImportSelection(body.selection);
+    } catch (error) {
+      throw new AdminApiError(
+        400,
+        "bad_request",
+        error instanceof Error ? error.message : "Invalid Ozon import selection",
+      );
+    }
 
     if (getDatabaseRuntimeConfig().writeSource === "server") {
       const queued = await enqueueOzonJob(req, {
         type: "ozon_import_apply",
         dedupeKey: `import-apply:${body.runId}`,
-        payload: { runId: body.runId, designOverrides: body.designOverrides ?? {} },
+        payload: {
+          runId: body.runId,
+          designOverrides: body.designOverrides ?? {},
+          selection,
+        },
         maxAttempts: 2,
       });
       return NextResponse.json({
@@ -42,7 +58,11 @@ export async function POST(req: Request) {
     }
 
     await requireAdminSession();
-    const result = await applyOzonImport(body.runId, body.designOverrides ?? {});
+    const result = await applyOzonImport(
+      body.runId,
+      body.designOverrides ?? {},
+      selection,
+    );
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof AdminApiError) return adminErrorResponse(error);

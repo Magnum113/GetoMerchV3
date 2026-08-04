@@ -2,6 +2,10 @@ import "server-only";
 
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import { ozonPost as resilientOzonPost } from "@/lib/ozon/client";
+import {
+  selectedOzonImportActions,
+  type OzonImportSelection,
+} from "@/lib/ozon/import-selection";
 
 type JsonObject = Record<string, unknown>;
 
@@ -164,10 +168,13 @@ export type DesignSuggestion = {
 export type OzonImportApplyResult = {
   runId: string;
   status: "applied" | "partial" | "failed";
+  selection: OzonImportSelection;
   summary: {
     createdDesigns: number;
     createdProducts: number;
     updatedProducts: number;
+    updatedIdentifiers: number;
+    updatedPrices: number;
     skipped: number;
     errors: number;
   };
@@ -874,7 +881,11 @@ async function applyCreateProduct(action: Extract<ImportAction, { type: "create_
   return true;
 }
 
-export async function applyOzonImport(runId: string, overrides: Record<string, DesignOverride> = {}): Promise<OzonImportApplyResult> {
+export async function applyOzonImport(
+  runId: string,
+  overrides: Record<string, DesignOverride>,
+  selection: OzonImportSelection,
+): Promise<OzonImportApplyResult> {
   const sb = supabase();
   const { run, items } = await loadRunItems(runId);
   if (run.status !== "preview" && run.status !== "partial") {
@@ -886,7 +897,16 @@ export async function applyOzonImport(runId: string, overrides: Record<string, D
   const result: OzonImportApplyResult = {
     runId,
     status: "applied",
-    summary: { createdDesigns: 0, createdProducts: 0, updatedProducts: 0, skipped: 0, errors: 0 },
+    selection,
+    summary: {
+      createdDesigns: 0,
+      createdProducts: 0,
+      updatedProducts: 0,
+      updatedIdentifiers: 0,
+      updatedPrices: 0,
+      skipped: 0,
+      errors: 0,
+    },
     errors: [],
   };
 
@@ -894,7 +914,7 @@ export async function applyOzonImport(runId: string, overrides: Record<string, D
   const designIds = new Map<string, string>();
 
   try {
-    for (const [key, fallback] of designFallbacks) {
+    for (const [key, fallback] of selection.createDesigns ? designFallbacks : []) {
       const [code, type] = key.split("|") as [string, "print" | "embroidery"];
       const design = await getDesignId(code, type, overrides, fallback);
       designIds.set(key, design.id);
@@ -912,7 +932,7 @@ export async function applyOzonImport(runId: string, overrides: Record<string, D
 
       try {
         let changed = false;
-        for (const action of item.actions) {
+        for (const action of selectedOzonImportActions(item.actions, selection)) {
           if (action.type === "create_design") continue;
           if (action.type === "create_product") {
             const created = await applyCreateProduct(action, designIds);
@@ -921,7 +941,13 @@ export async function applyOzonImport(runId: string, overrides: Record<string, D
           }
           if (action.type === "update_product") {
             const updated = await applyUpdateProduct(action.productId, action.patch);
-            if (updated) result.summary.updatedProducts++;
+            if (updated) {
+              result.summary.updatedProducts++;
+              if ("salePrice" in action.patch) result.summary.updatedPrices++;
+              if (["sku", "ozonSku", "addLegacySku"].some((key) => key in action.patch)) {
+                result.summary.updatedIdentifiers++;
+              }
+            }
             changed = changed || updated;
           }
         }

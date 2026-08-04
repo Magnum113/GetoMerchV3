@@ -19,6 +19,7 @@ import { executeImportPreview } from "@/lib/ozon/import-server";
 import { executeFinanceSync } from "@/lib/ozon/sync-finance";
 import { executeOrdersSync } from "@/lib/ozon/sync-orders";
 import { executePricesSync } from "@/lib/ozon/sync-prices";
+import { parseOzonImportSelection } from "@/lib/ozon/import-selection";
 import { assertAdminWritesEnabled } from "@/lib/admin/maintenance";
 
 export async function runBackgroundWorker() {
@@ -129,6 +130,7 @@ async function dispatchJob(context: JobExecutionContext) {
       const runId = stringPayload(context.job.payload.runId, "runId");
       if (!isUuid(runId)) throw new Error("Invalid runId");
       const designOverrides = objectPayload(context.job.payload.designOverrides);
+      const selection = parseOzonImportSelection(context.job.payload.selection);
       await context.report({ phase: "apply", runId }, "import_apply_started");
       return applyOzonImportRun(
         {
@@ -139,6 +141,7 @@ async function dispatchJob(context: JobExecutionContext) {
         },
         runId,
         designOverrides as Record<string, { name?: string; imageUrl?: string | null }>,
+        selection,
       );
     }
   }

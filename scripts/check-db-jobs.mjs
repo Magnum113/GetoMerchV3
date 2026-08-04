@@ -89,7 +89,11 @@ async function checkInputValidation() {
   const apply = await enqueueJson(
     "/api/ozon/import/apply",
     `stage8-invalid-apply-${token}`,
-    { runId: "not-a-uuid", designOverrides: {} },
+    {
+      runId: "not-a-uuid",
+      designOverrides: {},
+      selection: defaultImportSelection(),
+    },
   );
   expect(apply.status === 400, `invalid import run returned ${apply.status}`);
   console.log("ok - Ozon route input validation");
@@ -235,7 +239,11 @@ async function checkImportJobs() {
   const applyResponse = await enqueueJson(
     "/api/ozon/import/apply",
     `stage8-apply-${token}`,
-    { runId: previewJob.result.runId, designOverrides: {} },
+    {
+      runId: previewJob.result.runId,
+      designOverrides: {},
+      selection: defaultImportSelection(),
+    },
   );
   const applyJob = await waitForJob(applyResponse.payload.jobId, 60_000);
   expect(applyJob.status === "succeeded" && applyJob.result.status === "applied", `import apply failed: ${JSON.stringify(applyJob)}`);
@@ -475,6 +483,15 @@ function authCookie() {
   const signature = crypto.createHmac("sha256", cookieSecret).update(body).digest("base64url");
   cachedCookie = `${cookieName}=${body}.${signature}`;
   return cachedCookie;
+}
+
+function defaultImportSelection() {
+  return {
+    createDesigns: true,
+    createProducts: true,
+    updateIdentifiers: true,
+    updatePrices: false,
+  };
 }
 
 async function readBody(request) {

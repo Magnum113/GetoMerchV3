@@ -22,6 +22,7 @@ import type {
 } from "@/lib/types";
 import type { BackgroundJob } from "@/lib/jobs/types";
 import type { OzonImportApplyResult, OzonImportPreview } from "@/lib/ozon-import";
+import type { OzonImportSelection } from "@/lib/ozon/import-selection";
 
 type ApiResponse<T> =
   | { ok: true; data: T }
@@ -623,13 +624,14 @@ export const api = {
   async applyOzonImport(
     runId: string,
     designOverrides: Record<string, { name?: string; imageUrl?: string | null }>,
+    selection: OzonImportSelection,
   ) {
     const response = await startAndWaitForJob<OzonImportApplyResult>(
       "/api/ozon/import/apply",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId, designOverrides }),
+        body: JSON.stringify({ runId, designOverrides, selection }),
       },
     );
     return response.result;
