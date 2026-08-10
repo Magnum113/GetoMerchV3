@@ -884,12 +884,12 @@ posting_number + product_id + assignment_version + operation_kind
 ## 17. Этап 9. Signer и read-only ГИС МТ
 
 Статус реализации: код, migrations `0013/0014`, signer boundary, CRPT auth/read
-adapter, изолированная marking-очередь, durable jobs, API/UI, mock-backed и
-изолированные PostgreSQL-проверки реализованы локально с flags off. Для
-физического Рутокена реализованы outbound-only Mac-агент, encrypted broker и
-operational UI. CryptoPro видит реальный сертификат, локальный signer прошёл
-start/stop; физическая подпись и sandbox/production canary остаются rollout
-gates. Подробности — [`stage-9/README.md`](stage-9/README.md).
+adapter, изолированная marking-очередь, durable jobs, API/UI и outbound-only
+Mac-агент развернуты в production. Heartbeat с реальным Рутокеном, nginx
+`401/429` и challenge-контракты sandbox/production проверены. Физическая
+подпись остановилась до PIN из-за просроченной лицензии CryptoPro CSP; после её
+активации остается повторить auth canary. Подробности —
+[`stage-9/PRODUCTION_CANARY_2026-08-10.md`](stage-9/PRODUCTION_CANARY_2026-08-10.md).
 
 ### Цель
 

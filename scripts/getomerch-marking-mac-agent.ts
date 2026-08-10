@@ -367,6 +367,7 @@ function nestedCode(error: unknown) {
 
 function pinStateForError(code: string, current: MarkingAgentTelemetry["pinState"]) {
   if (/blocked/i.test(code)) return "blocked";
+  if (/license/i.test(code)) return "unknown";
   if (/pin|password|carrier/i.test(code)) return "required";
   return current;
 }
@@ -377,7 +378,6 @@ function retryableSignerError(code: string) {
     "signer_unavailable",
     "provider_pin_unavailable",
     "provider_unavailable",
-    "provider_exit_error",
     "provider_timeout",
   ].includes(code);
 }

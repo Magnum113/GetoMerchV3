@@ -131,6 +131,7 @@ async function executeProvider(input: {
       && input.purpose !== "crpt_suz_order_detached_cades_bes") {
     throw new MarkingSignatureProviderError("provider_purpose_denied", "Signature purpose is not supported");
   }
+  await assertCryptoProLicense(input.command);
   const directory = await mkdtemp(join(input.runtimeDirectory, "sign-"));
   await chmod(directory, 0o700);
   const inputPath = join(directory, "payload.bin");
@@ -142,9 +143,10 @@ async function executeProvider(input: {
       .replaceAll("{thumbprint}", input.certificate.thumbprint)
       .replaceAll("{input}", inputPath)
       .replaceAll("{output}", outputPath));
+    console.log("[marking-signer] CryptoPro signing started; enter PIN in this terminal when requested");
     const result = await runProvider(input.command, args);
     if (result.code !== 0) {
-      throw providerExitError(result.stderr);
+      throw providerErrorFromStderr(result.stderr);
     }
     const signature = await readFile(outputPath);
     if (signature.length < 64 || signature.length > 131_072) {
@@ -158,6 +160,43 @@ async function executeProvider(input: {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+async function assertCryptoProLicense(command: string) {
+  if (!/\/cryptcp$/.test(command)) return;
+  const cpconfig = join(dirname(dirname(command)), "sbin", "cpconfig");
+  await assertExecutable(cpconfig);
+  const result = await runDiagnosticCommand(cpconfig, ["-license", "-view"]);
+  if (result.code !== 0) throw providerErrorFromStderr(result.output);
+}
+
+function runDiagnosticCommand(command: string, args: string[]) {
+  return new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { PATH: "/usr/bin:/bin:/opt/cprocsp/bin", NODE_ENV: "production" },
+    });
+    let output = "";
+    let settled = false;
+    const finish = (error?: unknown, code: number | null = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve({ code, output });
+    };
+    const append = (chunk: string) => { output = `${output}${chunk}`.slice(-16_384); };
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    child.once("error", (error) => finish(error));
+    child.once("close", (code) => finish(undefined, code));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new MarkingSignatureProviderError("provider_timeout", "CryptoPro license check timed out"));
+    }, 5_000);
+  });
 }
 
 function providerArgsForPurpose(args: string[], purpose: SignerPurpose) {
@@ -209,7 +248,13 @@ function runProvider(command: string, args: string[]) {
   });
 }
 
-function providerExitError(stderr: string) {
+export function providerErrorFromStderr(stderr: string) {
+  if (/license[^\n]{0,80}(expired|not yet valid)|лиценз[^\n]{0,80}(ист[её]к|недейств)|0x20000325/i.test(stderr)) {
+    return new MarkingSignatureProviderError(
+      "provider_license_expired",
+      "CryptoPro CSP license is expired or not valid yet",
+    );
+  }
   if (/pin|password|парол|носител|token/i.test(stderr)) {
     return new MarkingSignatureProviderError("provider_pin_unavailable", "Signature key carrier or PIN is unavailable");
   }

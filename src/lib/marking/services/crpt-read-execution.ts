@@ -116,7 +116,6 @@ export function isRetryableCrptError(error: unknown) {
     "signer_unavailable",
     "provider_pin_unavailable",
     "provider_unavailable",
-    "provider_exit_error",
     "provider_timeout",
     "signer_remote_pending",
     "signer_remote_expired",

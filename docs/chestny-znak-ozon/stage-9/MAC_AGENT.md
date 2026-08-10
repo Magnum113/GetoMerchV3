@@ -1,8 +1,10 @@
 # Mac-агент УКЭП для Рутокена
 
-Дата реализации: 4 августа 2026 года.
-Статус: реализован и проверен на синтетических данных с flags off. На
-production migration `0014`, credentials и remote transport не установлены.
+Дата реализации: 4 августа 2026 года. Production rollout: 10 августа 2026
+года. Статус: migration `0014`, credentials, nginx и remote transport
+установлены. Heartbeat с реальным Рутокеном проверен. Физическая подпись
+ожидает активации действующей лицензии CryptoPro CSP; см.
+[PRODUCTION_CANARY_2026-08-10.md](PRODUCTION_CANARY_2026-08-10.md).
 
 ## Архитектура
 
@@ -231,15 +233,16 @@ npx tsc --noEmit
 npm run build
 ```
 
-До production activation остаются обязательными:
+Состояние production gates:
 
-1. Физически проверить CryptoPro signing с текущим Рутокеном и ввод PIN.
-2. Проверить attached CAdES-BES на официальном sandbox challenge.
-3. Установить подготовленные nginx snippets для `/api/marking-agent/v1` и
-   проверить ответ `429` при превышении лимита.
-4. Выполнить canary: heartbeat -> одна подпись -> auth token -> read-only
-   document/code status.
-5. Проверить offline, извлечение токена, неверный PIN и restart worker.
+1. Heartbeat, Рутокен, signer socket, nginx `401/429`, worker restart и offline
+   выполнены.
+2. Sandbox и production challenge возвращают действующий контракт.
+3. Физическая подпись и auth token заблокированы просроченной лицензией CSP.
+4. Извлечение Рутокена и ошибочный PIN вручную не автоматизируются: неверные
+   попытки могут заблокировать носитель.
+5. Status КМ/документа выполняется только с реальным объектом, которого пока
+   нет в production.
 
 Никакие CRPT/SUZ write flags этим изменением не включаются.
 После ротации `marking-agent-secrets.json` требуется рестарт

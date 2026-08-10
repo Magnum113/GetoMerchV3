@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import { createServer } from "node:net";
+import { join } from "node:path";
 import type { QueryResultRow } from "pg";
 import {
   createAgentRequestAuth,
@@ -14,6 +17,9 @@ import { clearRecoveredAgentConnectionError } from "@/lib/marking/agent/runtime"
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import type { DatabaseQueryExecutor, DatabaseQueryResult } from "@/lib/db/pool";
 import { MarkingKeyring } from "@/lib/marking/security/keyring";
+import { resolveSigningAgentState } from "@/lib/marking/repositories/remote-signer";
+import { exchangeSignerRequest } from "@/lib/marking/signer/client";
+import { providerErrorFromStderr } from "@/lib/marking/signer/provider";
 import { createRemoteMarkingSignerClient } from "@/lib/marking/signer/remote-client";
 import type { SignerCertificateInfo } from "@/lib/marking/signer/protocol";
 
@@ -28,9 +34,47 @@ async function main() {
   testAgentProtocol();
   testTelemetry();
   testRecoveredConnectionError();
+  testOperationalFailureStates();
   testRemoteConfiguration();
+  await testDelayedUnixSocketResponse();
   await testEncryptedBrokerClient();
   console.log("Mac marking agent protocol, encryption and remote signer checks passed");
+}
+
+function testOperationalFailureStates() {
+  const now = Date.now();
+  assert.equal(resolveSigningAgentState("ready", new Date(now - 16_000), now), "offline");
+  assert.equal(resolveSigningAgentState("ready", new Date(now - 14_000), now), "ready");
+  assert.equal(
+    providerErrorFromStderr("Error: License is expired. [ErrorCode: 0x20000325]").code,
+    "provider_license_expired",
+  );
+}
+
+async function testDelayedUnixSocketResponse() {
+  const socketPath = join("/tmp", `gm-signer-${randomUUID()}.sock`);
+  const server = createServer((socket) => {
+    socket.setEncoding("utf8");
+    let body = "";
+    socket.on("data", (chunk) => {
+      body += chunk;
+      if (!body.includes("\n")) return;
+      setTimeout(() => socket.end(`${JSON.stringify({ ok: true })}\n`), 10);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    assert.deepEqual(
+      await exchangeSignerRequest(socketPath, { operation: "delayed-response" }, 2_000),
+      { ok: true },
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await unlink(socketPath).catch(() => undefined);
+  }
 }
 
 function testRecoveredConnectionError() {

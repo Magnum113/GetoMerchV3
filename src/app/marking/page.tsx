@@ -2100,6 +2100,7 @@ function CrptReadPanel({
 }) {
   const documentValid = /^[A-Za-z0-9._:-]{1,200}$/.test(documentId.trim());
   const agent = workspace.signingAgents[0] ?? null;
+  const agentOnline = Boolean(agent && agent.state !== "offline");
   const remoteSignerReady = workspace.runtime.signerTransport !== "remote"
     || agent?.state === "ready";
   return (
@@ -2160,16 +2161,18 @@ function CrptReadPanel({
         <SignerStatusItem
           icon={Usb}
           label="Рутокен"
-          value={agent?.readerDetected ? "Найден" : "Не найден"}
+          value={!agentOnline ? "Нет связи" : agent?.readerDetected ? "Найден" : "Не найден"}
           detail={agent?.displayName ?? "Mac не подключён"}
-          healthy={agent?.readerDetected === true}
+          healthy={agentOnline && agent?.readerDetected === true}
         />
         <SignerStatusItem
           icon={KeyRound}
           label="Signer / PIN"
           value={signerStateLabel(agent)}
-          detail={agent?.signerReachable ? `PIN: ${pinStateLabel(agent.pinState)}` : "Сокет недоступен"}
-          healthy={agent?.signerReachable === true
+          detail={!agentOnline
+            ? "Mac-агент не отвечает"
+            : agent?.signerReachable ? `PIN: ${pinStateLabel(agent.pinState)}` : "Сокет недоступен"}
+          healthy={agentOnline && agent?.signerReachable === true
             && agent.pinState !== "required"
             && agent.pinState !== "blocked"}
         />
@@ -2551,6 +2554,7 @@ function SignerStatusItem({
 
 function remoteSignerMessage(agent: MarkingCrptWorkspace["signingAgents"][number] | null) {
   if (!agent || agent.state === "offline") return "Mac-агент не подключён. Запустите signer и агент на Mac с установленным Рутокеном.";
+  if (agent.errorCode === "provider_license_expired") return "Срок лицензии CryptoPro CSP истёк. Активируйте действующую лицензию на Mac и повторите проверку авторизации.";
   if (!agent.readerDetected) return "Mac-агент работает, но Рутокен не найден.";
   if (!agent.signerReachable) return "Рутокен найден, но локальный signer на Mac недоступен.";
   if (agent.pinState === "required") return "CryptoPro ожидает PIN на Mac. Введите PIN в терминале signer.";
@@ -2559,6 +2563,8 @@ function remoteSignerMessage(agent: MarkingCrptWorkspace["signingAgents"][number
 }
 
 function signerStateLabel(agent: MarkingCrptWorkspace["signingAgents"][number] | null) {
+  if (!agent || agent.state === "offline") return "Не в сети";
+  if (agent.errorCode === "provider_license_expired") return "Нет лицензии CSP";
   if (!agent?.signerReachable) return "Недоступен";
   if (agent.pinState === "required") return "Нужен PIN";
   if (agent.pinState === "blocked") return "PIN заблокирован";

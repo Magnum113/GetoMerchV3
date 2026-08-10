@@ -327,7 +327,7 @@ export async function listSigningAgents(query: DatabaseQueryExecutor, limit = 20
   return result.rows.map((row): SigningAgentSafe => ({
     agentId: row.agent_id,
     displayName: row.display_name,
-    state: row.state,
+    state: resolveSigningAgentState(row.state, row.last_seen_at),
     readerDetected: row.reader_detected,
     signerReachable: row.signer_reachable,
     pinState: row.pin_state,
@@ -338,6 +338,14 @@ export async function listSigningAgents(query: DatabaseQueryExecutor, limit = 20
     errorMessage: row.last_error_message,
     lastSeenAt: iso(row.last_seen_at),
   }));
+}
+
+export function resolveSigningAgentState(
+  state: SigningAgentSafe["state"],
+  lastSeenAt: Date | string,
+  now = Date.now(),
+): SigningAgentSafe["state"] {
+  return now - new Date(lastSeenAt).getTime() > 15_000 ? "offline" : state;
 }
 
 export async function listSignatureRequests(query: DatabaseQueryExecutor, limit = 50) {

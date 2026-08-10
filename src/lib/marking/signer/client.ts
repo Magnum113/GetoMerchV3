@@ -36,7 +36,11 @@ export function createMarkingSignerClient(input: {
         payload,
         secret,
       });
-      const response = await exchange(input.socketPath, request, input.timeoutMs ?? 70_000);
+      const response = await exchangeSignerRequest(
+        input.socketPath,
+        request,
+        input.timeoutMs ?? 70_000,
+      );
       const verified = verifySignerResponse(response, {
         requestId: request.requestId,
         purpose,
@@ -73,7 +77,7 @@ export async function loadMarkingSignerClient(input: {
   }
 }
 
-function exchange(socketPath: string, request: unknown, timeoutMs: number) {
+export function exchangeSignerRequest(socketPath: string, request: unknown, timeoutMs: number) {
   return new Promise<unknown>((resolve, reject) => {
     const socket = createConnection({ path: socketPath });
     let settled = false;
@@ -91,7 +95,9 @@ function exchange(socketPath: string, request: unknown, timeoutMs: number) {
       Math.max(1_000, Math.min(75_000, timeoutMs)),
     );
     socket.setEncoding("utf8");
-    socket.once("connect", () => socket.end(`${JSON.stringify(request)}\n`));
+    // Keep the writable side open until the signer finishes its asynchronous work.
+    // Calling socket.end() here makes a default Unix server close its response side.
+    socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
     socket.on("data", (chunk) => {
       body += chunk;
       if (body.length > 200_000) {

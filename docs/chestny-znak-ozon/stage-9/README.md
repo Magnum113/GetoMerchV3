@@ -1,10 +1,11 @@
 # Этап 9: signer и read-only ГИС МТ
 
-Дата реализации: 4 августа 2026 года.
-Статус: реализован локально с выключенными flags. Для физического Рутокена на
-Mac добавлен outbound-only агент и migration `0014`; реальная подпись и контуры
-ГИС МТ не вызывались, production не изменён. Инструкция:
-[MAC_AGENT.md](MAC_AGENT.md).
+Дата реализации: 4 августа 2026 года. Production rollout: 10 августа 2026
+года. Статус: код и production-инфраструктура этапа завершены, sandbox и
+production challenge доступны. Физическая подпись остановилась до запроса PIN
+из-за просроченной лицензии CryptoPro CSP на Mac. Подробный протокол:
+[PRODUCTION_CANARY_2026-08-10.md](PRODUCTION_CANARY_2026-08-10.md). Инструкция
+агента: [MAC_AGENT.md](MAC_AGENT.md).
 
 ## Что реализовано
 
@@ -172,10 +173,13 @@ npx tsc --noEmit
 npm run build
 ```
 
-## Невыполненные rollout gates
+## Остаточный rollout gate
 
-- выполнить физическую подпись foreground signer с вводом PIN на Mac;
-- подтвердить attached CAdES-BES официальным sandbox;
-- проверить read-only КМ и документ сначала в sandbox, затем production;
-- утвердить egress policy и мониторинг срока сертификата;
-- оставить CRPT write flag выключенным до этапа 10.
+- активировать действующую лицензию CryptoPro CSP и выполнить физическую
+  attached CAdES-BES подпись сначала для sandbox, затем auth-only production;
+- статус КМ и документа проверить после появления реального объекта: сейчас в
+  production нет ни одного КМ и документа, фиктивные значения запрещены.
+
+Egress challenge, nginx auth/rate-limit, offline/restart, срок сертификата и
+fail-closed flags проверены. Все CRPT/Ozon/SUZ write-флаги остаются
+выключенными.
