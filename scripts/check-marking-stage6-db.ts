@@ -489,6 +489,29 @@ async function createFixture(quantity: number, codeCount: number) {
     )
   ).rows[0].id;
 
+  const importBatchId = (
+    await pool.query<{ id: string }>(
+      `
+        INSERT INTO public.merch_marking_import_batches (
+          source,
+          file_sha256,
+          file_size_bytes,
+          expected_gtin,
+          trade_item_id,
+          acquisition_mode,
+          created_by,
+          expires_at
+        )
+        VALUES (
+          'stage6_test', $1, 1, $2, $3,
+          'own_suz_emission', 'stage6-db-test', clock_timestamp() + interval '1 hour'
+        )
+        RETURNING id
+      `,
+      [randomBytes(32).toString("hex"), gtin, tradeItemId],
+    )
+  ).rows[0].id;
+
   for (let index = 0; index < codeCount; index += 1) {
     const hmac = randomBytes(32);
     const codeId = (
@@ -506,7 +529,7 @@ async function createFixture(quantity: number, codeCount: number) {
             fingerprint,
             serial,
             acquisition_mode,
-            code_order_item_id,
+            import_batch_id,
             pool_state,
             crpt_state
           )
@@ -525,7 +548,7 @@ async function createFixture(quantity: number, codeCount: number) {
           hmac,
           randomBytes(6).toString("hex"),
           `S6${fixtureIndex}${String(index).padStart(4, "0")}`,
-          randomUUID(),
+          importBatchId,
         ],
       )
     ).rows[0].id;
