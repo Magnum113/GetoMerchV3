@@ -521,7 +521,11 @@ async function assertProfileReadinessInvariant() {
       );
       await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     }),
-    (error) => pgCode(error) === "MZ102",
+    (error) => pgCode(error) === "MZ102" || (
+      pgCode(error) === "23514"
+      && pgConstraint(error)
+        === "merch_marking_product_profiles_requirement_alignment_check"
+    ),
   );
 
   await inTransaction(async (client) => {
@@ -642,6 +646,17 @@ function pgCode(error: unknown): string | undefined {
   for (let depth = 0; depth < 5 && current; depth += 1) {
     if (typeof current === "object" && current !== null && "code" in current) {
       return String((current as { code?: unknown }).code ?? "");
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return undefined;
+}
+
+function pgConstraint(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (typeof current === "object" && current !== null && "constraint" in current) {
+      return String((current as { constraint?: unknown }).constraint ?? "");
     }
     current = current instanceof Error ? current.cause : undefined;
   }
