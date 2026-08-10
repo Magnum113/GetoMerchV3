@@ -516,8 +516,10 @@ GET /api/admin/marking/events
 
 ## 12. Этап 4. Product readiness и GTIN
 
-Статус реализации: завершен локально. Production migration, реальный backfill
-каталога и включение пилотных SKU не выполнялись.
+Статус реализации: развернут в production с внешними flags off. Точный
+reconciliation выполнен для 138 актуальных Ozon-футболок: 124 профиля готовы,
+7 ожидают модерацию НК, 7 приостановлены из-за Ozon
+`ozon_requirement_mismatch`.
 
 ### Цель
 
@@ -564,9 +566,12 @@ GET /api/admin/marking/events
 
 ### Ворота выхода
 
-- пилотные SKU имеют `ready` profile;
-- для остальных SKU сформирован список конкретных недостающих данных;
-- ни один профиль не активирован только по эвристике названия.
+- 124 SKU имеют `ready` profile; `D15-TSH-PRT-WHT-S` подходит как технический
+  pilot profile, но внешний canary этим этапом не запускается;
+- для 14 заблокированных SKU зафиксированы конкретные внешние причины;
+- ни один профиль не активирован только по эвристике названия;
+- результат проверяется идемпотентной командой
+  `npm run marking:profiles:verify` и версионированным манифестом.
 
 ## 13. Этап 5. Secure KM pool и импорт
 
@@ -1690,7 +1695,7 @@ entities: adapters переводят их в стабильные внутре�
 | 1 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Fail-closed config, redaction, keyring, изолированные queue/DB role/worker/signer развернуты в production |
 | 2 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Generic fulfillment и Ozon FBS projection развернуты; FBO isolation проверена; выполнен backfill 52 item |
 | 3 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Core schema, state machine, atomic events и read-only API/UI развернуты в production |
-| 4 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Readiness, GTIN lifecycle, conflicts и безопасный preview/apply backfill развернуты; реальный catalog reconciliation выполнен |
+| 4 | развернут, flags off | `stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md` | off | 138 profiles: 124 ready, 7 ждут модерацию НК, 7 paused из-за Ozon requirement conflict; exact manifest и idempotent verification развернуты |
 | 5 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | AES/HMAC pool, streaming preview/apply, quarantine и TTL cleanup развернуты; реальные КМ не импортировались |
 | 6 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Units, bindings, assignments, JIT-склад и reconciliation развернуты; runtime write paths выключены |
 | 7 | развернут, flags off | `stage-7/README.md` | off | Защищенная этикетка 58x40 и FBS UX доступны; физическая приемка шаблона остается rollout gate |
@@ -1736,6 +1741,11 @@ endpoint и периодическая очистка временных имп�
 backfill: создано 52 fulfillment для существующих Ozon FBS item, при этом FBO
 заказы не создают fulfillment. Внешние операции ГИС МТ, СУЗ и Ozon exemplar
 остаются выключенными fail-closed флагами; реальные КМ не импортировались.
+
+Для этапа 4 применен точный манифест 138 Ozon SKU--GTIN: 131 опубликованный
+GTIN подтвержден, 124 профиля готовы, 7 ждут модерацию НК и 7 безопасно
+приостановлены из-за последнего сигнала Ozon `not_required`. Повторный apply и
+read-model verification прошли без дублей и failed audit records.
 
 До и после rollout созданы зашифрованные резервные копии, проверено
 восстановление, последняя копия успешно загружена off-site. Временные базы

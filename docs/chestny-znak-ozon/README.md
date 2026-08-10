@@ -319,7 +319,7 @@ merch_marking_code_order_items
 
 ## 11. Текущий статус реализации
 
-На 9 августа 2026 года:
+На 10 августа 2026 года:
 
 - этапы 0 и 1 завершены с внешними feature flags off;
 - generic fulfillment и append-only source events этапа 2 реализованы;
@@ -327,6 +327,9 @@ merch_marking_code_order_items
   этапа 3 реализованы;
 - product readiness, проверяемые GTIN profiles, отчет конфликтов и безопасный
   preview/apply backfill этапа 4 реализованы;
+- production reconciliation этапа 4 применен к 138 актуальным Ozon-футболкам:
+  124 profiles готовы, 7 ожидают модерацию НК и 7 приостановлены из-за
+  последнего Ozon-сигнала `not_required`; повторный apply идемпотентен;
 - зашифрованный AES-256-GCM пул КМ, HMAC-дедупликация, двухфазный
   streaming-импорт, карантин и TTL-очистка этапа 5 реализованы;
 - физические единицы, назначения unit slots, конкурентный резерв КМ,
@@ -373,6 +376,8 @@ merch_marking_code_order_items
 
 Подробный отчет production-блока 2:
 [BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md](BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
+Фактическая сверка SKU--GTIN этапа 4:
+[stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md](stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md).
 
 Фактические границы этапа 9, Mac-агента и ввода в оборот приведены в
 [stage-9/README.md](stage-9/README.md) и

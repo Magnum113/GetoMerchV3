@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { closeServerDatabasePool, queryServerDatabase } from "@/lib/db/pool";
 import type { ServerMutationContext } from "@/lib/db/mutations/runner";
+import { PostgresMarkingReadRepository } from "@/lib/marking/read-models/repository";
 import {
   setMarkingProductOperationalStatus,
   upsertMarkingProductProfile,
@@ -59,8 +60,37 @@ type OzonSignalRow = {
   marking_requirement: string;
 };
 
+type AppliedProfileRow = {
+  sku: string;
+  ozon_sku: string;
+  profile_id: string | null;
+  marking_requirement: string | null;
+  marking_requirement_source: string | null;
+  production_mode: string | null;
+  fulfillment_marking_mode: string | null;
+  profile_verification_status: string | null;
+  operational_status: string | null;
+  operational_status_reason: string | null;
+  channel: string | null;
+  offer_id: string | null;
+  external_product_id: string | null;
+  external_sku: string | null;
+  channel_enabled: boolean | null;
+  channel_marking_requirement: string | null;
+  gtin: string | null;
+  product_group: string | null;
+  tnved_code: string | null;
+  national_catalog_status: string | null;
+  trade_item_verification_status: string | null;
+  declared_color: string | null;
+  declared_size_int: string | null;
+  declared_size_ru: string | null;
+  mapping_evidence_count: string;
+};
+
 const args = new Set(process.argv.slice(2));
 const apply = args.has("--apply");
+const verify = args.has("--verify");
 const manifestArg = process.argv.find((value) => value.startsWith("--manifest="));
 const manifestPath = resolve(
   manifestArg?.slice("--manifest=".length)
@@ -90,7 +120,10 @@ async function run() {
     console.error("[marking-profile-reconcile] conflicts", fatal);
     throw new Error("Manifest conflicts must be resolved before apply");
   }
-  if (!apply) return;
+  if (!apply) {
+    if (verify) await verifyAppliedState(manifest, plan);
+    return;
+  }
 
   const results = [];
   for (const item of plan) {
@@ -98,7 +131,204 @@ async function run() {
   }
   const resultSummary = summarizeResults(results);
   console.log("[marking-profile-reconcile] applied", resultSummary);
-  if (resultSummary.failed > 0) process.exitCode = 1;
+  if (resultSummary.failed > 0) {
+    process.exitCode = 1;
+    return;
+  }
+  await verifyAppliedState(manifest, plan);
+}
+
+async function verifyAppliedState(
+  manifest: Manifest,
+  plan: ReturnType<typeof planProduct>[],
+) {
+  const skus = manifest.products.map((item) => item.sku);
+  const result = await queryServerDatabase<AppliedProfileRow>(
+    `
+      SELECT
+        product.sku,
+        product.ozon_sku::text AS ozon_sku,
+        profile.id AS profile_id,
+        profile.marking_requirement,
+        profile.marking_requirement_source,
+        profile.production_mode,
+        profile.fulfillment_marking_mode,
+        profile.verification_status AS profile_verification_status,
+        profile.operational_status,
+        profile.operational_status_reason,
+        channel.channel,
+        channel.offer_id,
+        channel.external_product_id,
+        channel.external_sku,
+        channel.is_enabled AS channel_enabled,
+        channel.marking_requirement AS channel_marking_requirement,
+        trade_item.gtin,
+        trade_item.product_group,
+        trade_item.tnved_code,
+        trade_item.national_catalog_status,
+        trade_item.verification_status AS trade_item_verification_status,
+        trade_item.declared_color,
+        trade_item.declared_size_int,
+        trade_item.declared_size_ru,
+        coalesce(evidence.mapping_evidence_count, 0)::text AS mapping_evidence_count
+      FROM public.merch_products AS product
+      LEFT JOIN public.merch_marking_product_profiles AS profile
+        ON profile.product_id = product.id
+       AND profile.archived_at IS NULL
+      LEFT JOIN public.merch_marking_product_profile_channels AS channel
+        ON channel.product_profile_id = profile.id
+       AND channel.channel = 'ozon_fbs'
+      LEFT JOIN public.merch_marking_trade_items AS trade_item
+        ON trade_item.id = profile.trade_item_id
+      LEFT JOIN LATERAL (
+        SELECT count(*) AS mapping_evidence_count
+        FROM public.merch_marking_evidence AS item
+        WHERE item.product_profile_id = profile.id
+          AND item.evidence_type = 'product_profile_mapping'
+          AND item.verification_status = 'verified'
+      ) AS evidence ON true
+      WHERE product.sku = ANY($1::text[])
+      ORDER BY product.sku, profile.id
+    `,
+    [skus],
+  );
+  const rowsBySku = Map.groupBy(result.rows, (row) => row.sku);
+  const plansBySku = new Map(plan.map((item) => [item.manifest.sku, item]));
+  const errors: Array<{ sku: string; errors: string[] }> = [];
+
+  for (const item of manifest.products) {
+    const rows = rowsBySku.get(item.sku) ?? [];
+    const row = rows[0];
+    const itemErrors: string[] = [];
+    const itemPlan = plansBySku.get(item.sku);
+    if (rows.length !== 1 || !row?.profile_id || !itemPlan) {
+      itemErrors.push(rows.length === 0 ? "profile_missing" : "profile_not_unique");
+    } else {
+      if (row.ozon_sku !== item.ozonSku) itemErrors.push("ozon_sku_mismatch");
+      if (row.marking_requirement !== "required") itemErrors.push("requirement_mismatch");
+      if (row.marking_requirement_source !== manifest.sourceId) itemErrors.push("source_mismatch");
+      if (row.production_mode !== "own_production") itemErrors.push("production_mode_mismatch");
+      if (row.fulfillment_marking_mode !== "jit_after_order") {
+        itemErrors.push("fulfillment_mode_mismatch");
+      }
+      if (
+        row.channel !== "ozon_fbs"
+        || row.offer_id !== item.sku
+        || row.external_product_id !== item.ozonSku
+        || row.external_sku !== item.ozonSku
+        || row.channel_enabled !== true
+        || row.channel_marking_requirement !== "required"
+      ) {
+        itemErrors.push("channel_mapping_mismatch");
+      }
+      if (row.operational_status !== itemPlan.targetStatus) {
+        itemErrors.push("operational_status_mismatch");
+      }
+      const expectedReason = item.nationalCatalogStatus === "moderation_pending"
+        ? "National Catalog moderation is pending"
+        : itemPlan.ozonSignal === "not_required"
+          ? "Ozon currently reports marking as not required"
+          : null;
+      if (row.operational_status_reason !== expectedReason) {
+        itemErrors.push("operational_reason_mismatch");
+      }
+
+      if (item.nationalCatalogStatus === "published") {
+        if (row.profile_verification_status !== "verified") itemErrors.push("profile_not_verified");
+        if (row.gtin !== item.gtin) itemErrors.push("gtin_mismatch");
+        if (row.product_group !== item.productGroup) itemErrors.push("product_group_mismatch");
+        if (row.tnved_code !== item.tnvedCode) itemErrors.push("tnved_mismatch");
+        if (row.national_catalog_status !== "published") itemErrors.push("catalog_status_mismatch");
+        if (row.trade_item_verification_status !== "verified") itemErrors.push("trade_item_not_verified");
+        if (normalize(row.declared_color) !== normalize(item.declaredColor)) {
+          itemErrors.push("declared_color_mismatch");
+        }
+        if (normalize(row.declared_size_int) !== normalize(item.declaredSizeInt)) {
+          itemErrors.push("declared_size_int_mismatch");
+        }
+        if (normalize(row.declared_size_ru) !== normalize(item.declaredSizeRu)) {
+          itemErrors.push("declared_size_ru_mismatch");
+        }
+        if (Number(row.mapping_evidence_count) < 1) itemErrors.push("mapping_evidence_missing");
+      } else if (
+        row.profile_verification_status !== "draft"
+        || row.gtin !== null
+        || Number(row.mapping_evidence_count) !== 0
+      ) {
+        itemErrors.push("moderation_profile_not_isolated");
+      }
+    }
+    if (itemErrors.length > 0) errors.push({ sku: item.sku, errors: itemErrors });
+  }
+
+  const summary = {
+    total: manifest.products.length,
+    verified: result.rows.filter((row) => row.profile_verification_status === "verified").length,
+    draft: result.rows.filter((row) => row.profile_verification_status === "draft").length,
+    enabled: result.rows.filter((row) => row.operational_status === "enabled").length,
+    paused: result.rows.filter((row) => row.operational_status === "paused").length,
+    errors: errors.length,
+  };
+  const readModel = await verifyReadModel(manifest, plan);
+  console.log("[marking-profile-reconcile] verified", summary);
+  console.log("[marking-profile-reconcile] read model", readModel);
+  if (errors.length > 0) {
+    console.error("[marking-profile-reconcile] verification errors", errors);
+    throw new Error("Applied marking profile state does not match the manifest");
+  }
+}
+
+async function verifyReadModel(
+  manifest: Manifest,
+  plan: ReturnType<typeof planProduct>[],
+) {
+  const repository = new PostgresMarkingReadRepository();
+  const readiness = [];
+  let cursor: string | null = null;
+  do {
+    const page = await repository.listReadiness({ limit: 100, cursor });
+    readiness.push(...page.items);
+    cursor = page.page.nextCursor;
+  } while (cursor);
+
+  const skus = new Set(manifest.products.map((item) => item.sku));
+  const items = readiness.filter((item) => item.sku && skus.has(item.sku));
+  const ready = items.filter((item) => item.readinessStatus === "ready").length;
+  const blocked = items.filter((item) => item.readinessStatus === "blocked").length;
+  const expectedReady = plan.filter((item) => item.targetStatus === "enabled").length;
+  const expectedBlocked = plan.length - expectedReady;
+  if (
+    items.length !== manifest.products.length
+    || ready !== expectedReady
+    || blocked !== expectedBlocked
+  ) {
+    throw new Error(
+      `Read model mismatch: total=${items.length}, ready=${ready}, blocked=${blocked}`,
+    );
+  }
+
+  const conflicts = (await repository.listConflicts({ limit: 500 }))
+    .filter((item) => item.sku && skus.has(item.sku));
+  const expectedConflictSkus = new Set(
+    plan
+      .filter((item) => item.ozonSignal === "not_required")
+      .map((item) => item.manifest.sku),
+  );
+  const actualConflictSkus = new Set(conflicts.map((item) => item.sku).filter(Boolean));
+  if (
+    conflicts.some((item) => item.conflictType !== "ozon_requirement_mismatch")
+    || actualConflictSkus.size !== expectedConflictSkus.size
+    || [...expectedConflictSkus].some((sku) => !actualConflictSkus.has(sku))
+  ) {
+    throw new Error("Read model conflicts do not match current Ozon signals");
+  }
+  return {
+    total: items.length,
+    ready,
+    blocked,
+    conflicts: conflicts.length,
+    conflictType: conflicts.length > 0 ? "ozon_requirement_mismatch" : null,
+  };
 }
 
 async function loadState(manifest: Manifest) {

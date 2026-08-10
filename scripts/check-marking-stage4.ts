@@ -69,6 +69,7 @@ const repository = read("src/lib/marking/repositories/product-profiles.ts");
 const readModels = read("src/lib/marking/read-models/repository.ts");
 const service = read("src/lib/marking/services/product-readiness-service.ts");
 const page = read("src/app/marking/page.tsx");
+const reconciliation = read("scripts/reconcile-marking-product-profiles.ts");
 
 for (const table of [
   "merch_marking_product_profile_channels",
@@ -106,6 +107,11 @@ assert.match(service, /enablesProfile:\s*false/);
 assert.doesNotMatch(service, /design|productName|ozonName/i);
 assert.match(page, /Сформировать preview/);
 assert.match(page, /Применить этот preview/);
+assert.match(reconciliation, /--verify/);
+assert.match(reconciliation, /PostgresMarkingReadRepository/);
+assert.match(reconciliation, /product_profile_mapping/);
+assert.match(reconciliation, /ozon_requirement_mismatch/);
+assert.doesNotMatch(reconciliation, /productName|ozonName/);
 
 const apiRoutes = [
   "src/app/api/admin/marking/profiles/route.ts",
