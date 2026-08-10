@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildCanonicalFinishedProductSku } from "@/lib/catalog/product-sku";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import { toError } from "@/lib/utils";
 import type {
@@ -1108,22 +1109,27 @@ async function buildSku(
     sb.from("merch_colors").select("name").eq("id", input.color_id).single(),
     sb.from("merch_sizes").select("name").eq("id", input.size_id).single(),
   ]);
-  let sku = `${cat?.slug ?? "x"}-${fab?.slug ?? "x"}-${slugify(col?.name ?? "x")}-${sz?.name ?? "x"}`;
-  if (!isBlank && input.design_id && input.decoration_type_id) {
+  if (isBlank) {
+    return `${cat?.slug ?? "x"}-${fab?.slug ?? "x"}-${slugify(col?.name ?? "x")}-${sz?.name ?? "x"}-blank`
+      .toUpperCase();
+  }
+  if (input.design_id && input.decoration_type_id) {
     const [{ data: des }, { data: dt }] = await Promise.all([
-      sb.from("merch_designs").select("name").eq("id", input.design_id).single(),
+      sb.from("merch_designs").select("code").eq("id", input.design_id).single(),
       sb.from("merch_decoration_types").select("slug").eq("id", input.decoration_type_id).single(),
     ]);
-    sku += `-${slugify(des?.name ?? "x")}-${dt?.slug ?? "x"}`;
-    // Посадка/ткань худи — чтобы авто-генерируемый артикул оставался
-    // уникальным, когда у комбо есть варианты посадки/ткани.
-    // (Версия из схемы убрана — разные версии макета = разные дизайн-коды.)
-    if (input.hoodie_fit) sku += `-${input.hoodie_fit}`;
-    if (input.hoodie_fabric) sku += `-${input.hoodie_fabric}`;
-  } else {
-    sku += "-blank";
+    return buildCanonicalFinishedProductSku({
+      categorySlug: cat?.slug ?? "",
+      fabricSlug: fab?.slug ?? "",
+      colorName: col?.name ?? "",
+      sizeName: sz?.name ?? "",
+      designCode: des?.code ?? null,
+      decorationSlug: dt?.slug ?? "",
+      hoodieFit: input.hoodie_fit,
+      hoodieFabric: input.hoodie_fabric,
+    });
   }
-  return sku.toUpperCase();
+  throw new Error("Для готового товара нужны дизайн и тип нанесения.");
 }
 
 function slugify(text: string): string {

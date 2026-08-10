@@ -656,6 +656,17 @@ export class PostgresMarkingReadRepository {
               channel.offer_id
             )
           WHERE NOT product.is_blank
+            AND (
+              profile.id IS NOT NULL
+              OR channel.channel IS NOT NULL
+              OR product.ozon_sku IS NOT NULL
+              OR EXISTS (
+                SELECT 1
+                FROM public.merch_inventory AS inventory
+                WHERE inventory.product_id = product.id
+                  AND inventory.quantity > 0
+              )
+            )
         )
         SELECT
           readiness.profile_id,

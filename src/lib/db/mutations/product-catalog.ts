@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildCanonicalFinishedProductSku } from "@/lib/catalog/product-sku";
 import type { DatabaseQueryExecutor } from "@/lib/db/pool";
 import { PostgresCatalogRepository } from "@/lib/db/repositories/catalog";
 import { PostgresProductRepository } from "@/lib/db/repositories/products";
@@ -432,6 +433,7 @@ async function buildSku(query: DatabaseQueryExecutor, input: ProductInput, isBla
       fabric_slug: string;
       color_name: string;
       size_name: string;
+      design_code: string | null;
       design_name: string | null;
       decoration_slug: string | null;
     }>(
@@ -441,6 +443,7 @@ async function buildSku(query: DatabaseQueryExecutor, input: ProductInput, isBla
           fabric.slug AS fabric_slug,
           color.name AS color_name,
           size.name AS size_name,
+          design.code AS design_code,
           design.name AS design_name,
           decoration.slug AS decoration_slug
         FROM merch_product_categories category
@@ -455,16 +458,28 @@ async function buildSku(query: DatabaseQueryExecutor, input: ProductInput, isBla
     )
   ).rows[0];
   if (!row) notFound("Не найдены справочники для создания товара.");
-  let sku = `${row.category_slug}-${row.fabric_slug}-${slugify(row.color_name)}-${row.size_name}`;
-  if (!isBlank) {
-    if (!row.design_name || !row.decoration_slug) notFound("Дизайн или тип нанесения не найден.");
-    sku += `-${slugify(row.design_name)}-${row.decoration_slug}`;
-    if (input.hoodieFit) sku += `-${input.hoodieFit}`;
-    if (input.hoodieFabric) sku += `-${input.hoodieFabric}`;
-  } else {
-    sku += "-blank";
+  if (isBlank) {
+    return `${row.category_slug}-${row.fabric_slug}-${slugify(row.color_name)}-${row.size_name}-blank`
+      .toUpperCase();
   }
-  return sku.toUpperCase();
+  if (!row.design_name || !row.decoration_slug) notFound("Дизайн или тип нанесения не найден.");
+  try {
+    return buildCanonicalFinishedProductSku({
+      categorySlug: row.category_slug,
+      fabricSlug: row.fabric_slug,
+      colorName: row.color_name,
+      sizeName: row.size_name,
+      designCode: row.design_code,
+      decorationSlug: row.decoration_slug,
+      hoodieFit: input.hoodieFit,
+      hoodieFabric: input.hoodieFabric,
+    });
+  } catch (error) {
+    conflict(
+      "invalid_product_sku",
+      error instanceof Error ? error.message : "Не удалось составить артикул товара.",
+    );
+  }
 }
 
 function parseProductInput(raw: unknown): ProductInput {

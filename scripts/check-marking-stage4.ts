@@ -115,6 +115,8 @@ assert.match(migration, /MZ107/);
 
 assert.doesNotMatch(repository, /SELECT\s+\*/i);
 assert.doesNotMatch(readModels, /SELECT\s+\*/i);
+assert.match(readModels, /inventory\.product_id = product\.id/);
+assert.match(readModels, /inventory\.quantity > 0/);
 assert.match(service, /runServerMutation/g);
 assert.match(service, /inference:\s*"disabled"/);
 assert.match(service, /confirmsGtin:\s*false/);

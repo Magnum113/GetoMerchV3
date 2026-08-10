@@ -45,6 +45,7 @@
     "check:marking-mac-agent": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-marking-mac-agent.ts",
     "check:marking-mac-agent:db": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-marking-mac-agent-db.ts",
     "check:ozon-connectivity": "node scripts/check-ozon-connectivity.mjs",
+    "check:product-sku": "tsx scripts/check-product-sku.ts",
     "worker": "tsx scripts/getomerch-worker.ts",
     "marking:worker": "tsx scripts/getomerch-marking-worker.ts",
     "marking:signer": "NODE_OPTIONS=--conditions=react-server tsx scripts/getomerch-marking-signer.ts",
