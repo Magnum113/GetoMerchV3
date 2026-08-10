@@ -50,6 +50,7 @@
     "marking:signer": "NODE_OPTIONS=--conditions=react-server tsx scripts/getomerch-marking-signer.ts",
     "marking:mac-agent": "NODE_OPTIONS=--conditions=react-server tsx scripts/getomerch-marking-mac-agent.ts",
     "marking:imports:scrub": "NODE_OPTIONS=--conditions=react-server tsx scripts/scrub-marking-imports.ts",
+    "marking:profiles:reconcile": "NODE_OPTIONS=--conditions=react-server tsx scripts/reconcile-marking-product-profiles.ts",
     "fulfillment:backfill:ozon": "tsx scripts/backfill-ozon-fulfillment.ts",
     "db:migrate:status": "node db/scripts/migrate.mjs status",
     "db:migrate:up": "node db/scripts/migrate.mjs up",
