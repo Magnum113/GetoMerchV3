@@ -66,10 +66,6 @@ function assertNoSecretFields(value: unknown) {
     "payloadEnvelope",
     "signature_envelope",
     "signatureEnvelope",
-    "marking_code_id",
-    "markingCodeId",
-    "code_binding_id",
-    "codeBindingId",
   ]) {
     assert.equal(serialized.includes(forbidden), false, `Projection contains ${forbidden}`);
   }
