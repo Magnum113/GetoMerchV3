@@ -10,6 +10,10 @@ import {
   readinessSnapshotHash,
 } from "@/lib/marking/domain/product-readiness";
 import { normalizeGtin14 } from "@/lib/marking/domain/invariants";
+import {
+  decodeMarkingCursor,
+  encodeMarkingCursor,
+} from "@/lib/marking/read-models/cursor";
 
 assert.equal(normalizeGtin14("4628837736075"), "04628837736075");
 assert.throws(
@@ -53,6 +57,17 @@ const firstHash = readinessSnapshotHash({ size: "S", color: "white" });
 const secondHash = readinessSnapshotHash({ color: "white", size: "S" });
 assert.equal(firstHash, secondHash);
 assert.match(firstHash, /^[0-9a-f]{64}$/);
+const preciseCursorTimestamp = "2026-05-23 11:32:27.259637+00";
+const preciseCursor = encodeMarkingCursor(
+  "readiness",
+  preciseCursorTimestamp,
+  "a959dc08-72d9-4987-bd24-145a1e05a841",
+);
+assert.equal(
+  decodeMarkingCursor(preciseCursor, "readiness")?.timestamp,
+  preciseCursorTimestamp,
+  "Readiness cursors must preserve PostgreSQL microseconds",
+);
 assert.doesNotThrow(() => assertEvidenceInput({
   evidenceType: "product_profile_mapping",
   source: "stage4_test",

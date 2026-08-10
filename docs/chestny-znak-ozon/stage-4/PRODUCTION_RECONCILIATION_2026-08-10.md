@@ -26,6 +26,9 @@
 4. Повторный apply: 138 reconcile, 0 create, 0 conflicts, 0 failed.
 5. Audit: 138 profile upsert, 131 GTIN verification, 138 operational status;
    failed audit records отсутствуют.
+6. Первая сквозная проверка обнаружила обрезание микросекунд в readiness
+   cursor. Cursor исправлен на сохранение точного PostgreSQL timestamp; после
+   исправления обход всех страниц возвращает полный манифест без пропусков.
 
 ## Фактическое состояние
 

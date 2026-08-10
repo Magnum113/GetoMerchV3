@@ -58,7 +58,7 @@ export function decodeMarkingCursor(
     ) {
       throw new InvalidMarkingCursorError();
     }
-    return { timestamp: new Date(payload.timestamp).toISOString(), id: payload.id };
+    return { timestamp: payload.timestamp, id: payload.id };
   } catch (error) {
     if (error instanceof InvalidMarkingCursorError) throw error;
     throw new InvalidMarkingCursorError();

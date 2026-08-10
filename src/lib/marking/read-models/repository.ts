@@ -66,6 +66,7 @@ type ReadinessRow = {
   blocker_reasons: string[];
   warnings: string[];
   created_at: Date | string;
+  cursor_created_at: string;
   updated_at: Date | string;
 };
 
@@ -691,6 +692,7 @@ export class PostgresMarkingReadRepository {
           readiness.blocker_reasons,
           readiness.warnings,
           readiness.created_at,
+          readiness.created_at::text AS cursor_created_at,
           readiness.updated_at
         FROM readiness
         ${whereClause(filters)}
@@ -703,7 +705,7 @@ export class PostgresMarkingReadRepository {
       result.rows,
       options.limit,
       (row) => mapReadiness(row),
-      (row) => encodeMarkingCursor("readiness", toIso(row.created_at), row.product_id),
+      (row) => encodeMarkingCursor("readiness", row.cursor_created_at, row.product_id),
     );
   }
 
