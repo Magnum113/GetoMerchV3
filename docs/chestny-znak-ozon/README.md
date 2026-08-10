@@ -1,8 +1,9 @@
 # Честный знак в GetoMerch Admin
 
 Дата актуализации: 10 августа 2026 года.
-Статус: этапы 0 и 1 завершены; этапы 2-13 реализованы и проверены локально.
-Миграции fulfillment/marking еще не развернуты в production.
+Статус: этапы 0-13 реализованы; production-блок 2 завершен с внешними
+операциями маркировки, оставленными выключенными.
+Миграции fulfillment/marking `0005`-`0018` развернуты в production.
 
 Канонический технический и операционный документ:
 [FLOW.md](FLOW.md).
@@ -355,14 +356,23 @@ merch_marking_code_order_items
 - в заказах есть read-only диагностика fulfillment и marking requirement;
 - раздел `Честный знак` показывает все товары и поддерживает редактирование
   profiles, подтверждение GTIN/evidence, конфликты и backfill;
-- migration rehearsal и isolated DB lifecycle tests проходят; production
-  build проверяется перед закрытием этапа;
-- production deployment миграций `0005`-`0018` и
-  backfill еще не выполнялись;
+- migration rehearsal и isolated DB lifecycle tests прошли до production
+  deployment;
+- миграции `0005`-`0018` применены к `getomerch_production`, schema version
+  равна `0018`;
+- создано 52 внутренних fulfillment для существующих Ozon FBS item; Ozon FBO
+  не создает fulfillment и не затрагивает внутренний склад;
+- `getomerch-marking-worker.service` и периодическая очистка импортов
+  развернуты, а все внешние marking write flags оставлены выключенными;
+- после rollout создана и проверена зашифрованная резервная копия с успешной
+  off-site загрузкой;
 - реальные КМ не импортировались; физическая приемка шаблона на принтерах,
   реальный exemplar canary, физическая подпись через Mac signer, True API и
   СУЗ еще не выполнялись. Локальные credentials созданы, реальный сертификат
   проверен через CryptoPro, signer успешно прошёл start/stop без подписи.
+
+Подробный отчет production-блока 2:
+[BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md](BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
 
 Фактические границы этапа 9, Mac-агента и ввода в оборот приведены в
 [stage-9/README.md](stage-9/README.md) и

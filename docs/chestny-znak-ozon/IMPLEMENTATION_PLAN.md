@@ -1,8 +1,8 @@
 # План разработки интеграции «Честный знак» в GetoMerch Admin
 
 Дата актуализации: 10 августа 2026 года.
-Статус: этапы 0 и 1 завершены; этапы 2-13 реализованы локально и ожидают
-отдельного production rollout. Внешние write-интеграции еще не включены.
+Статус: этапы 0-13 реализованы; production-блок 2 завершен с внешними
+write-интеграциями, оставленными выключенными.
 
 Связанные документы:
 
@@ -1687,23 +1687,23 @@ entities: adapters переводят их в стабильные внутре�
 | Этап | Статус | Последний артефакт | Production flag | Примечание |
 |---|---|---|---|---|
 | 0 | завершен | `stage-0/contract-manifest-2026-07-26.json` | — | CRPT/СУЗ и актуальные Ozon exemplar contracts зафиксированы; РД не является gate |
-| 1 | реализован с flags off | `stage-1/README.md` | off | Fail-closed config, redaction, keyring, изолированные queue/DB role/worker/signer; production deployment отдельно |
-| 2 | реализован с flags off | `stage-2/README.md` | off | Generic fulfillment, Ozon FBS projection и FBO isolation; production rollout отдельно |
-| 3 | реализован с flags off | `stage-3/README.md` | off | Core schema, state machine, atomic events, read-only API/UI; production rollout отдельно |
-| 4 | реализован с flags off | `stage-4/README.md` | off | Readiness, GTIN lifecycle, conflicts и безопасный preview/apply backfill; production rollout отдельно |
-| 5 | реализован с flags off | `stage-5/README.md` | off | AES/HMAC pool, streaming preview/apply, duplicate races, quarantine и TTL cleanup; production rollout отдельно |
-| 6 | реализован с flags off | `stage-6/README.md` | off | Units, bindings, assignments, JIT-склад и reconciliation; production rollout отдельно |
-| 7 | реализован с flags off | `stage-7/README.md` | off | Защищённая этикетка 58x40 и FBS UX; физическая приёмка шаблона остаётся rollout gate |
-| 8 | реализован с flags off | `stage-8/README.md` | off | Revisioned Ozon batches, exemplar adapter, durable jobs, async status и UI; реальный canary отдельно |
-| 9 | реализован с flags off | `stage-9/MAC_AGENT.md` | off | Local Unix signer, outbound-only Mac agent, encrypted broker, memory-only token, CRPT read jobs и UI; физическая подпись и sandbox/production canary отдельно |
-| 10 | реализован с flags off | `stage-10/README.md` | off | Revisioned `LP_INTRODUCE_GOODS`, detached signer pipeline и отдельное подтверждение `in_circulation`; production canary отдельно |
-| 11 | реализован с flags off | `stage-11/README.md` | observe | Транзакционный shipping gate, physical handover и `LK_RECEIPT/DISTANCE`; production canary и производственный календарь отдельно |
-| 12 | реализован с flags off | `stage-12/README.md` | off | Ozon returns, `LP_RETURN`, физическая приемка и FBS -> FBO custody; реальные возвраты и ЭДО evidence отдельно |
-| 13 | реализован с flags off | `stage-13/README.md` | off | Ручные draft/approval, signed SUZ order, получение блоков и `REPORT_UTILIZE`; реальные OMS credentials и платный pilot отдельно |
+| 1 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Fail-closed config, redaction, keyring, изолированные queue/DB role/worker/signer развернуты в production |
+| 2 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Generic fulfillment и Ozon FBS projection развернуты; FBO isolation проверена; выполнен backfill 52 item |
+| 3 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Core schema, state machine, atomic events и read-only API/UI развернуты в production |
+| 4 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Readiness, GTIN lifecycle, conflicts и безопасный preview/apply backfill развернуты; реальный catalog reconciliation выполнен |
+| 5 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | AES/HMAC pool, streaming preview/apply, quarantine и TTL cleanup развернуты; реальные КМ не импортировались |
+| 6 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Units, bindings, assignments, JIT-склад и reconciliation развернуты; runtime write paths выключены |
+| 7 | развернут, flags off | `stage-7/README.md` | off | Защищенная этикетка 58x40 и FBS UX доступны; физическая приемка шаблона остается rollout gate |
+| 8 | развернут, flags off | `stage-8/README.md` | off | Revisioned Ozon batches, exemplar adapter, durable jobs, async status и UI развернуты; реальный canary отдельно |
+| 9 | развернут, flags off | `stage-9/MAC_AGENT.md` | off | Local Unix signer, outbound-only Mac agent, encrypted broker, memory-only token, CRPT read jobs и UI развернуты; физическая подпись и canary отдельно |
+| 10 | развернут, flags off | `stage-10/README.md` | off | Revisioned `LP_INTRODUCE_GOODS`, detached signer pipeline и подтверждение `in_circulation` развернуты; production canary отдельно |
+| 11 | развернут, flags off | `stage-11/README.md` | off | Транзакционный shipping gate, physical handover и `LK_RECEIPT/DISTANCE` развернуты; production canary и производственный календарь отдельно |
+| 12 | развернут, flags off | `stage-12/README.md` | off | Ozon returns, `LP_RETURN`, физическая приемка и FBS -> FBO custody развернуты; реальные возвраты и ЭДО evidence отдельно |
+| 13 | развернут, flags off | `stage-13/README.md` | off | Ручные draft/approval, signed SUZ order, получение блоков и `REPORT_UTILIZE` развернуты; реальные OMS credentials и платный pilot отдельно |
 | 14 | не начат | — | off | — |
 
 Допустимые статусы: `не начат`, `в работе`, `реализован с flags off`,
-`canary`, `production`, `заблокирован`.
+`развернут, flags off`, `canary`, `production`, `заблокирован`.
 
 ## 33. Итоговый порядок запуска
 
@@ -1727,19 +1727,24 @@ entities: adapters переводят их в стабильные внутре�
 
 ### 33.1. Статус production rollout
 
-На 10 августа 2026 года завершен блок 1: локальный code freeze и ревизия
-объема этапов 1-13. Проверены fail-closed defaults, отсутствие реальных
-секретов в поставляемых файлах, статические regression checks этапов 1-13,
-TypeScript и production build. В production ничего не развертывалось,
-миграции `0005`-`0018` не применялись и внешние write flags не включались.
+На 10 августа 2026 года завершены блоки 1 и 2. После локального code freeze
+миграции `0005`-`0018` прошли rehearsal и DB lifecycle проверки, а затем были
+применены к `getomerch_production`. Production schema version равна `0018`.
 
-DB lifecycle и read-model проверки не входят в локальный gate блока 1: на
-рабочем Mac нет изолированного PostgreSQL. Они обязательны в блоке 2 сначала
-на временной rehearsal DB, а затем в production после применения миграций с
-flags off.
+Развернуты отдельные marking DB credentials, keyring, worker, Mac-agent broker
+endpoint и периодическая очистка временных импортов. Выполнен идемпотентный
+backfill: создано 52 fulfillment для существующих Ozon FBS item, при этом FBO
+заказы не создают fulfillment. Внешние операции ГИС МТ, СУЗ и Ozon exemplar
+остаются выключенными fail-closed флагами; реальные КМ не импортировались.
 
-Следующий шаг: блок 2, то есть schema/infrastructure deployment с полностью
-выключенными внешними операциями маркировки.
+До и после rollout созданы зашифрованные резервные копии, проверено
+восстановление, последняя копия успешно загружена off-site. Временные базы
+блока 2 удалены. Полный отчет находится в
+[`BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md`](./BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
+
+Следующий шаг: ограниченный canary signer/read-only ГИС МТ и только после его
+успеха последовательное включение отдельных внешних операций по воротам
+этапов 8-13.
 
 ## 34. Источники и обязательная повторная проверка
 
