@@ -10,6 +10,7 @@ import {
   verifyAgentRequestAuth,
   verifyAgentResponseAuth,
 } from "@/lib/marking/agent/protocol";
+import { clearRecoveredAgentConnectionError } from "@/lib/marking/agent/runtime";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import type { DatabaseQueryExecutor, DatabaseQueryResult } from "@/lib/db/pool";
 import { MarkingKeyring } from "@/lib/marking/security/keyring";
@@ -26,9 +27,28 @@ main().catch((error) => {
 async function main() {
   testAgentProtocol();
   testTelemetry();
+  testRecoveredConnectionError();
   testRemoteConfiguration();
   await testEncryptedBrokerClient();
   console.log("Mac marking agent protocol, encryption and remote signer checks passed");
+}
+
+function testRecoveredConnectionError() {
+  for (const errorCode of [
+    "agent_auth_failed",
+    "agent_endpoint_disabled",
+    "agent_response_auth_failed",
+    "agent_response_invalid",
+    "agent_server_unavailable",
+  ]) {
+    assert.equal(clearRecoveredAgentConnectionError({
+      code: errorCode,
+      message: "Recovered transport failure",
+    }), null);
+  }
+  const providerError = { code: "provider_pin_unavailable", message: "PIN required" };
+  assert.deepEqual(clearRecoveredAgentConnectionError(providerError), providerError);
+  assert.equal(clearRecoveredAgentConnectionError(null), null);
 }
 
 function testAgentProtocol() {

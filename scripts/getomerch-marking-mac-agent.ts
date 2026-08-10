@@ -14,6 +14,7 @@ import {
   type MarkingAgentRequestBody,
   type MarkingAgentTelemetry,
 } from "@/lib/marking/agent/protocol";
+import { clearRecoveredAgentConnectionError } from "@/lib/marking/agent/runtime";
 import { loadMarkingSignerClient } from "@/lib/marking/signer/client";
 import { loadCertificateInfo } from "@/lib/marking/signer/provider";
 
@@ -72,7 +73,7 @@ async function main() {
         if (claimed) {
           await processClaim({ config, runtime, secret, signer, certificate, claimed });
         }
-        if (runtime.lastError?.code === "agent_server_unavailable") runtime.lastError = null;
+        runtime.lastError = clearRecoveredAgentConnectionError(runtime.lastError);
       } catch (error) {
         runtime.lastError = safeError(error);
         console.error("[marking-mac-agent] cycle failed", runtime.lastError);

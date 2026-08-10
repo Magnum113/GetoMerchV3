@@ -49,6 +49,7 @@
     "marking:worker": "tsx scripts/getomerch-marking-worker.ts",
     "marking:signer": "NODE_OPTIONS=--conditions=react-server tsx scripts/getomerch-marking-signer.ts",
     "marking:mac-agent": "NODE_OPTIONS=--conditions=react-server tsx scripts/getomerch-marking-mac-agent.ts",
+    "marking:stage9:canary": "NODE_OPTIONS=--conditions=react-server tsx scripts/run-marking-stage9-canary.ts",
     "marking:imports:scrub": "NODE_OPTIONS=--conditions=react-server tsx scripts/scrub-marking-imports.ts",
     "marking:profiles:reconcile": "NODE_OPTIONS=--conditions=react-server tsx scripts/reconcile-marking-product-profiles.ts",
     "marking:profiles:verify": "NODE_OPTIONS=--conditions=react-server tsx scripts/reconcile-marking-product-profiles.ts --verify",
