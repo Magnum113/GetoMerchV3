@@ -157,7 +157,11 @@ async function loadState(manifest: Manifest) {
   );
   return {
     products: products.rows,
-    profiles: new Map(profiles.rows.map((row) => [row.sku, row])),
+    profiles: new Map(
+      profiles.rows
+        .filter((row) => row.profile_id !== null)
+        .map((row) => [row.sku, row]),
+    ),
     signals: new Map(signals.rows.map((row) => [row.offer_id, row.marking_requirement])),
   };
 }
