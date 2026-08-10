@@ -88,17 +88,17 @@ SKU, Ozon SKU, GTIN, цвет, размер и статус карточки Н�
   `jit_after_order` и каналом `ozon_fbs`;
 - 131 опубликованный GTIN проверен и имеет verified
   `product_profile_mapping` evidence;
-- 124 профиля имеют readiness `ready` и operational status `enabled`;
-- 7 опубликованных профилей приостановлены из-за последнего сигнала Ozon
-  `not_required`; в read model это 7 явных
-  `ozon_requirement_mismatch`, а не скрытое автоматическое разрешение;
+- 131 опубликованный профиль имеет readiness `ready` и operational status
+  `enabled`;
 - 7 новых профилей D26/D27 остаются `draft/paused`, пока карточки НК проходят
   модерацию; GTIN к ним намеренно не считается verified раньше публикации;
 - локальные `D12-TSH-EMB-WHT-S` и `D12-TSH-EMB-WHT-M`, отсутствующие в
   актуальном каталоге Ozon, не включены в манифест и не получили профиль;
 - восемь legacy GTIN без однозначного актуального Ozon SKU изолированы и не
   сопоставлялись эвристически;
-- повторный apply дал тот же результат без дублей и без failed audit records.
+- Ozon requirement conflicts отсутствуют;
+- повторный apply использует уже проверенные profile/GTIN без повторной записи,
+  а idempotency-ключ меняется вместе с версией входного snapshot;
 - production verify выявил и устранил потерю строк при cursor pagination:
   readiness cursor теперь сохраняет микросекунды PostgreSQL, поэтому массово
   созданные в один момент товары не пропускаются между страницами.
@@ -134,11 +134,14 @@ operational reasons, readiness и conflicts с версионированным 
 `published` и повторить preview/apply/verify. Создавать новые GTIN или дубли
 карточек не нужно.
 
-Семь Ozon-конфликтов нельзя автоматически подавлять. После получения нового
-FBS snapshot с `required` повторный reconcile включит соответствующий профиль.
-До этого safe policy оставляет его `paused`. Проверка показала, что это не
-устаревшие архивные строки: на 10 августа 2026 года сигналы относятся к
-актуальным FBS-отправлениям в статусах `awaiting_packaging` и `delivering`.
+Повторная проверка реального Ozon API показала, что семь прежних конфликтов
+были ошибкой проекции: SKU отсутствовали в обязательном массиве, но находились
+в `optional.products_with_possible_mandatory_mark`. Ozon разрешал передавать
+КМ, однако синхронизация теряла optional-массив и записывала `not_required`.
+Начиная с release `172a1147be37` optional-сигнал включает эффективный JIT-поток
+и сохраняет `exemplar_flow_available=true`. После активной синхронизации 44
+отправлений семь профилей включены через audit API; marking conflicts равны
+нулю.
 
 ## Не входит в этап 4
 

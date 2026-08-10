@@ -52,6 +52,7 @@ type ExistingProfileRow = {
   gtin: string | null;
   verification_status: string | null;
   operational_status: string | null;
+  operational_status_reason: string | null;
   revision: string | null;
 };
 
@@ -358,6 +359,7 @@ async function loadState(manifest: Manifest) {
         trade_item.gtin,
         profile.verification_status,
         profile.operational_status,
+        profile.operational_status_reason,
         profile.revision::text
       FROM public.merch_products AS product
       LEFT JOIN public.merch_marking_product_profiles AS profile
@@ -451,53 +453,85 @@ async function applyProduct(
     },
   };
   try {
-    const profile = await upsertMarkingProductProfile({
-      productId: plan.product.id,
-      markingRequirement: "required",
-      requirementSource: manifest.sourceId,
-      requirementObservedAt: manifest.generatedAt,
-      productionMode: "own_production",
-      fulfillmentMode: "jit_after_order",
-      channel: "ozon_fbs",
-      offerId: plan.manifest.sku,
-      externalProductId: plan.manifest.ozonSku,
-      externalSku: plan.manifest.ozonSku,
-      sourceSnapshot: snapshot,
-      actorType: "migration",
-      actorId: "stage4-catalog-reconcile",
-    }, context(manifest.sourceId, plan.manifest.sku, "profile"));
-
-    let profileId = profile.profileId;
-    let revision = profile.revision;
-    if (plan.manifest.nationalCatalogStatus === "published") {
-      const verified = await verifyMarkingProductGtin({
-        profileId,
-        expectedRevision: revision,
-        gtin: plan.manifest.gtin,
-        productGroup: plan.manifest.productGroup,
-        tnvedCode: plan.manifest.tnvedCode,
-        nationalCatalogStatus: "published",
-        declaredProductType: plan.manifest.declaredProductType,
-        declaredFabric: plan.manifest.declaredFabric,
-        declaredColor: plan.manifest.declaredColor,
-        declaredSizeInt: plan.manifest.declaredSizeInt,
-        declaredSizeRu: plan.manifest.declaredSizeRu,
-        declaredComposition: plan.manifest.declaredComposition,
-        verificationSource: manifest.sourceId,
-        externalReference: `national-catalog:gtin:${plan.manifest.gtin}`,
-        sourceSnapshot: snapshot,
-        actorType: "migration",
-        actorId: "stage4-catalog-reconcile",
-      }, context(manifest.sourceId, plan.manifest.sku, "verify"));
-      profileId = verified.profileId;
-      revision = verified.revision;
-    }
-
     const reason = plan.manifest.nationalCatalogStatus !== "published"
       ? "National Catalog moderation is pending"
       : plan.ozonSignal === "not_required"
         ? "Ozon currently reports marking as not required"
         : null;
+    let profileId: string;
+    let revision: number;
+    let reusedExistingState = false;
+    const existingState = plan.existing;
+
+    if (canReuseExistingProfile(plan)) {
+      profileId = existingState!.profile_id!;
+      revision = Number(existingState!.revision);
+      reusedExistingState = true;
+    } else {
+      const snapshotVersion = createHash("sha256")
+        .update(JSON.stringify(snapshot))
+        .digest("hex")
+        .slice(0, 16);
+      const profile = await upsertMarkingProductProfile({
+        productId: plan.product.id,
+        expectedRevision: plan.existing?.revision == null
+          ? null
+          : Number(plan.existing.revision),
+        markingRequirement: "required",
+        requirementSource: manifest.sourceId,
+        requirementObservedAt: manifest.generatedAt,
+        productionMode: "own_production",
+        fulfillmentMode: "jit_after_order",
+        channel: "ozon_fbs",
+        offerId: plan.manifest.sku,
+        externalProductId: plan.manifest.ozonSku,
+        externalSku: plan.manifest.ozonSku,
+        sourceSnapshot: snapshot,
+        actorType: "migration",
+        actorId: "stage4-catalog-reconcile",
+      }, context(manifest.sourceId, plan.manifest.sku, `profile:${snapshotVersion}`));
+
+      profileId = profile.profileId;
+      revision = profile.revision;
+      if (plan.manifest.nationalCatalogStatus === "published") {
+        const verified = await verifyMarkingProductGtin({
+          profileId,
+          expectedRevision: revision,
+          gtin: plan.manifest.gtin,
+          productGroup: plan.manifest.productGroup,
+          tnvedCode: plan.manifest.tnvedCode,
+          nationalCatalogStatus: "published",
+          declaredProductType: plan.manifest.declaredProductType,
+          declaredFabric: plan.manifest.declaredFabric,
+          declaredColor: plan.manifest.declaredColor,
+          declaredSizeInt: plan.manifest.declaredSizeInt,
+          declaredSizeRu: plan.manifest.declaredSizeRu,
+          declaredComposition: plan.manifest.declaredComposition,
+          verificationSource: manifest.sourceId,
+          externalReference: `national-catalog:gtin:${plan.manifest.gtin}`,
+          sourceSnapshot: snapshot,
+          actorType: "migration",
+          actorId: "stage4-catalog-reconcile",
+        }, context(manifest.sourceId, plan.manifest.sku, `verify:${snapshotVersion}`));
+        profileId = verified.profileId;
+        revision = verified.revision;
+      }
+    }
+
+    if (
+      reusedExistingState
+      && existingState?.operational_status === plan.targetStatus
+      && existingState.operational_status_reason === reason
+    ) {
+      return {
+        sku: plan.manifest.sku,
+        status: plan.targetStatus,
+        catalogStatus: plan.manifest.nationalCatalogStatus,
+        ozonSignal: plan.ozonSignal,
+        changed: false,
+      };
+    }
+
     const operational = await setMarkingProductOperationalStatus({
       profileId,
       expectedRevision: revision,
@@ -515,6 +549,7 @@ async function applyProduct(
       status: operational.operationalStatus,
       catalogStatus: plan.manifest.nationalCatalogStatus,
       ozonSignal: plan.ozonSignal,
+      changed: true,
     };
   } catch (error) {
     console.error("[marking-profile-reconcile] item failed", {
@@ -523,6 +558,22 @@ async function applyProduct(
     });
     return { sku: plan.manifest.sku, status: "failed", error: errorName(error) };
   }
+}
+
+function canReuseExistingProfile(plan: ReturnType<typeof planProduct>) {
+  const existing = plan.existing;
+  if (
+    !existing?.profile_id
+    || existing.revision == null
+    || !Number.isSafeInteger(Number(existing.revision))
+  ) {
+    return false;
+  }
+  if (plan.manifest.nationalCatalogStatus === "published") {
+    return existing.verification_status === "verified"
+      && existing.gtin === plan.manifest.gtin;
+  }
+  return existing.verification_status === "draft" && existing.gtin === null;
 }
 
 function context(sourceId: string, sku: string, operation: string): ServerMutationContext {

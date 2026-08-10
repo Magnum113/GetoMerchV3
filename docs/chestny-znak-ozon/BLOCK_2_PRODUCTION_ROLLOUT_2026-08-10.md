@@ -76,9 +76,10 @@ endpoint не дает разрешения на внешнюю запись б�
 подписать УКЭП и проверить статус `Опубликована`.
 
 Для 138 актуальных Ozon-футболок выполнен точный production reconciliation:
-создано 138 profiles, 131 GTIN подтвержден, 124 профиля имеют readiness
-`ready`, 14 оставлены `paused`. Из них 7 ожидают модерацию НК, а 7 имеют явный
-конфликт с последним Ozon-сигналом `not_required`. Подробности приведены в
+создано 138 profiles, 131 GTIN подтвержден и имеет readiness `ready`, 7
+draft-профилей D26/D27 остаются `paused` по текущему манифесту. Ошибочная
+классификация optional-сигнала Ozon исправлена; requirement conflicts равны
+нулю. Подробности приведены в
 [`stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md`](./stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md).
 
 ## Проверенные ворота

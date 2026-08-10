@@ -126,6 +126,9 @@ assert.match(reconciliation, /--verify/);
 assert.match(reconciliation, /PostgresMarkingReadRepository/);
 assert.match(reconciliation, /product_profile_mapping/);
 assert.match(reconciliation, /ozon_requirement_mismatch/);
+assert.match(reconciliation, /canReuseExistingProfile/);
+assert.match(reconciliation, /changed:\s*false/);
+assert.match(reconciliation, /profile:\$\{snapshotVersion\}/);
 assert.doesNotMatch(reconciliation, /productName|ozonName/);
 
 const apiRoutes = [

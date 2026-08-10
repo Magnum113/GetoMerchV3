@@ -329,8 +329,9 @@ merch_marking_code_order_items
 - product readiness, проверяемые GTIN profiles, отчет конфликтов и безопасный
   preview/apply backfill этапа 4 реализованы;
 - production reconciliation этапа 4 применен к 138 актуальным Ozon-футболкам:
-  124 profiles готовы, 7 ожидают модерацию НК и 7 приостановлены из-за
-  последнего Ozon-сигнала `not_required`; повторный apply идемпотентен;
+  131 verified profiles готовы, 7 draft-профилей D26/D27 остаются paused по
+  текущему манифесту; optional-сигнал Ozon учитывается, conflicts равны нулю,
+  повторный apply выполняет только фактические изменения;
 - зашифрованный AES-256-GCM пул КМ, HMAC-дедупликация, двухфазный
   streaming-импорт, карантин и TTL-очистка этапа 5 реализованы;
 - физические единицы, назначения unit slots, конкурентный резерв КМ,

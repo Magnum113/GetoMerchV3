@@ -3,7 +3,9 @@
 Дата: 10 августа 2026 года.
 База: `getomerch_production` на VPS.
 Режим: внешние marking write flags выключены.
-Итоговый runtime release: `20260810T120511Z-admin-0b14b704074e`.
+Исходный runtime release: `20260810T120511Z-admin-0b14b704074e`.
+Корректирующий release Ozon projection:
+`20260810T150932Z-admin-172a1147be37`.
 
 ## Источники
 
@@ -33,6 +35,15 @@
 7. После проверки создан backup
    `getomerch-database-backup-20260810T120709Z.tar.gz.gpg`; archive verification
    и off-site upload успешны.
+8. Повторная проверка реальных FBS responses обнаружила, что семь SKU входят в
+   `optional.products_with_possible_mandatory_mark`. Этот сигнал ошибочно не
+   сохранялся и превращался в `not_required`.
+9. Release `172a1147be37` добавил optional projection. Активная синхронизация
+   обновила 44 posting, ошибок и несопоставленных строк нет.
+10. Перед изменением статусов создана и загружена off-site копия
+    `getomerch-database-backup-20260810T151306Z.tar.gz.gpg`.
+11. Семь verified profiles включены через защищенный marking API с audit и
+    optimistic revision control. Итоговый read model возвращает 0 conflicts.
 
 ## Фактическое состояние
 
@@ -41,17 +52,15 @@
 | Profiles | 138 |
 | Verified profiles | 131 |
 | Draft profiles | 7 |
-| Enabled / readiness ready | 124 |
-| Paused / readiness blocked | 14 |
+| Enabled / readiness ready | 131 |
+| Paused / readiness blocked | 7 |
 | Verified trade items | 131 |
 | Verified product mapping evidence | 131 |
-| Ozon requirement conflicts | 7 |
+| Ozon requirement conflicts | 0 |
 | Ошибки применения | 0 |
 
-Семь draft profiles соответствуют карточкам D26/D27, которые фактически
-показываются в НК со статусом `На модерации`. Семь verified paused profiles
-соответствуют SKU, по которым последний сохранённый FBS snapshot Ozon сообщил
-`not_required`:
+Семь draft profiles соответствуют D26/D27, которые в текущем манифесте имеют
+статус `moderation_pending`. Ранее приостановленные verified profiles:
 
 - `D16-TSH-PRT-WGRY-XXL`;
 - `D23-TSH-PRT-WGRY-M`;
@@ -61,10 +70,11 @@
 - `D8-TSH-PRT-WGRY-M`;
 - `D8-TSH-PRT-WHT-L`.
 
-Это актуальные наблюдения из FBS-отправлений, синхронизированных 10 августа
-2026 года: шесть находятся в `awaiting_packaging`, одно в `delivering`.
-Конфликты не являются остатком старых архивных заказов и поэтому не
-подавляются вручную.
+Для каждого из этих SKU Ozon одновременно возвращал пустой обязательный массив
+и SKU в optional-массиве. Это не конфликт с локальным профилем `required`:
+optional означает, что Ozon принимает КМ. После исправления синхронизации строки
+имеют эффективный `marking_requirement=required` и
+`exemplar_flow_available=true`; профили включены.
 
 ## Повторная процедура
 
@@ -86,6 +96,10 @@ Apply разрешён только после нулевого количест
 ```bash
 npm run marking:profiles:reconcile -- --apply
 ```
+
+Повторный apply не перепроводит уже совпадающие profile/GTIN. Он изменяет
+только отличающийся operational status/reason; новый profile snapshot получает
+версионированный idempotency key.
 
 После модерации D26/D27 нельзя просто включать вручную. Сначала карточки
 подписываются УКЭП и проверяется `Опубликована`, затем обновляются семь
