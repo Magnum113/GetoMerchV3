@@ -521,11 +521,7 @@ async function assertProfileReadinessInvariant() {
       );
       await client.query("SET CONSTRAINTS ALL IMMEDIATE");
     }),
-    (error) => pgCode(error) === "MZ102" || (
-      pgCode(error) === "23514"
-      && pgConstraint(error)
-        === "merch_marking_product_profiles_requirement_alignment_check"
-    ),
+    (error) => pgCode(error) === "MZ102",
   );
 
   await inTransaction(async (client) => {
@@ -583,6 +579,9 @@ const profileInsertSql = `
     requires_marking,
     production_mode,
     fulfillment_marking_mode,
+    marking_requirement,
+    marking_requirement_source,
+    marking_requirement_observed_at,
     verification_status,
     verification_source,
     source_snapshot_hash,
@@ -595,6 +594,9 @@ const profileInsertSql = `
     true,
     'own_production',
     'jit_after_order',
+    'required',
+    'stage3_test',
+    clock_timestamp(),
     'verified',
     'stage3_test',
     repeat('c', 64),
@@ -646,17 +648,6 @@ function pgCode(error: unknown): string | undefined {
   for (let depth = 0; depth < 5 && current; depth += 1) {
     if (typeof current === "object" && current !== null && "code" in current) {
       return String((current as { code?: unknown }).code ?? "");
-    }
-    current = current instanceof Error ? current.cause : undefined;
-  }
-  return undefined;
-}
-
-function pgConstraint(error: unknown): string | undefined {
-  let current: unknown = error;
-  for (let depth = 0; depth < 5 && current; depth += 1) {
-    if (typeof current === "object" && current !== null && "constraint" in current) {
-      return String((current as { constraint?: unknown }).constraint ?? "");
     }
     current = current instanceof Error ? current.cause : undefined;
   }
