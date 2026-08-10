@@ -122,11 +122,24 @@ tar -C / -czf "$TMP_DIR/runtime-config.tar.gz" --ignore-failed-read \
   etc/getomerch/database-backup.env \
   etc/getomerch/database-credentials.env \
   etc/getomerch/migrator-production.env \
+  etc/getomerch/marking-production.env \
+  etc/getomerch/marking-database.env \
+  etc/getomerch/marking-database-credentials.env \
+  etc/getomerch/credentials/marking-keyring.json \
+  etc/getomerch/credentials/marking-agent-secrets.json \
+  etc/postgresql/17/main/pg_hba_getomerch_marking.conf \
   etc/systemd/system/getomerch-admin.service \
   etc/systemd/system/getomerch-admin.service.d \
   etc/systemd/system/getomerch-worker.service \
+  etc/systemd/system/getomerch-marking-worker.service \
+  etc/systemd/system/getomerch-marking-import-scrub.service \
+  etc/systemd/system/getomerch-marking-import-scrub.timer \
   etc/systemd/system/getomerch-database-backup.service \
-  etc/systemd/system/getomerch-database-backup.timer 2>/dev/null || true
+  etc/systemd/system/getomerch-database-backup.timer \
+  etc/nginx/conf.d/getomerch-marking-agent-rate-zone.conf \
+  etc/nginx/snippets/getomerch-marking-agent-location.conf \
+  usr/local/sbin/getomerch-marking-keyring-init \
+  usr/local/sbin/getomerch-marking-postgres-bootstrap 2>/dev/null || true
 
 python3 - "$TMP_DIR/manifest.json" "$RUN_ID" "$migration_version" "$table_count" <<'PY'
 import json

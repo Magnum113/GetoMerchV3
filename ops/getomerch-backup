@@ -224,14 +224,27 @@ tar -C / -czf "$CONFIG_ARCHIVE" --ignore-failed-read \
   etc/getomerch/database-backup.env \
   etc/getomerch/database-backup-rehearsal.env \
   etc/getomerch/cutover.env \
+  etc/getomerch/marking-production.env \
+  etc/getomerch/marking-database.env \
+  etc/getomerch/marking-database-rehearsal.env \
+  etc/getomerch/marking-database-credentials.env \
+  etc/getomerch/credentials/marking-keyring.json \
+  etc/getomerch/credentials/marking-agent-secrets.json \
   etc/postgresql/17/main/pg_hba.conf \
   etc/postgresql/17/main/pg_hba_getomerch.conf \
+  etc/postgresql/17/main/pg_hba_getomerch_marking.conf \
   etc/systemd/system/getomerch-admin.service \
+  etc/systemd/system/getomerch-admin.service.d \
   etc/systemd/system/getomerch-worker.service \
+  etc/systemd/system/getomerch-marking-worker.service \
+  etc/systemd/system/getomerch-marking-import-scrub.service \
+  etc/systemd/system/getomerch-marking-import-scrub.timer \
   etc/systemd/system/getomerch-backup.service \
   etc/systemd/system/getomerch-backup.timer \
   etc/nginx/sites-available/getomerch-admin \
   etc/nginx/sites-enabled/getomerch-admin \
+  etc/nginx/conf.d/getomerch-marking-agent-rate-zone.conf \
+  etc/nginx/snippets/getomerch-marking-agent-location.conf \
   usr/local/sbin/getomerch-deploy-from-git \
   usr/local/sbin/getomerch-deploy-status \
   usr/local/sbin/getomerch-rollback \
@@ -249,6 +262,8 @@ tar -C / -czf "$CONFIG_ARCHIVE" --ignore-failed-read \
   usr/local/sbin/getomerch-cutover \
   usr/local/sbin/getomerch-database-backup \
   usr/local/sbin/getomerch-database-restore-drill \
+  usr/local/sbin/getomerch-marking-keyring-init \
+  usr/local/sbin/getomerch-marking-postgres-bootstrap \
   usr/local/lib/getomerch/getomerch-rest-export.mjs \
   usr/local/lib/getomerch/getomerch-data-fingerprint.py \
   usr/local/lib/getomerch/database \
