@@ -48,6 +48,7 @@ npm_cache_dir="${GETOMERCH_NPM_CACHE_DIR:-/var/cache/getomerch/npm}"
 deploy_home="${GETOMERCH_DEPLOY_HOME:-/var/lib/getomerch/deploy-home}"
 production_env_file="${GETOMERCH_PRODUCTION_ENV_FILE:-/etc/getomerch/admin-production.env}"
 database_env_file="${GETOMERCH_DATABASE_ENV_FILE:-/etc/getomerch/database.env}"
+database_bundle_dir="${GETOMERCH_DATABASE_BUNDLE_DIR:-/usr/local/lib/getomerch/database}"
 min_free_mb="${GETOMERCH_MIN_FREE_MB:-2048}"
 keep_recent_successful="${GETOMERCH_KEEP_RECENT_SUCCESSFUL:-2}"
 npm_cache_max_mb="${GETOMERCH_NPM_CACHE_MAX_MB:-1024}"
@@ -552,6 +553,22 @@ chown -R root:root "$release_dir"
 log "activating release"
 ln -sfnT "$release_dir" "$current_link"
 activated=1
+
+log "refreshing database verification bundle"
+database_bundle_tmp="${database_bundle_dir}.tmp.${run_id}"
+rm -rf "$database_bundle_tmp"
+install -d -m 0755 "$(dirname "$database_bundle_dir")"
+install -d -m 0755 "$database_bundle_tmp/db"
+rsync -a --delete "$release_dir/db/" "$database_bundle_tmp/db/"
+ln -s "$current_link/node_modules" "$database_bundle_tmp/node_modules"
+chown -R root:root "$database_bundle_tmp"
+if [[ -e "$database_bundle_dir" ]]; then
+  mv "$database_bundle_dir" "${database_bundle_dir}.previous.${run_id}"
+fi
+mv "$database_bundle_tmp" "$database_bundle_dir"
+rm -rf "${database_bundle_dir}.previous.${run_id}"
+add_check "database verification bundle refreshed"
+
 systemctl restart "$service_unit"
 if systemctl is-enabled --quiet "$worker_unit" 2>/dev/null; then
   systemctl restart "$worker_unit"

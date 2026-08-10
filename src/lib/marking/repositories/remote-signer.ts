@@ -428,7 +428,7 @@ export async function getLatestCrptAuthorization(query: DatabaseQueryExecutor) {
   }>(
     `
       SELECT id, status, result, error_code, error_message, updated_at
-      FROM getomerch_jobs.marking_jobs
+      FROM getomerch_jobs.jobs
       WHERE type = 'marking_crpt_auth_refresh'
       ORDER BY created_at DESC, id DESC
       LIMIT 1
