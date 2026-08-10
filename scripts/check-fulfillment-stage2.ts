@@ -73,6 +73,16 @@ function testMarkingProjection() {
     projectOzonMarkingSignals({
       ozonProductId: "1001",
       mandatoryProductEntries: [],
+      possibleProductEntries: [1001],
+      productExemplars: [],
+    }),
+    { markingRequirement: "required", exemplarFlowAvailable: true },
+  );
+  assert.deepEqual(
+    projectOzonMarkingSignals({
+      ozonProductId: "1001",
+      mandatoryProductEntries: [],
+      possibleProductEntries: [],
       productExemplars: [
         {
           product_id: 1001,
@@ -104,6 +114,7 @@ function testItemProjection() {
       },
     ],
     mandatoryProductEntries: [1001],
+    possibleProductEntries: [1001],
     productExemplars: [
       {
         product_id: 1001,
@@ -130,6 +141,7 @@ function testItemProjection() {
       quantity: 1,
     }],
     mandatoryProductEntries: [5001],
+    possibleProductEntries: [5001],
     productExemplars: [],
     productByOffer,
   });
@@ -144,6 +156,7 @@ function testItemProjection() {
       quantity: 1,
     }],
     mandatoryProductEntries: [1001],
+    possibleProductEntries: [1001],
     productExemplars: [{
       product_id: 1001,
       is_mandatory_mark_needed: true,

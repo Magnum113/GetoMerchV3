@@ -505,7 +505,11 @@ async function applyProduct(
       reason,
       actorType: "migration",
       actorId: "stage4-catalog-reconcile",
-    }, context(manifest.sourceId, plan.manifest.sku, "status"));
+    }, context(
+      manifest.sourceId,
+      plan.manifest.sku,
+      `status:${plan.targetStatus}:${reason ?? "none"}`,
+    ));
     return {
       sku: plan.manifest.sku,
       status: operational.operationalStatus,

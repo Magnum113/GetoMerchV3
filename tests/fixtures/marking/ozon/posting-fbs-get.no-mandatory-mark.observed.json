@@ -28,6 +28,11 @@
       "products_requiring_change_country": [],
       "products_requiring_imei": [],
       "products_requiring_weight": []
+    },
+    "optional": {
+      "products_with_possible_mandatory_mark": [
+        1000000000
+      ]
     }
   }
 }

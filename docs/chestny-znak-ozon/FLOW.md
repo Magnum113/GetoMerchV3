@@ -1551,9 +1551,14 @@ marking_source_snapshot_hash text
 marking_contract_version text
 ```
 
-`marking_requirement` нормализуется в `required/possible/not_reported`, но
-исходный posting snapshot hash и contract version сохраняются. Если массив
-requirements нельзя однозначно сопоставить строке заказа по Ozon product ID,
+Ozon-сигнал нормализуется с учетом обоих массивов. `required` означает прямое
+требование Ozon. `possible` означает, что Ozon разрешает передать КМ; для
+локального проверенного профиля с обязательной маркировкой такой posting тоже
+включается в JIT-поток и не считается конфликтом. В компактной fulfillment
+проекции это сохраняется как эффективный `marking_requirement=required` и
+`exemplar_flow_available=true`. Правовая классификация при этом не выводится
+из optional-сигнала Ozon: её задают товарный профиль и подтвержденный GTIN.
+Если массив нельзя однозначно сопоставить строке заказа по Ozon product ID,
 система не угадывает по SKU или позиции массива, а создает discrepancy.
 
 Устаревшее `products.mandatory_mark` не используется как единственный

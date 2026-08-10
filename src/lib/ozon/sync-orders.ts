@@ -49,6 +49,9 @@ type OzonPosting = {
   requirements?: {
     products_requiring_mandatory_mark?: unknown;
   };
+  optional?: {
+    products_with_possible_mandatory_mark?: unknown;
+  };
   product_exemplars?: unknown;
   source: "fbs" | "fbo";
 };
@@ -248,7 +251,14 @@ async function fetchActiveWithStaleRefresh(context: JobExecutionContext) {
     assertNotCancelled(context.signal);
     const response = await ozonPost<{ result?: Omit<OzonPosting, "source"> }>(
       "/v3/posting/fbs/get",
-      { posting_number: postingNumber, with: { analytics_data: true, financial_data: false } },
+      {
+        posting_number: postingNumber,
+        with: {
+          analytics_data: true,
+          financial_data: false,
+          product_exemplars: true,
+        },
+      },
       ozonOptions(context),
     );
     refreshedCount += 1;
@@ -285,6 +295,8 @@ function toSnapshot(posting: OzonPosting, productByOffer: Map<string, string>): 
     products,
     mandatoryProductEntries:
       posting.requirements?.products_requiring_mandatory_mark,
+    possibleProductEntries:
+      posting.optional?.products_with_possible_mandatory_mark,
     productExemplars: posting.product_exemplars,
     productByOffer,
   });

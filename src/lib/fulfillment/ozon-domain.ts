@@ -29,6 +29,7 @@ export function projectOzonOrderItems(input: {
     price?: string | number;
   }>;
   mandatoryProductEntries: unknown;
+  possibleProductEntries?: unknown;
   productExemplars: unknown;
   productByOffer: ReadonlyMap<string, string>;
 }) {
@@ -50,6 +51,7 @@ export function projectOzonOrderItems(input: {
       ? projectOzonMarkingSignals({
           ozonProductId,
           mandatoryProductEntries: input.mandatoryProductEntries,
+          possibleProductEntries: input.possibleProductEntries,
           productExemplars: input.productExemplars,
         })
       : {
@@ -89,10 +91,12 @@ export function buildOzonSourceItemKey(
 export function projectOzonMarkingSignals(input: {
   ozonProductId: string | null;
   mandatoryProductEntries: unknown;
+  possibleProductEntries?: unknown;
   productExemplars: unknown;
 }): OzonMarkingProjection {
   const productId = input.ozonProductId;
   const mandatoryIds = productIdsFromObservedArray(input.mandatoryProductEntries);
+  const possibleIds = productIdsFromObservedArray(input.possibleProductEntries);
   const exemplar = matchingExemplar(input.productExemplars, productId);
 
   const requirementFromList =
@@ -102,6 +106,14 @@ export function projectOzonMarkingSignals(input: {
   const requirementFromExemplar =
     exemplar && typeof exemplar.is_mandatory_mark_needed === "boolean"
       ? exemplar.is_mandatory_mark_needed
+      : null;
+  const possibleFromList =
+    possibleIds === null || productId === null
+      ? null
+      : possibleIds.has(productId);
+  const possibleFromExemplar =
+    exemplar && typeof exemplar.is_mandatory_mark_possible === "boolean"
+      ? exemplar.is_mandatory_mark_possible
       : null;
 
   let markingRequirement: MarkingRequirement = "unknown";
@@ -114,15 +126,35 @@ export function projectOzonMarkingSignals(input: {
   } else {
     const required = requirementFromList ?? requirementFromExemplar;
     if (required === true) markingRequirement = "required";
-    if (required === false) markingRequirement = "not_required";
+    if (required === false) {
+      // Ozon's optional list means the seller may submit a code even when the
+      // posting does not require one. Expose that as an effective JIT path;
+      // the downstream verified product profile remains the legal gate.
+      markingRequirement = possibleFromList === true || possibleFromExemplar === true
+        ? "required"
+        : "not_required";
+    }
+    if (
+      required === null
+      && (possibleFromList === true || possibleFromExemplar === true)
+    ) {
+      markingRequirement = "required";
+    }
   }
+
+  const exemplarFlowAvailable =
+    requirementFromList === true
+      || requirementFromExemplar === true
+      || possibleFromList === true
+      || possibleFromExemplar === true
+      ? true
+      : possibleFromList === false || possibleFromExemplar === false
+        ? false
+        : null;
 
   return {
     markingRequirement,
-    exemplarFlowAvailable:
-      exemplar && typeof exemplar.is_mandatory_mark_possible === "boolean"
-        ? exemplar.is_mandatory_mark_possible
-        : null,
+    exemplarFlowAvailable,
   };
 }
 

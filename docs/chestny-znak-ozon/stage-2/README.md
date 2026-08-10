@@ -59,6 +59,15 @@ Ozon snapshot сохраняет явную нормализованную пр�
 - `exemplar_flow_available`: `true`, `false` или `null`;
 - posting status/substatus.
 
+Ozon передает два разных списка: обязательные КМ в
+`products_requiring_mandatory_mark` и допустимые КМ в
+`products_with_possible_mandatory_mark`. Для подтвержденного локального
+профиля `required` оба сигнала разрешают JIT-поток: optional SKU сохраняется
+как эффективный `marking_requirement=required` вместе с
+`exemplar_flow_available=true`. Это не меняет правовую классификацию товара:
+её источником остается проверенный товарный профиль и GTIN, а optional-сигнал
+только подтверждает, что Ozon примет код в конкретном FBS posting.
+
 Если Ozon не вернул достаточно данных или его признаки противоречат друг
 другу, сохраняется `unknown`. Такое состояние не разрешит отгрузку после
 реализации shipping gate. Широкий Ozon payload, данные покупателя и полный КМ
