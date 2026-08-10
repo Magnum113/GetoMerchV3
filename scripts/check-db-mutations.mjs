@@ -390,15 +390,23 @@ async function checkAuditTrail() {
 
 async function createTestOrder(source, productId, quantity) {
   const postingNumber = `STAGE7-${source.toUpperCase()}-${token}-${crypto.randomBytes(3).toString("hex")}`;
+  const offerId = `${notesPrefix}-${source}`;
+  const sourceItemKey = `stage7:${Buffer.from(offerId).toString("hex")}`;
   const order = await client.query(`
     INSERT INTO merch_ozon_orders (posting_number, status, source, synced_at)
     VALUES ($1, 'awaiting_packaging', $2, clock_timestamp())
     RETURNING id
   `, [postingNumber, source]);
   await client.query(`
-    INSERT INTO merch_ozon_order_items (order_id, offer_id, quantity, product_id)
-    VALUES ($1, $2, $3, $4)
-  `, [order.rows[0].id, `${notesPrefix}-${source}`, quantity, productId]);
+    INSERT INTO merch_ozon_order_items (
+      order_id,
+      source_item_key,
+      offer_id,
+      quantity,
+      product_id
+    )
+    VALUES ($1, $2, $3, $4, $5)
+  `, [order.rows[0].id, sourceItemKey, offerId, quantity, productId]);
   return { id: order.rows[0].id, postingNumber };
 }
 

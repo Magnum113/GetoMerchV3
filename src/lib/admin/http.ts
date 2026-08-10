@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { safeErrorForLog } from "@/lib/marking/security/redaction";
 
 export type AdminApiErrorCode =
   | "bad_request"
@@ -111,19 +112,4 @@ export function requireUuidParam(value: string | null, name: string) {
     throw new AdminApiError(400, "bad_request", `Invalid ${name} parameter`);
   }
   return value;
-}
-
-function safeErrorForLog(error: unknown) {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message };
-  }
-  if (error && typeof error === "object") {
-    const source = error as Record<string, unknown>;
-    const output: Record<string, unknown> = {};
-    for (const key of ["name", "message", "code", "details", "hint"]) {
-      if (source[key]) output[key] = source[key];
-    }
-    if (Object.keys(output).length > 0) return output;
-  }
-  return { message: String(error) };
 }

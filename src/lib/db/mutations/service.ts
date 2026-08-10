@@ -82,7 +82,9 @@ export async function dispatchServerAdminMutation(
         default:
           if (INVENTORY_ACTIONS.has(action)) return inventoryMutation(query, action, args, checkpoint);
           if (WORKSHOP_ACTIONS.has(action)) return workshopMutation(query, action, args, checkpoint);
-          if (OZON_ACTIONS.has(action)) return ozonMutation(query, action, args, checkpoint);
+          if (OZON_ACTIONS.has(action)) {
+            return ozonMutation(query, action, args, checkpoint, context);
+          }
           if (CATALOG_ACTIONS.has(action)) return catalogMutation(query, action, args);
           throw new DatabaseBusinessError(
             "unsupported_mutation",

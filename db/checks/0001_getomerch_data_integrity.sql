@@ -16,6 +16,44 @@ expected_tables(table_name) as (
     ('merch_workshop_order_items'),
     ('merch_ozon_orders'),
     ('merch_ozon_order_items'),
+    ('merch_fulfillment_orders'),
+    ('merch_fulfillment_order_items'),
+    ('merch_fulfillment_events'),
+    ('merch_marking_trade_items'),
+    ('merch_marking_trade_item_documents'),
+    ('merch_marking_product_profiles'),
+    ('merch_marking_locations'),
+    ('merch_marking_processes'),
+    ('merch_marking_evidence'),
+    ('merch_marking_events'),
+    ('merch_marking_product_profile_channels'),
+    ('merch_marking_profile_backfill_runs'),
+    ('merch_marking_profile_backfill_items'),
+    ('merch_marking_import_batches'),
+    ('merch_marking_import_rows'),
+    ('merch_marking_codes'),
+    ('merch_marking_code_hmacs'),
+    ('merch_marking_units'),
+    ('merch_marking_code_bindings'),
+    ('merch_marking_assignments'),
+    ('merch_marking_ozon_submission_batches'),
+    ('merch_marking_ozon_submissions'),
+    ('merch_marking_crpt_queries'),
+    ('merch_marking_signing_agents'),
+    ('merch_marking_agent_nonces'),
+    ('merch_marking_signature_requests'),
+    ('merch_marking_documents'),
+    ('merch_marking_document_codes'),
+    ('merch_marking_document_confirmations'),
+    ('merch_marking_shipping_gate_evaluations'),
+    ('merch_marking_handovers'),
+    ('merch_marking_handover_units'),
+    ('merch_marking_withdrawal_confirmations'),
+    ('merch_marking_return_cases'),
+    ('merch_marking_return_case_events'),
+    ('merch_marking_return_confirmations'),
+    ('merch_marking_code_orders'),
+    ('merch_marking_code_order_items'),
     ('merch_ozon_finance_operations'),
     ('merch_expense_categories'),
     ('merch_expenses'),
@@ -38,6 +76,44 @@ all_rows(table_name, payload) as materialized (
   union all select 'merch_workshop_order_items', to_jsonb(t) from public.merch_workshop_order_items t
   union all select 'merch_ozon_orders', to_jsonb(t) from public.merch_ozon_orders t
   union all select 'merch_ozon_order_items', to_jsonb(t) from public.merch_ozon_order_items t
+  union all select 'merch_fulfillment_orders', to_jsonb(t) from public.merch_fulfillment_orders t
+  union all select 'merch_fulfillment_order_items', to_jsonb(t) from public.merch_fulfillment_order_items t
+  union all select 'merch_fulfillment_events', to_jsonb(t) from public.merch_fulfillment_events t
+  union all select 'merch_marking_trade_items', to_jsonb(t) from public.merch_marking_trade_items t
+  union all select 'merch_marking_trade_item_documents', to_jsonb(t) from public.merch_marking_trade_item_documents t
+  union all select 'merch_marking_product_profiles', to_jsonb(t) from public.merch_marking_product_profiles t
+  union all select 'merch_marking_locations', to_jsonb(t) from public.merch_marking_locations t
+  union all select 'merch_marking_processes', to_jsonb(t) from public.merch_marking_processes t
+  union all select 'merch_marking_evidence', to_jsonb(t) from public.merch_marking_evidence t
+  union all select 'merch_marking_events', to_jsonb(t) from public.merch_marking_events t
+  union all select 'merch_marking_product_profile_channels', to_jsonb(t) from public.merch_marking_product_profile_channels t
+  union all select 'merch_marking_profile_backfill_runs', to_jsonb(t) from public.merch_marking_profile_backfill_runs t
+  union all select 'merch_marking_profile_backfill_items', to_jsonb(t) from public.merch_marking_profile_backfill_items t
+  union all select 'merch_marking_import_batches', to_jsonb(t) from public.merch_marking_import_batches t
+  union all select 'merch_marking_import_rows', to_jsonb(t) from public.merch_marking_import_rows t
+  union all select 'merch_marking_codes', to_jsonb(t) from public.merch_marking_codes t
+  union all select 'merch_marking_code_hmacs', to_jsonb(t) from public.merch_marking_code_hmacs t
+  union all select 'merch_marking_units', to_jsonb(t) from public.merch_marking_units t
+  union all select 'merch_marking_code_bindings', to_jsonb(t) from public.merch_marking_code_bindings t
+  union all select 'merch_marking_assignments', to_jsonb(t) from public.merch_marking_assignments t
+  union all select 'merch_marking_ozon_submission_batches', to_jsonb(t) from public.merch_marking_ozon_submission_batches t
+  union all select 'merch_marking_ozon_submissions', to_jsonb(t) from public.merch_marking_ozon_submissions t
+  union all select 'merch_marking_crpt_queries', to_jsonb(t) from public.merch_marking_crpt_queries t
+  union all select 'merch_marking_signing_agents', to_jsonb(t) from public.merch_marking_signing_agents t
+  union all select 'merch_marking_agent_nonces', to_jsonb(t) from public.merch_marking_agent_nonces t
+  union all select 'merch_marking_signature_requests', to_jsonb(t) from public.merch_marking_signature_requests t
+  union all select 'merch_marking_documents', to_jsonb(t) from public.merch_marking_documents t
+  union all select 'merch_marking_document_codes', to_jsonb(t) from public.merch_marking_document_codes t
+  union all select 'merch_marking_document_confirmations', to_jsonb(t) from public.merch_marking_document_confirmations t
+  union all select 'merch_marking_shipping_gate_evaluations', to_jsonb(t) from public.merch_marking_shipping_gate_evaluations t
+  union all select 'merch_marking_handovers', to_jsonb(t) from public.merch_marking_handovers t
+  union all select 'merch_marking_handover_units', to_jsonb(t) from public.merch_marking_handover_units t
+  union all select 'merch_marking_withdrawal_confirmations', to_jsonb(t) from public.merch_marking_withdrawal_confirmations t
+  union all select 'merch_marking_return_cases', to_jsonb(t) from public.merch_marking_return_cases t
+  union all select 'merch_marking_return_case_events', to_jsonb(t) from public.merch_marking_return_case_events t
+  union all select 'merch_marking_return_confirmations', to_jsonb(t) from public.merch_marking_return_confirmations t
+  union all select 'merch_marking_code_orders', to_jsonb(t) from public.merch_marking_code_orders t
+  union all select 'merch_marking_code_order_items', to_jsonb(t) from public.merch_marking_code_order_items t
   union all select 'merch_ozon_finance_operations', to_jsonb(t) from public.merch_ozon_finance_operations t
   union all select 'merch_expense_categories', to_jsonb(t) from public.merch_expense_categories t
   union all select 'merch_expenses', to_jsonb(t) from public.merch_expenses t
@@ -91,7 +167,25 @@ foreign_keys as (
 foreign_key_shape_checks as (
   select
     'foreign_key_shape:' || conname as check_name,
-    case when child_key_count = 1 and parent_key_count = 1 then 0 else 1 end::bigint as actual,
+    case
+      when child_key_count = 1 and parent_key_count = 1 then 0
+      when conname = 'merch_fulfillment_events_item_order_fkey'
+        and child_key_count = 2
+        and parent_key_count = 2
+      then 0
+      when conname = 'merch_marking_processes_item_order_fkey'
+        and child_key_count = 2
+        and parent_key_count = 2
+      then 0
+      when conname in (
+        'merch_marking_assignments_unit_profile_fkey',
+        'merch_marking_assignments_binding_unit_fkey'
+      )
+        and child_key_count = 2
+        and parent_key_count = 2
+      then 0
+      else 1
+    end::bigint as actual,
     0::bigint as expected
   from foreign_keys
 ),
@@ -116,7 +210,8 @@ foreign_key_checks as (
   group by fk.conname
 ),
 static_checks(check_name, actual, expected) as (
-  select 'working_table_count', count(*)::bigint, 20::bigint
+  select 'working_table_count', count(*)::bigint,
+    (select count(*)::bigint from expected_tables)
   from pg_tables
   where schemaname = 'public' and tablename in (select table_name from expected_tables)
   union all

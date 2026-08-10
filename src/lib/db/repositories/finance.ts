@@ -76,7 +76,9 @@ export class PostgresFinanceRepository implements FinanceRepository {
         `
           SELECT id, ozon_sku, product_id
           FROM merch_ozon_order_items
-          WHERE ozon_sku IS NOT NULL AND product_id IS NOT NULL
+          WHERE source_active = true
+            AND ozon_sku IS NOT NULL
+            AND product_id IS NOT NULL
           ORDER BY ozon_sku COLLATE "C", id
         `,
       )

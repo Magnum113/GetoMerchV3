@@ -1,0 +1,11 @@
+{
+  "_fixture": {
+    "source": "official_true_api_contract",
+    "captured_at": "2026-07-26",
+    "contains_signatures": false
+  },
+  "document_format": "MANUAL",
+  "product_document": "SANITIZED_BASE64_PRODUCT_DOCUMENT",
+  "type": "LP_INTRODUCE_GOODS",
+  "signature": "SANITIZED_BASE64_DETACHED_SIGNATURE"
+}

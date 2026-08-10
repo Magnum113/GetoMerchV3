@@ -22,6 +22,7 @@ import {
   Receipt,
   DownloadCloud,
   LogOut,
+  ScanLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ type NavSection = { label: string; items: NavItem[] };
 const NAV: NavItem[] = [
   { href: "/", label: "Аналитика", icon: LineChart },
   { href: "/orders", label: "Заказы Ozon", icon: ShoppingBag },
+  { href: "/marking", label: "Честный знак", icon: ScanLine },
   { href: "/ozon/import", label: "Импорт Ozon", icon: DownloadCloud },
   { href: "/inventory", label: "Остатки", icon: WarehouseIcon },
   { href: "/products", label: "Каталог SKU", icon: Package },

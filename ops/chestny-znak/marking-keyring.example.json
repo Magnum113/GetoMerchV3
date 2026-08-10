@@ -1,0 +1,10 @@
+{
+  "currentEncryptionKeyVersion": 1,
+  "encryptionKeys": {
+    "1": "REPLACE_WITH_BASE64_32_BYTE_ENCRYPTION_KEY"
+  },
+  "currentHmacKeyVersion": 1,
+  "hmacKeys": {
+    "1": "REPLACE_WITH_BASE64_32_BYTE_HMAC_KEY"
+  }
+}

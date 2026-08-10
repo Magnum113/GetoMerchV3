@@ -13,6 +13,7 @@ const PUBLIC_PATHS = new Set([
   "/icon.svg",
   "/robots.txt",
   "/sitemap.xml",
+  "/api/marking-agent/v1",
 ]);
 
 const INTERNAL_SERVICE_PATHS = new Set([
@@ -29,6 +30,7 @@ const MAINTENANCE_SAFE_MUTATION_PATHS = new Set([
   "/api/admin/rpc",
   "/api/admin/products/blank-matches",
   "/api/komui/preview",
+  "/api/marking-agent/v1",
 ]);
 
 export async function middleware(request: NextRequest) {

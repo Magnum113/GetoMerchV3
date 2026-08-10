@@ -1,0 +1,38 @@
+{
+  "_fixture": {
+    "source": "official Ozon Seller API documentation",
+    "contract": "POST /v6/fbs/posting/product/exemplar/set",
+    "verification": "authorized_browser_read_only",
+    "contains_full_marking_codes": false
+  },
+  "request": {
+    "multi_box_qty": 0,
+    "posting_number": "SANITIZED-FBS-POSTING-1",
+    "products": [
+      {
+        "exemplars": [
+          {
+            "exemplar_id": 1001,
+            "gtd": "",
+            "is_gtd_absent": true,
+            "is_rnpt_absent": true,
+            "marks": [
+              {
+                "mark": "SANITIZED_FULL_MARKING_CODE",
+                "mark_type": "mandatory_mark"
+              }
+            ],
+            "rnpt": "",
+            "weight": 0
+          }
+        ],
+        "product_id": 900000001
+      }
+    ]
+  },
+  "success_response": {
+    "http_status": 200,
+    "body": null,
+    "processing": "asynchronous"
+  }
+}

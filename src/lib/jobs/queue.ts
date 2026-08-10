@@ -14,6 +14,11 @@ import {
   type JobWithEvents,
 } from "@/lib/jobs/types";
 import { assertAdminWritesEnabled } from "@/lib/admin/maintenance";
+import {
+  containsSensitiveMarkingData,
+  redactSensitiveData,
+  redactText,
+} from "@/lib/marking/security/redaction";
 
 type JobRow = {
   id: string;
@@ -40,6 +45,8 @@ type JobRow = {
   updated_at: Date | string;
 };
 
+export type JobQueueScope = "all" | "marking";
+
 const JOB_COLUMNS = `
   id, type, status, dedupe_key, request_hash, payload, result, progress,
   actor, request_id, attempt_count, max_attempts, available_at, locked_by,
@@ -47,15 +54,26 @@ const JOB_COLUMNS = `
   error_message, created_at, updated_at
 `;
 
-export async function enqueueJob(input: EnqueueJobInput) {
+export async function enqueueJob(
+  input: EnqueueJobInput,
+  dependencies: { query?: DatabaseQueryExecutor; scope?: JobQueueScope } = {},
+) {
   assertAdminWritesEnabled();
   validateEnqueueInput(input);
   const payload = input.payload ?? {};
+  if (containsSensitiveMarkingData(payload)) {
+    throw new DatabaseBusinessError(
+      "sensitive_job_payload",
+      "Полные коды маркировки и секреты нельзя помещать в очередь заданий.",
+      400,
+    );
+  }
   const requestHash = digest({ type: input.type, dedupeKey: input.dedupeKey, payload });
-
-  return withServerDatabaseTransaction(async (query) => {
+  const scope = dependencies.scope ?? "all";
+  const relation = queueRelation(scope);
+  const operation = async (query: DatabaseQueryExecutor) => {
     await advisoryLock(query, `job-idempotency:${input.idempotencyKey}`);
-    const existingByRequest = await selectByIdempotency(query, input.idempotencyKey);
+    const existingByRequest = await selectByIdempotency(query, input.idempotencyKey, scope);
     if (existingByRequest) {
       if (existingByRequest.request_hash !== requestHash) {
         throw new DatabaseBusinessError(
@@ -71,7 +89,7 @@ export async function enqueueJob(input: EnqueueJobInput) {
       await query<JobRow>(
         `
           SELECT ${JOB_COLUMNS}
-          FROM getomerch_jobs.jobs
+          FROM ${relation}
           WHERE type = $1 AND dedupe_key = $2
             AND status = ANY (ARRAY['queued'::text, 'running'::text])
           ORDER BY created_at
@@ -86,7 +104,7 @@ export async function enqueueJob(input: EnqueueJobInput) {
     const job = (
       await query<JobRow>(
         `
-          INSERT INTO getomerch_jobs.jobs (
+          INSERT INTO ${relation} (
             type, dedupe_key, idempotency_key, request_hash, payload,
             actor, request_id, max_attempts
           )
@@ -105,9 +123,12 @@ export async function enqueueJob(input: EnqueueJobInput) {
         ],
       )
     ).rows[0];
-    await insertEvent(query, job.id, "info", "queued", { type: job.type });
+    await insertEvent(query, job.id, "info", "queued", { type: job.type }, scope);
     return { job: mapJob(job), reused: false };
-  });
+  };
+  return dependencies.query
+    ? operation(dependencies.query)
+    : withServerDatabaseTransaction(operation);
 }
 
 export async function getJob(jobId: string): Promise<JobWithEvents | null> {
@@ -166,6 +187,13 @@ export async function cancelJob(jobId: string, actor: string) {
     ).rows[0];
     if (!job) return null;
     if (["succeeded", "failed", "cancelled"].includes(job.status)) return mapJob(job);
+    if (await isWithdrawalLifecycleJob(query, job)) {
+      throw new DatabaseBusinessError(
+        "marking_withdrawal_cancel_forbidden",
+        "Вывод из оборота после фактической передачи и проверку его статуса нельзя отменить. Дождитесь результата или выполните ручную сверку.",
+        409,
+      );
+    }
 
     const nextStatus = job.status === "queued" ? "cancelled" : job.status;
     const updated = (
@@ -187,13 +215,42 @@ export async function cancelJob(jobId: string, actor: string) {
   });
 }
 
-export async function claimNextJob(workerId: string, types: JobType[] = [...JOB_TYPES]) {
+async function isWithdrawalLifecycleJob(
+  query: DatabaseQueryExecutor,
+  job: JobRow,
+) {
+  if (job.type === "marking_withdrawal_submit"
+      || job.type === "marking_return_to_circulation_submit") return true;
+  if (job.type !== "marking_crpt_document_poll") return false;
+  const documentId = typeof job.payload.documentId === "string"
+    ? job.payload.documentId
+    : null;
+  if (!documentId || !/^[0-9a-f-]{36}$/i.test(documentId)) return false;
+  return (await query<{ withdrawal: boolean }>(
+    `SELECT EXISTS (
+      SELECT 1 FROM getomerch_marking.document_safe
+      WHERE id = $1::uuid
+        AND document_type = ANY (ARRAY[
+          'withdrawal_remote_sale'::text, 'return_to_circulation'::text
+        ])
+    ) AS withdrawal`,
+    [documentId],
+  )).rows[0]?.withdrawal === true;
+}
+
+export async function claimNextJob(
+  workerId: string,
+  types: JobType[] = [...JOB_TYPES],
+  options: { scope?: JobQueueScope } = {},
+) {
+  const scope = options.scope ?? "all";
+  const relation = queueRelation(scope);
   return withServerDatabaseTransaction(async (query) => {
     const candidate = (
       await query<{ id: string }>(
         `
           SELECT id
-          FROM getomerch_jobs.jobs
+          FROM ${relation}
           WHERE status = 'queued'
             AND available_at <= clock_timestamp()
             AND cancel_requested_at IS NULL
@@ -211,7 +268,7 @@ export async function claimNextJob(workerId: string, types: JobType[] = [...JOB_
     const job = (
       await query<JobRow>(
         `
-          UPDATE getomerch_jobs.jobs
+          UPDATE ${relation}
           SET status = 'running',
               attempt_count = attempt_count + 1,
               locked_by = $2,
@@ -230,7 +287,7 @@ export async function claimNextJob(workerId: string, types: JobType[] = [...JOB_
     await insertEvent(query, job.id, "info", "started", {
       workerId,
       attempt: job.attempt_count,
-    });
+    }, scope);
     return mapJob(job);
   });
 }
@@ -240,26 +297,35 @@ export async function updateJobProgress(
   workerId: string,
   progress: Record<string, unknown>,
   event?: string,
+  options: { scope?: JobQueueScope } = {},
 ) {
+  const scope = options.scope ?? "all";
+  const relation = queueRelation(scope);
+  const safeProgress = safeRecord(progress);
   await withServerDatabaseTransaction(async (query) => {
     const updated = await query<{ id: string }>(
       `
-        UPDATE getomerch_jobs.jobs
+        UPDATE ${relation}
         SET progress = $3::jsonb, heartbeat_at = clock_timestamp(), updated_at = clock_timestamp()
         WHERE id = $1::uuid AND status = 'running' AND locked_by = $2
         RETURNING id
       `,
-      [jobId, workerId, JSON.stringify(progress)],
+      [jobId, workerId, JSON.stringify(safeProgress)],
     );
     if (updated.rowCount !== 1) throw lostJobLock();
-    if (event) await insertEvent(query, jobId, "info", event, progress);
+    if (event) await insertEvent(query, jobId, "info", event, safeProgress, scope);
   });
 }
 
-export async function heartbeatJob(jobId: string, workerId: string) {
+export async function heartbeatJob(
+  jobId: string,
+  workerId: string,
+  options: { scope?: JobQueueScope } = {},
+) {
+  const relation = queueRelation(options.scope ?? "all");
   const updated = await queryServerDatabase<{ cancel_requested_at: Date | string | null }>(
     `
-      UPDATE getomerch_jobs.jobs
+      UPDATE ${relation}
       SET heartbeat_at = clock_timestamp(), updated_at = clock_timestamp()
       WHERE id = $1::uuid AND status = 'running' AND locked_by = $2
       RETURNING cancel_requested_at
@@ -270,11 +336,19 @@ export async function heartbeatJob(jobId: string, workerId: string) {
   return updated.rows[0].cancel_requested_at !== null;
 }
 
-export async function completeJob(jobId: string, workerId: string, result: unknown) {
+export async function completeJob(
+  jobId: string,
+  workerId: string,
+  result: unknown,
+  options: { scope?: JobQueueScope } = {},
+) {
+  const scope = options.scope ?? "all";
+  const relation = queueRelation(scope);
+  const safeResult = redactSensitiveData(result);
   await withServerDatabaseTransaction(async (query) => {
     const updated = await query<{ id: string }>(
       `
-        UPDATE getomerch_jobs.jobs
+        UPDATE ${relation}
         SET status = 'succeeded', result = $3::jsonb, progress = $3::jsonb,
             finished_at = clock_timestamp(), heartbeat_at = clock_timestamp(),
             locked_by = NULL, locked_at = NULL, updated_at = clock_timestamp()
@@ -282,10 +356,10 @@ export async function completeJob(jobId: string, workerId: string, result: unkno
           AND cancel_requested_at IS NULL
         RETURNING id
       `,
-      [jobId, workerId, JSON.stringify(result ?? null)],
+      [jobId, workerId, JSON.stringify(safeResult ?? null)],
     );
     if (updated.rowCount !== 1) throw lostJobLock();
-    await insertEvent(query, jobId, "info", "succeeded", summaryDetails(result));
+    await insertEvent(query, jobId, "info", "succeeded", summaryDetails(safeResult), scope);
   });
 }
 
@@ -294,11 +368,14 @@ export async function failJob(
   workerId: string,
   error: unknown,
   retryable: boolean,
+  options: { scope?: JobQueueScope } = {},
 ) {
+  const scope = options.scope ?? "all";
+  const relation = queueRelation(scope);
   return withServerDatabaseTransaction(async (query) => {
     const current = (
       await query<JobRow>(
-        `SELECT ${JOB_COLUMNS} FROM getomerch_jobs.jobs WHERE id = $1::uuid FOR UPDATE`,
+        `SELECT ${JOB_COLUMNS} FROM ${relation} WHERE id = $1::uuid FOR UPDATE`,
         [jobId],
       )
     ).rows[0];
@@ -314,7 +391,7 @@ export async function failJob(
     const updated = (
       await query<JobRow>(
         `
-          UPDATE getomerch_jobs.jobs
+          UPDATE ${relation}
           SET status = $3,
               available_at = CASE WHEN $3 = 'queued'
                 THEN clock_timestamp() + make_interval(secs => $4)
@@ -338,18 +415,28 @@ export async function failJob(
       jobId,
       willRetry ? "warning" : "error",
       cancelled ? "cancelled" : willRetry ? "retry_scheduled" : "failed",
-      { code: safe.code, attempt: current.attempt_count, delaySeconds: willRetry ? delaySeconds : 0 },
+      {
+        errorClass: safe.code,
+        attempt: current.attempt_count,
+        delaySeconds: willRetry ? delaySeconds : 0,
+      },
+      scope,
     );
     return mapJob(updated);
   });
 }
 
-export async function recoverStaleJobs(staleAfterSeconds = 120) {
+export async function recoverStaleJobs(
+  staleAfterSeconds = 120,
+  options: { scope?: JobQueueScope } = {},
+) {
+  const scope = options.scope ?? "all";
+  const relation = queueRelation(scope);
   const seconds = Math.max(30, Math.min(3600, Math.trunc(staleAfterSeconds)));
   return withServerDatabaseTransaction(async (query) => {
     const rows = await query<JobRow>(
       `
-        UPDATE getomerch_jobs.jobs
+        UPDATE ${relation}
         SET status = CASE
               WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
               WHEN attempt_count < max_attempts THEN 'queued'
@@ -380,6 +467,7 @@ export async function recoverStaleJobs(staleAfterSeconds = 120) {
         row.status === "queued" ? "warning" : "error",
         row.status === "queued" ? "stale_requeued" : "stale_failed",
         { attempt: row.attempt_count },
+        scope,
       );
     }
     return rows.rows.map(mapJob);
@@ -417,10 +505,14 @@ function validateEnqueueInput(input: EnqueueJobInput) {
   }
 }
 
-async function selectByIdempotency(query: DatabaseQueryExecutor, idempotencyKey: string) {
+async function selectByIdempotency(
+  query: DatabaseQueryExecutor,
+  idempotencyKey: string,
+  scope: JobQueueScope,
+) {
   return (
     await query<JobRow>(
-      `SELECT ${JOB_COLUMNS} FROM getomerch_jobs.jobs WHERE idempotency_key = $1 FOR UPDATE`,
+      `SELECT ${JOB_COLUMNS} FROM ${queueRelation(scope)} WHERE idempotency_key = $1 FOR UPDATE`,
       [idempotencyKey],
     )
   ).rows[0];
@@ -436,14 +528,29 @@ async function insertEvent(
   level: JobEvent["level"],
   event: string,
   details: Record<string, unknown>,
+  scope: JobQueueScope = "all",
 ) {
+  const safeDetails = safeRecord(details);
+  if (scope === "marking") {
+    await query(
+      `SELECT getomerch_jobs.append_marking_job_event($1::uuid,$2,$3,$4::jsonb)`,
+      [jobId, level, event, JSON.stringify(safeDetails)],
+    );
+    return;
+  }
   await query(
     `
       INSERT INTO getomerch_jobs.job_events (job_id, level, event, details)
       VALUES ($1::uuid, $2, $3, $4::jsonb)
     `,
-    [jobId, level, event, JSON.stringify(details)],
+    [jobId, level, event, JSON.stringify(safeDetails)],
   );
+}
+
+function queueRelation(scope: JobQueueScope) {
+  return scope === "marking"
+    ? "getomerch_jobs.marking_jobs"
+    : "getomerch_jobs.jobs";
 }
 
 function mapJob(row: JobRow): BackgroundJob {
@@ -499,7 +606,10 @@ function safeJobError(error: unknown) {
   const rawCode = typeof source?.code === "string" ? source.code : "job_failed";
   const code = /^[A-Za-z0-9_:-]{2,80}$/.test(rawCode) ? rawCode : "job_failed";
   const rawMessage = error instanceof Error ? error.message : typeof source?.message === "string" ? source.message : String(error);
-  return { code, message: rawMessage.replace(/[\r\n\t]+/g, " ").slice(0, 500) };
+  return {
+    code,
+    message: redactText(rawMessage).replace(/[\r\n\t]+/g, " ").slice(0, 500),
+  };
 }
 
 function summaryDetails(result: unknown): Record<string, unknown> {
@@ -514,4 +624,10 @@ function summaryDetails(result: unknown): Record<string, unknown> {
 
 function lostJobLock() {
   return new DatabaseBusinessError("job_lock_lost", "Worker потерял блокировку задания.");
+}
+
+function safeRecord(value: Record<string, unknown>) {
+  const redacted = redactSensitiveData(value);
+  if (!redacted || typeof redacted !== "object" || Array.isArray(redacted)) return {};
+  return redacted as Record<string, unknown>;
 }

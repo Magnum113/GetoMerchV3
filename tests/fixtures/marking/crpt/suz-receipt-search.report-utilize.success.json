@@ -1,0 +1,39 @@
+{
+  "_fixture": {
+    "source": "official_suz_api_3_0_contract",
+    "captured_at": "2026-07-26",
+    "contains_full_marking_codes": false
+  },
+  "totalCount": 1,
+  "results": [
+    {
+      "resultDocId": "00000000-0000-4000-8000-000000000030",
+      "sourceDocId": "00000000-0000-4000-8000-000000000031",
+      "state": "SUCCESS",
+      "code": 0,
+      "description": "Document was successfully processed",
+      "workflow": "REPORT_UTILIZE",
+      "workflowVersion": 1,
+      "operations": [
+        {
+          "operationId": "00000000-0000-4000-8000-000000000032",
+          "operationType": "GET_CODES_GENERATED_REPORT",
+          "details": {
+            "state": "SUCCESS",
+            "quantity": 10
+          }
+        },
+        {
+          "operationId": "00000000-0000-4000-8000-000000000033",
+          "operationType": "RNMS_GIS_PROCESSED",
+          "details": {
+            "state": "SUCCESS",
+            "gtin": "04600000000000",
+            "processed": 10,
+            "total": 10
+          }
+        }
+      ]
+    }
+  ]
+}

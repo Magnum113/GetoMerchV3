@@ -1,0 +1,9 @@
+{
+  "thumbprint": "REPLACE_WITH_CERTIFICATE_THUMBPRINT_WITHOUT_SPACES",
+  "subject": "REPLACE_WITH_CERTIFICATE_SUBJECT",
+  "inn": "REPLACE_WITH_10_OR_12_DIGIT_INN",
+  "ogrn": null,
+  "validFrom": "2026-01-01T00:00:00.000Z",
+  "validTo": "2027-01-01T00:00:00.000Z",
+  "algorithm": "GOST R 34.10-2012-256"
+}

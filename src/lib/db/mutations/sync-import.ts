@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { DatabaseQueryExecutor } from "@/lib/db/pool";
+import type { MarkingRequirement } from "@/lib/fulfillment/ozon-domain";
+import { upsertOzonFbsFulfillmentProjection } from "@/lib/fulfillment/ozon-projection";
 import { updateColumns } from "@/lib/db/mutations/crud";
 import { runServerMutation, type ServerMutationContext } from "@/lib/db/mutations/runner";
 import type { ImportAction } from "@/lib/ozon-import";
@@ -37,12 +39,16 @@ export type OzonOrderSnapshot = {
   syncedAt: string;
   replaceItems: boolean;
   items: Array<{
+    sourceItemKey: string;
     offerId: string;
     ozonSku?: string | null;
+    ozonProductId?: string | null;
     name?: string | null;
     quantity: number;
     price?: number | null;
     productId?: string | null;
+    markingRequirement: MarkingRequirement;
+    exemplarFlowAvailable: boolean | null;
   }>;
 };
 
@@ -94,6 +100,12 @@ export async function syncOzonOrderSnapshot(
           [input.postingNumber],
         )
       ).rows[0] ?? null;
+      if (before?.source && before.source !== input.source) {
+        conflict(
+          "ozon_order_source_conflict",
+          "Источник существующего отправления Ozon не совпадает с новым снимком.",
+        );
+      }
       const order = (
         await query<{ id: string; created_at: string; shipped_at: string | null }>(
           `
@@ -154,56 +166,110 @@ export async function syncOzonOrderSnapshot(
       checkpoint("after_order");
       let itemsReplaced = false;
       if (input.replaceItems && !order.shipped_at) {
-        await query("DELETE FROM merch_ozon_order_items WHERE order_id = $1::uuid", [order.id]);
-        checkpoint("after_items_delete");
         if (input.items.length > 0) {
           await query(
             `
               INSERT INTO merch_ozon_order_items (
                 order_id,
+                source_item_key,
                 offer_id,
                 ozon_sku,
+                ozon_product_id,
                 name,
                 quantity,
                 price,
-                product_id
+                product_id,
+                marking_requirement,
+                exemplar_flow_available,
+                source_active,
+                updated_at
               )
               SELECT
                 $1::uuid,
+                item.source_item_key,
                 item.offer_id,
                 item.ozon_sku,
+                item.ozon_product_id,
                 item.name,
                 item.quantity,
                 item.price,
-                item.product_id
+                item.product_id,
+                item.marking_requirement,
+                item.exemplar_flow_available,
+                true,
+                clock_timestamp()
               FROM jsonb_to_recordset($2::jsonb) AS item(
+                source_item_key text,
                 offer_id text,
                 ozon_sku text,
+                ozon_product_id text,
                 name text,
                 quantity integer,
                 price numeric,
-                product_id uuid
+                product_id uuid,
+                marking_requirement text,
+                exemplar_flow_available boolean
               )
+              ON CONFLICT (order_id, source_item_key) DO UPDATE SET
+                offer_id = EXCLUDED.offer_id,
+                ozon_sku = EXCLUDED.ozon_sku,
+                ozon_product_id = EXCLUDED.ozon_product_id,
+                name = EXCLUDED.name,
+                quantity = EXCLUDED.quantity,
+                price = EXCLUDED.price,
+                product_id = EXCLUDED.product_id,
+                marking_requirement = EXCLUDED.marking_requirement,
+                exemplar_flow_available = EXCLUDED.exemplar_flow_available,
+                source_active = true,
+                updated_at = clock_timestamp()
             `,
             [order.id, JSON.stringify(input.items.map((item) => ({
+              source_item_key: item.sourceItemKey,
               offer_id: item.offerId,
               ozon_sku: item.ozonSku,
+              ozon_product_id: item.ozonProductId,
               name: item.name,
               quantity: item.quantity,
               price: item.price,
               product_id: item.productId,
+              marking_requirement: item.markingRequirement,
+              exemplar_flow_available: item.exemplarFlowAvailable,
             })))],
           );
         }
+        await query(
+          `
+            UPDATE merch_ozon_order_items
+            SET source_active = false, updated_at = clock_timestamp()
+            WHERE order_id = $1::uuid
+              AND source_active = true
+              AND NOT (source_item_key = ANY ($2::text[]))
+          `,
+          [order.id, input.items.map((item) => item.sourceItemKey)],
+        );
         itemsReplaced = true;
       }
       checkpoint("after_items");
+      const fulfillment = input.source === "fbs"
+        ? await upsertOzonFbsFulfillmentProjection(query, {
+            ozonOrderId: order.id,
+            postingNumber: input.postingNumber,
+            externalOrderId: input.orderId == null ? null : String(input.orderId),
+            status: input.status,
+            substatus: input.substatus ?? null,
+            sourceCreatedAt: input.ozonCreatedAt ?? input.inProcessAt ?? null,
+            syncedAt: input.syncedAt,
+          })
+        : null;
+      checkpoint("after_fulfillment");
       const result = {
         id: order.id,
         postingNumber: input.postingNumber,
         created: before === null,
         itemsReplaced,
         itemCount: input.items.length,
+        fulfillmentOrderId: fulfillment?.fulfillmentOrderId ?? null,
+        fulfillmentItemCount: fulfillment?.itemCount ?? 0,
       };
       return {
         data: result,
@@ -516,12 +582,27 @@ function parseOzonSnapshot(snapshot: OzonOrderSnapshot): OzonOrderSnapshot {
     items: input.items.map((rawItem, index) => {
       const item = objectValue(rawItem, `items[${index}]`);
       return {
+        sourceItemKey: stringValue(item.sourceItemKey, `items[${index}].sourceItemKey`, 1000),
         offerId: stringValue(item.offerId, `items[${index}].offerId`, 300),
         ozonSku: optionalString(item.ozonSku, `items[${index}].ozonSku`, 100),
+        ozonProductId: optionalString(
+          item.ozonProductId,
+          `items[${index}].ozonProductId`,
+          200,
+        ),
         name: optionalString(item.name, `items[${index}].name`, 1000),
         quantity: positiveInteger(item.quantity, `items[${index}].quantity`),
         price: moneyValue(item.price, `items[${index}].price`),
         productId: item.productId == null ? null : uuidValue(item.productId, `items[${index}].productId`),
+        markingRequirement: oneOf(
+          item.markingRequirement,
+          ["unknown", "required", "not_required"] as const,
+          `items[${index}].markingRequirement`,
+        ),
+        exemplarFlowAvailable: optionalBoolean(
+          item.exemplarFlowAvailable,
+          `items[${index}].exemplarFlowAvailable`,
+        ),
       };
     }),
   };
@@ -539,6 +620,14 @@ function optionalInteger(value: unknown, name: string) {
   if (value == null || value === "") return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     conflict("invalid_integer", `${name}: некорректное целое число.`);
+  }
+  return value;
+}
+
+function optionalBoolean(value: unknown, name: string) {
+  if (value == null) return null;
+  if (typeof value !== "boolean") {
+    conflict("invalid_boolean", `${name}: ожидалось логическое значение.`);
   }
   return value;
 }

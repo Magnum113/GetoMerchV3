@@ -1,0 +1,9 @@
+{
+  "_fixture": {
+    "source": "official_true_api_contract",
+    "captured_at": "2026-07-26",
+    "contains_secrets": false
+  },
+  "uuid": "00000000-0000-4000-8000-000000000001",
+  "data": "SANITIZED_CHALLENGE_DATA"
+}

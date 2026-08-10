@@ -1,0 +1,22 @@
+{
+  "_fixture": {
+    "source": "official_suz_api_3_0_contract",
+    "captured_at": "2026-07-26",
+    "contains_secrets": false,
+    "contains_full_marking_codes": false
+  },
+  "productGroup": "lp",
+  "products": [
+    {
+      "gtin": "04600000000000",
+      "quantity": 10,
+      "serialNumberType": "OPERATOR",
+      "templateId": 10,
+      "cisType": "UNIT"
+    }
+  ],
+  "attributes": {
+    "releaseMethodType": "PRODUCTION",
+    "createMethodType": "SELF_MADE"
+  }
+}

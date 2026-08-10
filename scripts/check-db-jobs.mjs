@@ -307,10 +307,17 @@ async function prepareOrdersFixture(product, testToken) {
     RETURNING id
   `, [postingNumber]);
   await client.query("DELETE FROM merch_ozon_order_items WHERE order_id = $1", [order.rows[0].id]);
+  const sourceItemKey = `stage8:${Buffer.from(product.sku).toString("hex")}`;
   await client.query(`
-    INSERT INTO merch_ozon_order_items (order_id, offer_id, quantity, product_id)
-    VALUES ($1, $2, 1, $3)
-  `, [order.rows[0].id, product.sku, product.id]);
+    INSERT INTO merch_ozon_order_items (
+      order_id,
+      source_item_key,
+      offer_id,
+      quantity,
+      product_id
+    )
+    VALUES ($1, $2, $3, 1, $4)
+  `, [order.rows[0].id, sourceItemKey, product.sku, product.id]);
 }
 
 async function loadFixture() {

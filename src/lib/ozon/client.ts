@@ -1,5 +1,7 @@
 import "server-only";
 
+import { redactText } from "@/lib/marking/security/redaction";
+
 const OZON_BASE_URL = "https://api-seller.ozon.ru";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 4;
@@ -168,7 +170,7 @@ function parseRetryAfter(value: string | null) {
 }
 
 function sanitizeBody(value: string) {
-  return value.replace(/[\r\n\t]+/g, " ").slice(0, 300);
+  return redactText(value).replace(/[\r\n\t]+/g, " ").slice(0, 300);
 }
 
 function clampInteger(value: number, min: number, max: number) {

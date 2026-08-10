@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/mutations/inventory";
 import { produceInternal } from "@/lib/db/mutations/inventory-actions";
 import type { MutationOutcome } from "@/lib/db/mutations/runner";
+import type { ServerMutationContext } from "@/lib/db/mutations/runner";
 import {
   createWorkshopOrderInternal,
   updateWorkshopOrderStatusInternal,
@@ -20,6 +21,15 @@ import {
   objectValue,
   uuidValue,
 } from "@/lib/db/mutations/validation";
+import { enqueueJob } from "@/lib/jobs/queue";
+import { getMarkingRuntimeConfig } from "@/lib/marking/config";
+import {
+  evaluateShippingGate,
+  hasRequiredMarking,
+  hasShippingHandover,
+  recordShippingHandover,
+  type ShippingGateEvaluation,
+} from "@/lib/marking/repositories/shipping";
 
 type Checkpoint = (name: string) => void;
 
@@ -31,6 +41,7 @@ type OzonOrderRow = {
   shipped_at: string | null;
   shipped_from_warehouse_id: string | null;
   workshop_order_id: string | null;
+  fulfillment_order_id: string | null;
 };
 
 type OzonItemRow = {
@@ -57,12 +68,15 @@ export async function ozonMutation(
   action: string,
   args: unknown[],
   checkpoint: Checkpoint,
+  context: ServerMutationContext,
 ): Promise<MutationOutcome<unknown>> {
   switch (action) {
     case "shipOzonOrder": {
       const orderId = uuidValue(args[0], "orderId");
       const preferredWarehouseId = args[1] == null ? null : uuidValue(args[1], "preferredWarehouseId");
-      const result = await shipOzonOrderInternal(query, orderId, preferredWarehouseId, checkpoint);
+      const result = await shipOzonOrderInternal(
+        query, orderId, preferredWarehouseId, checkpoint, context,
+      );
       return { data: null, audit: ozonAudit(result) };
     }
     case "unshipOzonOrder": {
@@ -72,9 +86,9 @@ export async function ozonMutation(
     case "createWorkshopOrderFromOzon":
       return createWorkshopOrderFromOzon(query, args[0], checkpoint);
     case "fulfillOzonViaWorkshop":
-      return fulfillViaWorkshop(query, args[0], checkpoint);
+      return fulfillViaWorkshop(query, args[0], checkpoint, context);
     case "fulfillOzonViaProduction":
-      return fulfillViaProduction(query, args[0], checkpoint);
+      return fulfillViaProduction(query, args[0], checkpoint, context);
     default:
       conflict("unsupported_mutation", `Server mutation ${action} не реализована.`);
   }
@@ -85,6 +99,7 @@ export async function shipOzonOrderInternal(
   orderId: string,
   preferredWarehouseId: string | null,
   checkpoint: Checkpoint,
+  context: ServerMutationContext,
 ) {
   const { order, items } = await loadOrderForUpdate(query, orderId);
   assertFbs(order);
@@ -92,6 +107,34 @@ export async function shipOzonOrderInternal(
   if (items.length === 0) conflict("ozon_empty_order", "В заказе Ozon нет позиций.");
   for (const item of items) {
     if (!item.product_id) conflict("ozon_product_unmatched", `Не сопоставлен товар для ${item.offer_id}.`);
+  }
+
+  const markingConfig = getMarkingRuntimeConfig();
+  let markingGate: ShippingGateEvaluation | null = null;
+  if (
+    markingConfig.enabled
+    && order.fulfillment_order_id
+    && await hasRequiredMarking(query, order.fulfillment_order_id)
+  ) {
+    if (markingConfig.withdrawalEnabled
+        && !markingConfig.allowedAdminIds.includes(context.actor)) {
+      conflict(
+        "marking_shipping_actor_denied",
+        "Оператор не входит в разрешённый контур вывода маркировки из оборота.",
+      );
+    }
+    markingGate = await evaluateShippingGate(query, {
+      fulfillmentOrderId: order.fulfillment_order_id,
+      mode: markingConfig.shippingGateMode,
+      actorId: context.actor,
+      requestId: context.requestId,
+    });
+    if (!markingGate.allowed && markingGate.mode === "enforce") {
+      conflict(
+        "marking_shipping_blocked",
+        `Отгрузка заблокирована маркировкой: ${markingGate.blockers.map(shippingBlockerLabel).join("; ")}.`,
+      );
+    }
   }
 
   const warehouses = (
@@ -188,12 +231,42 @@ export async function shipOzonOrderInternal(
     [orderId, primaryWarehouseId],
   );
   checkpoint("after_order");
+  let markingHandover: Awaited<ReturnType<typeof recordShippingHandover>> | null = null;
+  if (markingGate && order.fulfillment_order_id) {
+    markingHandover = await recordShippingHandover(query, {
+      fulfillmentOrderId: order.fulfillment_order_id,
+      gateEvaluationId: markingGate.id,
+      actorId: context.actor,
+      requestId: context.requestId,
+      idempotencyKey: `shipping-handover:${context.idempotencyKey}`,
+    });
+    if (markingHandover.documentId && markingConfig.withdrawalEnabled) {
+      await enqueueJob({
+        type: "marking_withdrawal_submit",
+        dedupeKey: `crpt-withdrawal-submit:${markingHandover.documentId}`,
+        idempotencyKey: `crpt-withdrawal-submit:${markingHandover.documentId}`,
+        payload: { documentId: markingHandover.documentId },
+        actor: context.actor,
+        requestId: context.requestId,
+        maxAttempts: 2,
+      }, { query, scope: "marking" });
+    }
+    checkpoint("after_marking_handover");
+  }
   return {
     operation: "ship",
     orderId,
     postingNumber: order.posting_number,
     before: { shippedAt: order.shipped_at, stock: stockChanges.map(({ after: _after, ...change }) => change) },
-    after: { shipped: true, primaryWarehouseId, stock: stockChanges, plan, movementIds },
+    after: {
+      shipped: true,
+      primaryWarehouseId,
+      stock: stockChanges,
+      plan,
+      movementIds,
+      markingGate,
+      markingHandover,
+    },
   };
 }
 
@@ -205,6 +278,13 @@ async function unshipOzonOrderInternal(
   const { order, items } = await loadOrderForUpdate(query, orderId);
   assertFbs(order);
   if (!order.shipped_at) conflict("ozon_not_shipped", "Заказ Ozon не был отправлен.");
+  if (order.fulfillment_order_id
+      && await hasShippingHandover(query, order.fulfillment_order_id)) {
+    conflict(
+      "marking_handover_immutable",
+      "Отгрузку с зафиксированной передачей маркированного товара нельзя отменить как складскую операцию. Используйте сценарий возврата.",
+    );
+  }
   const reversal = items
     .filter((item): item is OzonItemRow & { product_id: string } => Boolean(item.product_id))
     .map((item) => ({
@@ -231,7 +311,12 @@ async function unshipOzonOrderInternal(
     if (movementId) movementIds.push(movementId);
   }
   await query(
-    "UPDATE merch_ozon_order_items SET shipped_from_warehouse_id = NULL WHERE order_id = $1::uuid",
+    `
+      UPDATE merch_ozon_order_items
+      SET shipped_from_warehouse_id = NULL
+      WHERE order_id = $1::uuid
+        AND source_active = true
+    `,
     [orderId],
   );
   await query(
@@ -308,6 +393,7 @@ async function fulfillViaWorkshop(
   query: DatabaseQueryExecutor,
   raw: unknown,
   checkpoint: Checkpoint,
+  context: ServerMutationContext,
 ): Promise<MutationOutcome<null>> {
   const input = objectValue(raw, "fulfillOzonViaWorkshop");
   const ozonOrderId = uuidValue(input.ozonOrderId, "ozonOrderId");
@@ -323,7 +409,9 @@ async function fulfillViaWorkshop(
     ownWarehouseId,
     checkpoint,
   );
-  const shipping = await shipOzonOrderInternal(query, ozonOrderId, ownWarehouseId, checkpoint);
+  const shipping = await shipOzonOrderInternal(
+    query, ozonOrderId, ownWarehouseId, checkpoint, context,
+  );
   return {
     data: null,
     audit: {
@@ -339,6 +427,7 @@ async function fulfillViaProduction(
   query: DatabaseQueryExecutor,
   raw: unknown,
   checkpoint: Checkpoint,
+  context: ServerMutationContext,
 ): Promise<MutationOutcome<null>> {
   const input = objectValue(raw, "fulfillOzonViaProduction");
   const ozonOrderId = uuidValue(input.ozonOrderId, "ozonOrderId");
@@ -390,7 +479,9 @@ async function fulfillViaProduction(
     productions.push({ productId, blankProductId, quantity: shortage });
   }
   checkpoint("after_production");
-  const shipping = await shipOzonOrderInternal(query, ozonOrderId, ownWarehouseId, checkpoint);
+  const shipping = await shipOzonOrderInternal(
+    query, ozonOrderId, ownWarehouseId, checkpoint, context,
+  );
   return {
     data: null,
     audit: {
@@ -406,7 +497,8 @@ async function loadOrderForUpdate(query: DatabaseQueryExecutor, orderId: string)
   const order = (
     await query<OzonOrderRow>(
       `
-        SELECT id, posting_number, source, status, shipped_at, shipped_from_warehouse_id, workshop_order_id
+        SELECT id, posting_number, source, status, shipped_at,
+          shipped_from_warehouse_id, workshop_order_id, fulfillment_order_id
         FROM merch_ozon_orders
         WHERE id = $1::uuid
         FOR UPDATE
@@ -436,6 +528,7 @@ async function loadOrderForUpdate(query: DatabaseQueryExecutor, orderId: string)
         FROM merch_ozon_order_items item
         LEFT JOIN merch_products product ON product.id = item.product_id
         WHERE item.order_id = $1::uuid
+          AND item.source_active = true
         ORDER BY item.id
         FOR UPDATE OF item
       `,
@@ -497,4 +590,17 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : { value };
+}
+
+function shippingBlockerLabel(value: string) {
+  return ({
+    unsupported_fulfillment: "неподдерживаемая схема заказа",
+    posting_not_shippable: "posting уже не допускает передачу",
+    assignment_quantity_mismatch: "не всем единицам назначены КМ",
+    marking_unit_not_ready: "КМ не нанесён или не введён в оборот",
+    ozon_exemplar_not_accepted: "Ozon не принял КМ",
+    withdrawal_location_not_ready: "не заполнены КПП и ФИАС места деятельности",
+    product_cost_missing: "не определена цена единицы",
+    critical_discrepancy: "есть критическая ручная задача",
+  } as Record<string, string>)[value] ?? value;
 }

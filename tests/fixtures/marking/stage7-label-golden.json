@@ -1,0 +1,15 @@
+{
+  "gtin": "04628837736075",
+  "serial": "TEST^123",
+  "verificationKey": "ABCD",
+  "signature": "SIGNATURE0123456789",
+  "fingerprint": "abcdef123456",
+  "offerId": "D7-TSH-PRT-WHT-S",
+  "postingNumber": "31100000-0000-1",
+  "unitOrdinal": 1,
+  "itemQuantity": 1,
+  "matrixWidth": 26,
+  "matrixHeight": 26,
+  "moduleDots": 10,
+  "pdfSha256": "9bb5fa16da44cac570033de149f26a68d2f90c121733c659f17d5f5c462c049c"
+}

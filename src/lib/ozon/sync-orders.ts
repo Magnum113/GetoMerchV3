@@ -3,6 +3,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { queryServerDatabase } from "@/lib/db/pool";
 import { syncOzonOrderSnapshot, type OzonOrderSnapshot } from "@/lib/db/mutations/sync-import";
+import {
+  projectOzonOrderItems,
+} from "@/lib/fulfillment/ozon-domain";
 import type { JobExecutionContext } from "@/lib/jobs/execution";
 import { ozonPost } from "@/lib/ozon/client";
 
@@ -24,6 +27,7 @@ const TERMINAL_FBS_STATUSES = [
 type OzonProduct = {
   offer_id: string;
   sku?: number | string;
+  product_id?: number | string;
   name?: string;
   quantity: number;
   price?: string | number;
@@ -42,6 +46,10 @@ type OzonPosting = {
   analytics_data?: { warehouse_name?: string; city?: string; delivery_type?: string };
   customer?: { name?: string };
   products?: OzonProduct[];
+  requirements?: {
+    products_requiring_mandatory_mark?: unknown;
+  };
+  product_exemplars?: unknown;
   source: "fbs" | "fbo";
 };
 
@@ -272,6 +280,14 @@ async function fetchProductsByOffer(offerIds: string[]) {
 
 function toSnapshot(posting: OzonPosting, productByOffer: Map<string, string>): OzonOrderSnapshot {
   const products = posting.products ?? [];
+  const projectedItems = projectOzonOrderItems({
+    source: posting.source,
+    products,
+    mandatoryProductEntries:
+      posting.requirements?.products_requiring_mandatory_mark,
+    productExemplars: posting.product_exemplars,
+    productByOffer,
+  });
   const total = products.reduce(
     (sum, item) => sum + Number(item.price ?? 0) * Number(item.quantity ?? 0),
     0,
@@ -294,14 +310,7 @@ function toSnapshot(posting: OzonPosting, productByOffer: Map<string, string>): 
     source: posting.source,
     syncedAt: new Date().toISOString(),
     replaceItems: true,
-    items: products.map((item) => ({
-      offerId: String(item.offer_id),
-      ozonSku: item.sku == null ? null : String(item.sku),
-      name: item.name ?? null,
-      quantity: Number(item.quantity ?? 0),
-      price: item.price == null ? null : Number(item.price),
-      productId: productByOffer.get(String(item.offer_id)) ?? null,
-    })),
+    items: projectedItems,
   };
 }
 

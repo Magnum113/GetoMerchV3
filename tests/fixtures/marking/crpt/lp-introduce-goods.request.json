@@ -1,0 +1,18 @@
+{
+  "_fixture": {
+    "source": "official_true_api_contract",
+    "captured_at": "2026-07-26",
+    "contains_full_marking_codes": false
+  },
+  "participant_inn": "000000000000",
+  "producer_inn": "000000000000",
+  "owner_inn": "000000000000",
+  "production_date": "2026-07-26",
+  "production_type": "OWN_PRODUCTION",
+  "products": [
+    {
+      "uit_code": "SANITIZED_FULL_MARKING_CODE",
+      "tnved_code": "6109100000"
+    }
+  ]
+}

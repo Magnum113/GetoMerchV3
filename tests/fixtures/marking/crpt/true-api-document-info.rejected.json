@@ -1,0 +1,24 @@
+[
+  {
+    "_fixture": {
+      "source": "official_true_api_contract",
+      "captured_at": "2026-07-26"
+    },
+    "number": "00000000-0000-4000-8000-000000000020",
+    "type": "LP_INTRODUCE_GOODS",
+    "status": "PARSE_ERROR",
+    "productGroup": [
+      "lp"
+    ],
+    "errors": [
+      "SANITIZED_VALIDATION_ERROR"
+    ],
+    "commonErrors": [
+      {
+        "errorCode": "INTRO_ERROR",
+        "errorMessage": "SANITIZED_VALIDATION_ERROR",
+        "errorObject": "SANITIZED_FIELD"
+      }
+    ]
+  }
+]

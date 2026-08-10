@@ -1,0 +1,45 @@
+{
+  "_fixture": {
+    "source": "official Ozon Seller API documentation",
+    "contract": "POST /v5/fbs/posting/product/exemplar/status",
+    "verification": "authorized_browser_read_only",
+    "contains_full_marking_codes": false,
+    "note": "Nested check status text is sanitized because the documentation specifies a string without an enum."
+  },
+  "request": {
+    "posting_number": "SANITIZED-FBS-POSTING-1"
+  },
+  "response": {
+    "posting_number": "SANITIZED-FBS-POSTING-1",
+    "products": [
+      {
+        "exemplars": [
+          {
+            "exemplar_id": 1001,
+            "gtd": "",
+            "gtd_check_status": "SANITIZED_CHECK_STATUS",
+            "gtd_error_codes": [],
+            "is_gtd_absent": true,
+            "is_rnpt_absent": true,
+            "marks": [
+              {
+                "check_status": "SANITIZED_CHECK_STATUS",
+                "error_codes": [],
+                "mark": "SANITIZED_FULL_MARKING_CODE",
+                "mark_type": "mandatory_mark"
+              }
+            ],
+            "rnpt": "",
+            "rnpt_check_status": "SANITIZED_CHECK_STATUS",
+            "rnpt_error_codes": [],
+            "weight": 0,
+            "weight_check_status": "SANITIZED_CHECK_STATUS",
+            "weight_error_codes": []
+          }
+        ],
+        "product_id": 900000001
+      }
+    ],
+    "status": "validation_in_process"
+  }
+}

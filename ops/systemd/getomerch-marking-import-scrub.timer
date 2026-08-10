@@ -1,0 +1,12 @@
+[Unit]
+Description=Run GetoMerch marking import cleanup
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=getomerch-marking-import-scrub.service
+
+[Install]
+WantedBy=timers.target

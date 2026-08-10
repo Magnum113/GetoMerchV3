@@ -1,0 +1,39 @@
+{
+  "_fixture": {
+    "source": "official Ozon Seller API documentation schema",
+    "contract": "POST /v5/fbs/posting/product/exemplar/validate",
+    "verification": "sanitized_error_shape",
+    "contains_full_marking_codes": false,
+    "note": "Error text is synthetic; only the response structure is asserted."
+  },
+  "response": {
+    "products": [
+      {
+        "error": "SANITIZED_PRODUCT_VALIDATION_ERROR",
+        "exemplars": [
+          {
+            "errors": [
+              "SANITIZED_EXEMPLAR_VALIDATION_ERROR"
+            ],
+            "gtd": "",
+            "marks": [
+              {
+                "errors": [
+                  "SANITIZED_MARK_VALIDATION_ERROR"
+                ],
+                "mark": "SANITIZED_INVALID_MARKING_CODE",
+                "mark_type": "mandatory_mark",
+                "valid": false
+              }
+            ],
+            "rnpt": "",
+            "valid": false,
+            "weight": 0
+          }
+        ],
+        "product_id": 900000001,
+        "valid": false
+      }
+    ]
+  }
+}

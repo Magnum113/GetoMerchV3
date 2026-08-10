@@ -4,6 +4,7 @@ import { adminErrorResponse, adminJson } from "@/lib/admin/http";
 import { createDatabaseReadServices } from "@/lib/db/services/runtime";
 import { getAdminSupabaseKeyMode } from "@/lib/supabase/server";
 import { getDatabaseRuntimeConfig } from "@/lib/db/config";
+import { markingConfigForHealth } from "@/lib/marking/config";
 import { getMaintenanceState } from "@/lib/maintenance";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export async function GET(_request: NextRequest) {
         databaseWriteSource: databaseConfig.writeSource,
         shadowSource: services.shadowSource,
         supabaseKeyMode: getAdminSupabaseKeyMode(),
+        marking: markingConfigForHealth(),
       },
     });
   } catch (error) {

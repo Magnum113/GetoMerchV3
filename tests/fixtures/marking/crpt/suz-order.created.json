@@ -1,0 +1,9 @@
+{
+  "_fixture": {
+    "source": "official_suz_api_3_0_contract",
+    "captured_at": "2026-07-26"
+  },
+  "omsId": "00000000-0000-4000-8000-000000000010",
+  "orderId": "00000000-0000-4000-8000-000000000011",
+  "expectedCompletionTime": 1000
+}

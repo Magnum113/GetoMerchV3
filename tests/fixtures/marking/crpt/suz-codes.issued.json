@@ -1,0 +1,13 @@
+{
+  "_fixture": {
+    "source": "official_suz_api_3_0_contract",
+    "captured_at": "2026-07-26",
+    "contains_full_marking_codes": false,
+    "redaction": "Full code replaced with an explicit non-code placeholder"
+  },
+  "omsId": "00000000-0000-4000-8000-000000000010",
+  "codes": [
+    "SANITIZED_FULL_MARKING_CODE"
+  ],
+  "blockId": "00000000-0000-4000-8000-000000000012"
+}

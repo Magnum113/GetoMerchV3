@@ -86,6 +86,25 @@ PostgreSQL service/repository layer. Старые Supabase REST/direct adapters 
 `db/migrations`. Файл `0001_getomerch_baseline.sql` неизменяем; production не
 применяет migration runner автоматически при запуске приложения.
 
+Интеграция маркировки разрабатывается отдельным fail-closed контуром. Этапы
+0-13 реализованы локально, включая возвраты/FBS -> FBO и управляемое пополнение
+зашифрованного пула КМ через СУЗ. Signer, чтение ГИС МТ,
+ввод/вывод/возврат в оборот и заказы СУЗ не развернуты в production; все
+внешние marking write flags выключены.
+Канонический flow и актуальный статус находятся в
+`docs/chestny-znak-ozon/FLOW.md` и
+`docs/chestny-znak-ozon/IMPLEMENTATION_PLAN.md`.
+
+Новые настройки этапов 12-13 являются server-only и по умолчанию выключены:
+
+```env
+GETOMERCH_MARKING_RETURNS_ENABLED=false
+GETOMERCH_MARKING_OZON_RETURNS_SYNC_ENABLED=false
+GETOMERCH_MARKING_SUZ_WRITE_ENABLED=false
+GETOMERCH_MARKING_SUZ_OMS_ID=
+GETOMERCH_MARKING_SUZ_OMS_CONNECTION=
+```
+
 ## Запуск
 
 ```bash

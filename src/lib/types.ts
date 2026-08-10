@@ -193,6 +193,24 @@ export interface InventoryMatrix {
 }
 
 export type OzonPostingSource = "fbs" | "fbo";
+export type MarkingRequirement = "unknown" | "required" | "not_required";
+
+export interface FulfillmentOrderDiagnostic {
+  id: string;
+  source_channel: "ozon_fbs" | "komui";
+  fulfillment_scheme: "fbs" | "d2c";
+  source_order_key: string;
+  source_status: string;
+}
+
+export interface FulfillmentItemDiagnostic {
+  id: string;
+  source_item_key: string;
+  quantity: number;
+  marking_requirement: MarkingRequirement;
+  exemplar_flow_available: boolean | null;
+  source_active: boolean;
+}
 
 export interface OzonOrder {
   id: string;
@@ -213,10 +231,19 @@ export interface OzonOrder {
   shipped_at: string | null;
   shipped_from_warehouse_id: string | null;
   workshop_order_id: string | null;
+  fulfillment_order_id?: string | null;
   notes: string | null;
   created_at: string;
   items?: OzonOrderItem[];
   workshop_order?: WorkshopOrder | null;
+  fulfillment?: FulfillmentOrderDiagnostic | null;
+  marking_shipping?: {
+    mode: "observe" | "enforce";
+    allowed: boolean;
+    requiredUnits: number;
+    readyUnits: number;
+    blockers: string[];
+  } | null;
 }
 
 export interface OzonOrderItem {
@@ -224,11 +251,22 @@ export interface OzonOrderItem {
   order_id: string;
   offer_id: string;
   ozon_sku: string | null;
+  ozon_product_id?: string | null;
+  source_item_key?: string | null;
   name: string | null;
   quantity: number;
   price: number | null;
   product_id: string | null;
+  marking_requirement?: MarkingRequirement;
+  exemplar_flow_available?: boolean | null;
+  source_active?: boolean;
+  fulfillment_item_id?: string | null;
   product?: Product | null;
+  fulfillment?: FulfillmentItemDiagnostic | null;
+  marking?: {
+    assignments: MarkingAssignmentListItem[];
+    candidates: MarkingJitCandidate[];
+  };
 }
 
 export interface OzonFinanceService {
@@ -322,3 +360,7 @@ export const WORKSHOP_STATUS_COLORS: Record<WorkshopOrderStatus, string> = {
   received: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
   cancelled: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
+import type {
+  MarkingAssignmentListItem,
+  MarkingJitCandidate,
+} from "@/lib/marking/read-models/types";

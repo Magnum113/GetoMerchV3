@@ -1,0 +1,15 @@
+{
+  "_fixture": {
+    "source": "official Ozon Seller API documentation",
+    "contract": "POST /v1/fbs/posting/product/exemplar/update",
+    "verification": "authorized_browser_read_only",
+    "contains_full_marking_codes": false
+  },
+  "request": {
+    "posting_number": "SANITIZED-FBS-POSTING-1"
+  },
+  "success_response": {
+    "http_status": 200,
+    "body": null
+  }
+}

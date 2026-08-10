@@ -15,6 +15,29 @@ with expected_tables(table_name) as (
     ('merch_workshop_order_items'),
     ('merch_ozon_orders'),
     ('merch_ozon_order_items'),
+    ('merch_fulfillment_orders'),
+    ('merch_fulfillment_order_items'),
+    ('merch_fulfillment_events'),
+    ('merch_marking_trade_items'),
+    ('merch_marking_trade_item_documents'),
+    ('merch_marking_product_profiles'),
+    ('merch_marking_locations'),
+    ('merch_marking_processes'),
+    ('merch_marking_evidence'),
+    ('merch_marking_events'),
+    ('merch_marking_product_profile_channels'),
+    ('merch_marking_profile_backfill_runs'),
+    ('merch_marking_profile_backfill_items'),
+    ('merch_marking_import_batches'),
+    ('merch_marking_import_rows'),
+    ('merch_marking_codes'),
+    ('merch_marking_code_hmacs'),
+    ('merch_marking_units'),
+    ('merch_marking_code_bindings'),
+    ('merch_marking_assignments'),
+    ('merch_marking_ozon_submission_batches'),
+    ('merch_marking_ozon_submissions'),
+    ('merch_marking_crpt_queries'),
     ('merch_ozon_finance_operations'),
     ('merch_expense_categories'),
     ('merch_expenses'),
@@ -156,53 +179,53 @@ actual as (
 )
 select
   'working_tables' as check_name,
-  table_count = 20 as ok,
+  table_count = 43 as ok,
   table_count::text as actual,
-  '20' as expected
+  '43' as expected
 from actual
 union all
-select 'working_columns', column_count = 178, column_count::text, '178'
+select 'working_columns', column_count = 563, column_count::text, '563'
 from actual
 union all
-select 'working_defaults', default_count = 60, default_count::text, '60'
+select 'working_defaults', default_count = 193, default_count::text, '193'
 from actual
 union all
-select 'working_not_null', not_null_count = 90, not_null_count::text, '90'
+select 'working_not_null', not_null_count = 322, not_null_count::text, '322'
 from actual
 union all
-select 'working_constraints', constraint_count = 82, constraint_count::text, '82'
+select 'working_constraints', constraint_count = 388, constraint_count::text, '388'
 from actual
 union all
-select 'primary_keys', primary_key_count = 20, primary_key_count::text, '20'
+select 'primary_keys', primary_key_count = 43, primary_key_count::text, '43'
 from actual
 union all
-select 'foreign_keys', foreign_key_count = 32, foreign_key_count::text, '32'
+select 'foreign_keys', foreign_key_count = 84, foreign_key_count::text, '84'
 from actual
 union all
 select
   'unique_constraints',
-  unique_constraint_count = 14,
+  unique_constraint_count = 31,
   unique_constraint_count::text,
-  '14'
+  '31'
 from actual
 union all
 select
   'check_constraints',
-  check_constraint_count = 16,
+  check_constraint_count = 227,
   check_constraint_count::text,
-  '16'
+  '227'
 from actual
 union all
-select 'working_indexes', index_count = 65, index_count::text, '65'
+select 'working_indexes', index_count = 159, index_count::text, '159'
 from actual
 union all
-select 'partial_indexes', partial_index_count = 5, partial_index_count::text, '5'
+select 'partial_indexes', partial_index_count = 38, partial_index_count::text, '38'
 from actual
 union all
-select 'unique_indexes', unique_index_count = 38, unique_index_count::text, '38'
+select 'unique_indexes', unique_index_count = 93, unique_index_count::text, '93'
 from actual
 union all
-select 'working_triggers', trigger_count = 1, trigger_count::text, '1'
+select 'working_triggers', trigger_count = 6, trigger_count::text, '6'
 from actual
 union all
 select

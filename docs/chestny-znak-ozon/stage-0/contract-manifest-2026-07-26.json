@@ -1,0 +1,571 @@
+{
+  "manifest_version": 1,
+  "captured_at": "2026-07-26",
+  "stage_status": "completed",
+  "external_writes_performed": false,
+  "security": {
+    "contains_secrets": false,
+    "contains_private_keys": false,
+    "contains_full_real_marking_codes": false,
+    "contains_runtime_tokens": false
+  },
+  "source_archive": {
+    "location": "~/.getomerch/contracts/chestny-znak/2026-07-26",
+    "tracked_by_git": false,
+    "files": [
+      {
+        "name": "true-api.html",
+        "source": "https://docs.crpt.ru/gismt/True_API/",
+        "sha256": "27576a696928cd1d8a0acadea080748340ff5bc4d9f04759a38f58a83deb762a"
+      },
+      {
+        "name": "true-api-clean.html",
+        "derived_from": "true-api.html by removing NUL bytes",
+        "sha256": "6da984493893ebbd3d236ca3c0e67531444964003f25b5f1ed4df8174b5a6d32"
+      },
+      {
+        "name": "dynamic-client-token.html",
+        "source": "https://docs.crpt.ru/gismt/Инструкция_по_получению_динамического_клиентского_токена/",
+        "sha256": "e8dd3cfc27ad940461059223ab2931e8b7a2a9c8694c7ad18aa3d8e70fb460cb"
+      },
+      {
+        "name": "suz-api-3.0.pdf",
+        "source": "https://честныйзнак.рф/upload/docs/API_СУЗ_3.0.pdf",
+        "last_modified": "2026-07-24T09:30:52Z",
+        "sha256": "8b166e344353d823f87aa0508f9e958297f5d145ea53f1ee155fc669f5763740"
+      },
+      {
+        "name": "suz-api-3.0.txt",
+        "derived_from": "suz-api-3.0.pdf",
+        "sha256": "0b4fead628b25d8a36227b6a1fa0c42c87d58e373809b22d9a449fdd192aea7b"
+      },
+      {
+        "name": "suz-api-announcements.pdf",
+        "source": "https://честныйзнак.рф/upload/docs/Анонс_изменений_API_СУЗ.pdf",
+        "sha256": "9c0326cdcaa17205f3ce240249043b18d504cc29e24c542de60a525299698785"
+      }
+    ]
+  },
+  "product_sources": [
+    {
+      "id": "pilot.production_db",
+      "kind": "postgres_read_only",
+      "database": "getomerch_production",
+      "checked_at": "2026-07-26"
+    },
+    {
+      "id": "pilot.national_catalog",
+      "kind": "authorized_browser_read_only",
+      "card_id": "1056097470",
+      "checked_at": "2026-07-26"
+    },
+    {
+      "id": "pilot.mapping_workbook",
+      "kind": "local_untracked_workbook",
+      "path": "outputs/national-catalog-support-20260722/national-catalog-existing-names-change-request.xlsx",
+      "sha256": "1643860fbe5df12f986d7f398a5f44712a6db03edfdebb23dbbac739eb2b6f81",
+      "verification_scope": "one row contains both offer_id and GTIN",
+      "sheet": "Изменение наименований",
+      "row": 51,
+      "offer_id": "D15-TSH-PRT-WHT-S",
+      "excel_gtin_value": "4628837736075",
+      "canonical_gtin": "04628837736075",
+      "normalization": "left-pad numeric Excel value to GTIN-14; result independently matches the National Catalog card"
+    }
+  ],
+  "online_contract_sources": [
+    {
+      "id": "ozon.seller_api.exemplar",
+      "kind": "official_documentation_authorized_browser_read_only",
+      "url": "https://docs.ozon.ru/api/seller/",
+      "checked_at": "2026-07-26",
+      "operation_ids": [
+        "PostingAPI_FbsPostingProductExemplarCreateOrGetV6",
+        "PostingAPI_FbsPostingProductExemplarValidateV5",
+        "PostingAPI_FbsPostingProductExemplarSetV6",
+        "PostingAPI_FbsPostingProductExemplarStatusV5",
+        "PostingAPI_FbsPostingProductExemplarUpdate"
+      ],
+      "external_requests_executed": false
+    }
+  ],
+  "contracts": [
+    {
+      "id": "crpt.true_api.auth.challenge",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "method": "GET",
+      "path": "/api/v3/true-api/auth/key",
+      "required_request_fields": [],
+      "required_response_fields": [
+        "uuid",
+        "data"
+      ],
+      "write_class": "read_only"
+    },
+    {
+      "id": "crpt.true_api.auth.sign_in",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "method": "POST",
+      "path": "/api/v3/true-api/auth/simpleSignIn",
+      "required_request_fields": [
+        "uuid",
+        "data"
+      ],
+      "conditional_request_fields": [
+        "inn",
+        "unitedToken"
+      ],
+      "recommended_mode": {
+        "unitedToken": true,
+        "reason": "JWT support is documented only through the end of 2026"
+      },
+      "required_response_fields": [
+        "token"
+      ],
+      "write_class": "authentication"
+    },
+    {
+      "id": "crpt.suz.order.create.lp",
+      "system": "crpt_suz",
+      "verification": "official_contract_snapshot",
+      "method": "POST",
+      "path": "/api/v3/order?omsId={omsId}",
+      "required_headers_for_lp": [
+        "Accept: application/json",
+        "Content-Type: application/json",
+        "clientToken",
+        "X-Signature"
+      ],
+      "required_request_fields": [
+        "productGroup",
+        "products"
+      ],
+      "required_product_fields": [
+        "gtin",
+        "quantity",
+        "serialNumberType",
+        "templateId",
+        "cisType"
+      ],
+      "lp_values": {
+        "productGroup": "lp",
+        "releaseMethodType": "PRODUCTION",
+        "templateId": 10,
+        "cisType": "UNIT"
+      },
+      "recommended_serial_number_type": "OPERATOR",
+      "required_response_fields": [
+        "omsId",
+        "orderId",
+        "expectedCompletionTime"
+      ],
+      "write_class": "external_irreversible_or_billable"
+    },
+    {
+      "id": "crpt.suz.order.status",
+      "system": "crpt_suz",
+      "verification": "official_contract_snapshot",
+      "method": "GET",
+      "path": "/api/v3/order/status?omsId={omsId}&orderId={orderId}&gtin={gtin}",
+      "required_headers": [
+        "Accept: application/json",
+        "clientToken"
+      ],
+      "required_query_fields": [
+        "omsId",
+        "orderId",
+        "gtin"
+      ],
+      "write_class": "read_only"
+    },
+    {
+      "id": "crpt.suz.codes.get",
+      "system": "crpt_suz",
+      "verification": "official_contract_snapshot",
+      "method": "GET",
+      "path": "/api/v3/codes?omsId={omsId}&orderId={orderId}&quantity={quantity}&gtin={gtin}",
+      "required_headers": [
+        "Accept: application/json",
+        "clientToken"
+      ],
+      "required_query_fields": [
+        "omsId",
+        "orderId",
+        "quantity",
+        "gtin"
+      ],
+      "required_response_fields": [
+        "omsId",
+        "codes",
+        "blockId"
+      ],
+      "write_class": "code_material_delivery"
+    },
+    {
+      "id": "crpt.suz.utilisation.lp",
+      "system": "crpt_suz",
+      "verification": "official_contract_snapshot",
+      "mode": "automatic",
+      "trigger": "code delivery for productGroup=lp",
+      "direct_request_for_lp": false,
+      "note": "API SUZ 3.0 lists light industry among groups with automatically generated utilisation report"
+    },
+    {
+      "id": "crpt.suz.receipt.search",
+      "system": "crpt_suz",
+      "verification": "official_contract_snapshot",
+      "method": "POST",
+      "path": "/api/v3/receipts/receipt/search?omsId={omsId}",
+      "required_headers": [
+        "Accept: application/json",
+        "Content-Type: application/json",
+        "clientToken"
+      ],
+      "required_query_fields": [
+        "omsId"
+      ],
+      "required_request_fields": [
+        "filter"
+      ],
+      "lp_auto_report_filter": {
+        "orderIds": [
+          "{orderId}"
+        ],
+        "productGroups": [
+          "lp"
+        ],
+        "workflowTypes": [
+          "REPORT_UTILIZE"
+        ]
+      },
+      "terminal_success_condition": {
+        "state": "SUCCESS",
+        "code": 0,
+        "workflow": "REPORT_UTILIZE"
+      },
+      "write_class": "read_only"
+    },
+    {
+      "id": "crpt.true_api.document.create",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "method": "POST",
+      "path": "/api/v3/true-api/lk/documents/create?pg=lp",
+      "required_headers": [
+        "Authorization: Bearer <token>",
+        "Content-Type: application/json"
+      ],
+      "required_request_fields": [
+        "document_format",
+        "product_document",
+        "type",
+        "signature"
+      ],
+      "write_class": "external_legal_document"
+    },
+    {
+      "id": "crpt.true_api.lp_introduce_goods",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "document_format": "MANUAL",
+      "document_type": "LP_INTRODUCE_GOODS",
+      "required_document_fields": [
+        "participant_inn",
+        "producer_inn",
+        "owner_inn",
+        "production_type",
+        "products"
+      ],
+      "conditional_document_fields": [
+        "production_date"
+      ],
+      "required_product_fields": [
+        "uit_code",
+        "tnved_code"
+      ],
+      "conditional_product_fields": [
+        "certificate_document_data"
+      ],
+      "production_type": "OWN_PRODUCTION",
+      "write_class": "external_legal_document"
+    },
+    {
+      "id": "crpt.true_api.document.info",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "method": "GET",
+      "path": "/api/v4/true-api/doc/{docId}/info?pg=lp&body=false",
+      "required_path_fields": [
+        "docId"
+      ],
+      "required_response_fields": [
+        "number",
+        "type",
+        "status",
+        "productGroup"
+      ],
+      "terminal_success_status": "CHECKED_OK",
+      "terminal_error_statuses": [
+        "CHECKED_NOT_OK",
+        "PROCESSING_ERROR",
+        "PARSE_ERROR"
+      ],
+      "write_class": "read_only",
+      "note": "/doc/validator/status is documented for UTD/UTD correction validation and is not the primary poll contract for direct LP_INTRODUCE_GOODS"
+    },
+    {
+      "id": "crpt.true_api.distance_withdrawal",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "document_format": "MANUAL",
+      "document_type": "LK_RECEIPT",
+      "action": "DISTANCE",
+      "required_document_fields": [
+        "inn",
+        "action",
+        "action_date",
+        "products"
+      ],
+      "required_product_fields": [
+        "cis"
+      ],
+      "conditional_document_fields": [
+        "document_type",
+        "document_number",
+        "document_date",
+        "kpp",
+        "fias_id"
+      ],
+      "write_class": "external_legal_document"
+    },
+    {
+      "id": "crpt.true_api.remote_sale_return",
+      "system": "crpt_true_api",
+      "verification": "official_contract_snapshot",
+      "document_format": "MANUAL",
+      "document_type": "LP_RETURN",
+      "return_type": "REMOTE_SALE_RETURN",
+      "required_document_fields": [
+        "trade_participant_inn",
+        "return_type",
+        "paid",
+        "products_list"
+      ],
+      "required_product_fields": [
+        "ki"
+      ],
+      "conditional_document_fields": [
+        "primary_document_type",
+        "primary_document_number",
+        "primary_document_date"
+      ],
+      "write_class": "external_legal_document"
+    },
+    {
+      "id": "ozon.fbs.posting.get",
+      "system": "ozon_seller_api",
+      "verification": "production_read_only_observation",
+      "method": "POST",
+      "path": "/v3/posting/fbs/get",
+      "required_request_fields_observed": [
+        "posting_number"
+      ],
+      "marking_response_fields_observed": [
+        "product_exemplars",
+        "requirements.products_requiring_mandatory_mark"
+      ],
+      "sample_size": 46,
+      "mandatory_mark_non_empty_count": 0,
+      "write_class": "read_only"
+    },
+    {
+      "id": "ozon.exemplar.create_or_get",
+      "system": "ozon_seller_api",
+      "verification": "official_documentation_authorized_browser_read_only",
+      "method": "POST",
+      "path": "/v6/fbs/posting/product/exemplar/create-or-get",
+      "required_request_fields": [
+        "posting_number"
+      ],
+      "response_fields": [
+        "multi_box_qty",
+        "posting_number",
+        "products"
+      ],
+      "response_product_fields": [
+        "exemplars",
+        "has_imei",
+        "is_gtd_needed",
+        "is_jw_uin_needed",
+        "is_mandatory_mark_needed",
+        "is_mandatory_mark_possible",
+        "is_rnpt_needed",
+        "product_id",
+        "quantity",
+        "is_weight_needed",
+        "weight_max"
+      ],
+      "response_exemplar_fields": [
+        "exemplar_id",
+        "gtd",
+        "is_gtd_absent",
+        "is_rnpt_absent",
+        "marks",
+        "rnpt",
+        "weight"
+      ],
+      "response_mark_fields": [
+        "mark",
+        "mark_type"
+      ],
+      "write_class": "read_or_initialize_exemplar_state"
+    },
+    {
+      "id": "ozon.exemplar.validate",
+      "system": "ozon_seller_api",
+      "verification": "official_documentation_authorized_browser_read_only",
+      "method": "POST",
+      "path": "/v5/fbs/posting/product/exemplar/validate",
+      "required_request_fields": [
+        "posting_number",
+        "products"
+      ],
+      "required_product_fields": [
+        "exemplars",
+        "product_id"
+      ],
+      "request_exemplar_fields": [
+        "gtd",
+        "marks",
+        "rnpt",
+        "weight"
+      ],
+      "request_mark_fields": [
+        "mark",
+        "mark_type"
+      ],
+      "mandatory_mark_type": "mandatory_mark",
+      "response_product_fields": [
+        "error",
+        "exemplars",
+        "product_id",
+        "valid"
+      ],
+      "response_exemplar_fields": [
+        "errors",
+        "gtd",
+        "marks",
+        "rnpt",
+        "valid",
+        "weight"
+      ],
+      "response_mark_fields": [
+        "errors",
+        "mark",
+        "mark_type",
+        "valid"
+      ],
+      "write_class": "remote_validation"
+    },
+    {
+      "id": "ozon.exemplar.set",
+      "system": "ozon_seller_api",
+      "verification": "official_documentation_authorized_browser_read_only",
+      "method": "POST",
+      "path": "/v6/fbs/posting/product/exemplar/set",
+      "required_request_fields": [
+        "posting_number",
+        "products"
+      ],
+      "optional_request_fields": [
+        "multi_box_qty"
+      ],
+      "required_product_fields": [
+        "exemplars",
+        "product_id"
+      ],
+      "required_exemplar_fields": [
+        "exemplar_id"
+      ],
+      "optional_exemplar_fields": [
+        "gtd",
+        "is_gtd_absent",
+        "is_rnpt_absent",
+        "marks",
+        "rnpt",
+        "weight"
+      ],
+      "mark_fields": [
+        "mark",
+        "mark_type"
+      ],
+      "mandatory_mark_type": "mandatory_mark",
+      "success_response": "HTTP 200 with no body; processing is asynchronous",
+      "write_class": "external_mutation_async"
+    },
+    {
+      "id": "ozon.exemplar.status",
+      "system": "ozon_seller_api",
+      "verification": "official_documentation_authorized_browser_read_only",
+      "method": "POST",
+      "path": "/v5/fbs/posting/product/exemplar/status",
+      "required_request_fields": [
+        "posting_number"
+      ],
+      "response_fields": [
+        "posting_number",
+        "products",
+        "status"
+      ],
+      "documented_statuses": [
+        "ship_available",
+        "ship_not_available",
+        "validation_in_process",
+        "update_available",
+        "update_not_available"
+      ],
+      "response_product_fields": [
+        "exemplars",
+        "product_id"
+      ],
+      "response_exemplar_fields": [
+        "exemplar_id",
+        "gtd",
+        "gtd_check_status",
+        "gtd_error_codes",
+        "is_gtd_absent",
+        "is_rnpt_absent",
+        "marks",
+        "rnpt",
+        "rnpt_check_status",
+        "rnpt_error_codes",
+        "weight",
+        "weight_check_status",
+        "weight_error_codes"
+      ],
+      "response_mark_fields": [
+        "check_status",
+        "error_codes",
+        "mark",
+        "mark_type"
+      ],
+      "terminal_success_status": "ship_available",
+      "write_class": "read_only_async_poll"
+    },
+    {
+      "id": "ozon.exemplar.update",
+      "system": "ozon_seller_api",
+      "verification": "official_documentation_authorized_browser_read_only",
+      "method": "POST",
+      "path": "/v1/fbs/posting/product/exemplar/update",
+      "required_request_fields": [
+        "posting_number"
+      ],
+      "precondition": "call after /v6/fbs/posting/product/exemplar/set to save changed exemplar data for a posting in awaiting shipment state",
+      "success_response": "HTTP 200 with no body",
+      "write_class": "external_mutation_finalize_update"
+    }
+  ]
+}

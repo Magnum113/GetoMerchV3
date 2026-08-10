@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+[[ "$EUID" -eq 0 ]] || {
+  echo "Run with sudo." >&2
+  exit 1
+}
+
+ENV_DIR="${GETOMERCH_ENV_DIR:-/etc/getomerch}"
+CREDENTIALS_FILE="$ENV_DIR/marking-database-credentials.env"
+PRODUCTION_ENV="$ENV_DIR/marking-database.env"
+REHEARSAL_ENV="$ENV_DIR/marking-database-rehearsal.env"
+HBA_INCLUDE_FILE="${GETOMERCH_MARKING_HBA_INCLUDE_FILE:-/etc/postgresql/17/main/pg_hba_getomerch_marking.conf}"
+ROTATE_PASSWORD="${GETOMERCH_ROTATE_MARKING_DATABASE_PASSWORD:-false}"
+ROLE="getomerch_marking_worker"
+PRODUCTION_DB="getomerch_production"
+REHEARSAL_DB="getomerch_rehearsal"
+DB_HOST="${GETOMERCH_MARKING_DB_HOST:-127.0.0.1}"
+DB_PORT="${GETOMERCH_MARKING_DB_PORT:-5432}"
+ADMIN_PGHOST="${GETOMERCH_MARKING_ADMIN_PGHOST:-}"
+ADMIN_PGPORT="${GETOMERCH_MARKING_ADMIN_PGPORT:-$DB_PORT}"
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+for command in awk cmp grep install openssl psql runuser; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
+done
+[[ "$ROTATE_PASSWORD" == true || "$ROTATE_PASSWORD" == false ]] || \
+  fail "GETOMERCH_ROTATE_MARKING_DATABASE_PASSWORD must be true or false"
+[[ "$DB_HOST" == "127.0.0.1" ]] || \
+  fail "GETOMERCH_MARKING_DB_HOST must remain 127.0.0.1"
+[[ "$DB_PORT" =~ ^[0-9]+$ && "$DB_PORT" -ge 1 && "$DB_PORT" -le 65535 ]] || \
+  fail "GETOMERCH_MARKING_DB_PORT must be a valid TCP port"
+[[ "$ADMIN_PGPORT" =~ ^[0-9]+$ && "$ADMIN_PGPORT" -ge 1 && "$ADMIN_PGPORT" -le 65535 ]] || \
+  fail "GETOMERCH_MARKING_ADMIN_PGPORT must be a valid TCP port"
+
+install -d -m 0700 -o root -g root "$ENV_DIR"
+
+psql_admin() {
+  if [[ -n "$ADMIN_PGHOST" ]]; then
+    runuser -u postgres -- env PGHOST="$ADMIN_PGHOST" PGPORT="$ADMIN_PGPORT" \
+      psql -X -v ON_ERROR_STOP=1 "$@"
+  else
+    runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 "$@"
+  fi
+}
+
+database_exists() {
+  psql_admin -d postgres -Atc \
+    "select exists(select 1 from pg_database where datname = '$1')" | grep -qx t
+}
+
+write_credentials() {
+  local temporary
+  GETOMERCH_MARKING_WORKER_DB_PASSWORD="$(openssl rand -hex 32)"
+  temporary="$(mktemp "$ENV_DIR/.marking-database-credentials.XXXXXX")"
+  printf 'GETOMERCH_MARKING_WORKER_DB_PASSWORD=%s\n' \
+    "$GETOMERCH_MARKING_WORKER_DB_PASSWORD" > "$temporary"
+  install -m 0600 -o root -g root "$temporary" "$CREDENTIALS_FILE"
+  rm -f "$temporary"
+}
+
+if [[ ! -s "$CREDENTIALS_FILE" || "$ROTATE_PASSWORD" == true ]]; then
+  write_credentials
+fi
+
+set -a
+source "$CREDENTIALS_FILE"
+set +a
+[[ "$GETOMERCH_MARKING_WORKER_DB_PASSWORD" =~ ^[a-f0-9]{64}$ ]] || \
+  fail "invalid marking database credential"
+
+write_connection_env() {
+  local path="$1"
+  local database="$2"
+  local application_name="$3"
+  local temporary
+
+  temporary="$(mktemp "$ENV_DIR/.marking-database-env.XXXXXX")"
+  {
+    printf "GETOMERCH_DATABASE_URL='postgresql://%s:%s@%s:%s/%s?application_name=%s&sslmode=disable'\n" \
+      "$ROLE" "$GETOMERCH_MARKING_WORKER_DB_PASSWORD" "$DB_HOST" "$DB_PORT" \
+      "$database" "$application_name"
+    printf 'GETOMERCH_DATABASE_SSL=false\n'
+    printf 'GETOMERCH_DATABASE_POOL_MAX=2\n'
+    printf 'PGHOST=%s\n' "$DB_HOST"
+    printf 'PGPORT=%s\n' "$DB_PORT"
+    printf 'PGDATABASE=%s\n' "$database"
+    printf 'PGUSER=%s\n' "$ROLE"
+    printf 'PGPASSWORD=%s\n' "$GETOMERCH_MARKING_WORKER_DB_PASSWORD"
+    printf 'PGAPPNAME=%s\n' "$application_name"
+    printf 'PGSSLMODE=disable\n'
+  } > "$temporary"
+  install -m 0600 -o root -g root "$temporary" "$path"
+  rm -f "$temporary"
+}
+
+write_connection_env "$PRODUCTION_ENV" "$PRODUCTION_DB" getomerch-marking-worker
+write_connection_env "$REHEARSAL_ENV" "$REHEARSAL_DB" getomerch-marking-worker-rehearsal
+
+log "creating or normalizing isolated marking worker role"
+psql_admin -d postgres >/dev/null <<SQL
+DO \$roles\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$ROLE') THEN
+    CREATE ROLE $ROLE LOGIN;
+  END IF;
+END
+\$roles\$;
+
+ALTER ROLE $ROLE LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+  NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2
+  PASSWORD '$GETOMERCH_MARKING_WORKER_DB_PASSWORD';
+ALTER ROLE $ROLE SET application_name = 'getomerch-marking-worker';
+ALTER ROLE $ROLE SET statement_timeout = '30s';
+ALTER ROLE $ROLE SET lock_timeout = '5s';
+ALTER ROLE $ROLE SET idle_in_transaction_session_timeout = '30s';
+SQL
+
+HBA_MAIN="$(psql_admin -d postgres -Atc 'show hba_file')"
+[[ -f "$HBA_MAIN" ]] || fail "HBA file not found: $HBA_MAIN"
+
+log "installing marking-only HBA rules"
+hba_temporary="$(mktemp "$(dirname "$HBA_INCLUDE_FILE")/.pg_hba_getomerch_marking.XXXXXX")"
+cat > "$hba_temporary" <<'HBA'
+# Managed by /usr/local/sbin/getomerch-marking-postgres-bootstrap.
+local getomerch_rehearsal,getomerch_production getomerch_marking_worker scram-sha-256
+local all getomerch_marking_worker reject
+host getomerch_rehearsal,getomerch_production getomerch_marking_worker 127.0.0.1/32 scram-sha-256
+host getomerch_rehearsal,getomerch_production getomerch_marking_worker ::1/128 scram-sha-256
+host all getomerch_marking_worker 127.0.0.1/32 reject
+host all getomerch_marking_worker ::1/128 reject
+HBA
+install -m 0640 -o postgres -g postgres "$hba_temporary" "$HBA_INCLUDE_FILE"
+rm -f "$hba_temporary"
+
+include_line="include_if_exists $HBA_INCLUDE_FILE"
+hba_main_temporary="$(mktemp "$(dirname "$HBA_MAIN")/.pg_hba.main.XXXXXX")"
+awk -v include_line="$include_line" '
+  $0 ~ /^[[:space:]]*include_if_exists[[:space:]].*pg_hba_getomerch_marking[.]conf/ { next }
+  !inserted && $0 !~ /^[[:space:]]*(#|$)/ {
+    print include_line
+    inserted = 1
+  }
+  { print }
+  END { if (!inserted) print include_line }
+' "$HBA_MAIN" > "$hba_main_temporary"
+if ! cmp -s "$HBA_MAIN" "$hba_main_temporary"; then
+  cp -a "$HBA_MAIN" "$HBA_MAIN.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+  install -m 0640 -o postgres -g postgres "$hba_main_temporary" "$HBA_MAIN"
+fi
+rm -f "$hba_main_temporary"
+psql_admin -d postgres -Atc 'select pg_reload_conf()' | grep -qx t || \
+  fail "PostgreSQL configuration reload failed"
+hba_errors="$(psql_admin -d postgres -Atc \
+  "select count(*) from pg_hba_file_rules where error is not null")"
+[[ "$hba_errors" == 0 ]] || fail "pg_hba_file_rules reports $hba_errors errors"
+
+apply_role_grants() {
+  local database="$1"
+  database_exists "$database" || return 0
+
+  psql_admin -d postgres >/dev/null <<SQL
+REVOKE ALL ON DATABASE $database FROM $ROLE;
+GRANT CONNECT ON DATABASE $database TO $ROLE;
+SQL
+
+  psql_admin -d "$database" >/dev/null <<SQL
+REVOKE ALL ON SCHEMA public FROM $ROLE;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM $ROLE;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM $ROLE;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM $ROLE;
+DO \$grants\$
+BEGIN
+  IF to_regclass('getomerch_jobs.marking_jobs') IS NULL
+     OR to_regclass('getomerch_marking.ozon_submission_batch_safe') IS NULL
+     OR to_regclass('getomerch_marking.ozon_submission_safe') IS NULL
+     OR to_regprocedure('getomerch_jobs.append_marking_job_event(uuid,text,text,jsonb)') IS NULL
+     OR to_regprocedure('getomerch_marking.claim_crpt_read_query(uuid,text)') IS NULL
+     OR to_regprocedure('getomerch_marking.create_remote_signature_request(text,text,bytea,bytea,bytea,integer,text,uuid,timestamp with time zone)') IS NULL THEN
+    RAISE EXCEPTION 'marking remote signer database objects are missing; apply migrations first';
+  END IF;
+END
+\$grants\$;
+GRANT USAGE ON SCHEMA getomerch_jobs TO $ROLE;
+GRANT USAGE ON SCHEMA getomerch_marking TO $ROLE;
+GRANT SELECT ON getomerch_jobs.marking_jobs TO $ROLE;
+GRANT INSERT (
+  type,
+  dedupe_key,
+  idempotency_key,
+  request_hash,
+  payload,
+  actor,
+  request_id,
+  max_attempts
+) ON getomerch_jobs.marking_jobs TO $ROLE;
+GRANT UPDATE (
+  status,
+  result,
+  progress,
+  attempt_count,
+  available_at,
+  locked_by,
+  locked_at,
+  heartbeat_at,
+  started_at,
+  finished_at,
+  cancel_requested_at,
+  error_code,
+  error_message,
+  updated_at
+) ON getomerch_jobs.marking_jobs TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_jobs.append_marking_job_event(
+  uuid, text, text, jsonb
+) TO $ROLE;
+GRANT SELECT ON getomerch_marking.ozon_submission_batch_safe,
+  getomerch_marking.ozon_submission_safe TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_ozon_exemplar_mapping(
+  uuid, jsonb, integer, jsonb, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.get_ozon_submission_material(
+  uuid, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_ozon_validation(
+  uuid, jsonb, jsonb
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_ozon_set_queued_for_poll(
+  uuid, text, jsonb
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_ozon_poll(
+  uuid, text, jsonb, jsonb
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_ozon_batch_failure(
+  uuid, text, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.claim_crpt_read_query(
+  uuid, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_crpt_read_success(
+  uuid, text, text, jsonb, boolean, boolean
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_crpt_read_failure(
+  uuid, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.create_remote_signature_request(
+  text, text, bytea, bytea, bytea, integer, text, uuid, timestamp with time zone
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.get_remote_signature_result(
+  uuid, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.consume_remote_signature_request(
+  uuid, text
+) TO $ROLE;
+REVOKE ALL ON getomerch_jobs.jobs FROM $ROLE;
+REVOKE ALL ON getomerch_jobs.job_events FROM $ROLE;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA getomerch_jobs FROM $ROLE;
+SQL
+}
+
+apply_role_grants "$REHEARSAL_DB"
+apply_role_grants "$PRODUCTION_DB"
+
+role_properties="$(psql_admin -d postgres -AtF '|' -c "
+  select rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+  from pg_roles where rolname = '$ROLE'
+")"
+[[ "$role_properties" == "f|f|f|f|f" ]] || fail "unsafe marking role attributes"
+
+if database_exists "$PRODUCTION_DB"; then
+  if PGPASSWORD="$GETOMERCH_MARKING_WORKER_DB_PASSWORD" \
+    PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$ROLE" PGDATABASE="$PRODUCTION_DB" \
+    psql -X -Atc 'select count(*) from getomerch_jobs.marking_jobs' >/dev/null; then
+    :
+  else
+    fail "marking worker cannot read its restricted queue view"
+  fi
+  if PGPASSWORD="$GETOMERCH_MARKING_WORKER_DB_PASSWORD" \
+    PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$ROLE" PGDATABASE="$PRODUCTION_DB" \
+    psql -X -Atc 'select count(*) from public.merch_colors' >/dev/null 2>&1; then
+    fail "marking worker unexpectedly reads public business tables"
+  fi
+fi
+
+if database_exists komui_production; then
+  if PGPASSWORD="$GETOMERCH_MARKING_WORKER_DB_PASSWORD" \
+    PGHOST="$DB_HOST" PGPORT="$DB_PORT" PGUSER="$ROLE" PGDATABASE=komui_production \
+    psql -X -Atc 'select 1' >/dev/null 2>&1; then
+    fail "HBA unexpectedly allowed marking worker into komui_production"
+  fi
+fi
+
+log "marking PostgreSQL isolation completed"

@@ -1,0 +1,33 @@
+{
+  "_fixture": {
+    "source": "production_read_only_sanitized",
+    "captured_at": "2026-07-26",
+    "contract": "POST /v3/posting/fbs/get",
+    "sample_size": 46,
+    "contains_secrets": false,
+    "contains_full_marking_codes": false
+  },
+  "result": {
+    "posting_number": "SANITIZED-FBS-POSTING-1",
+    "status": "delivering",
+    "products": [
+      {
+        "offer_id": "SANITIZED-TSHIRT-S",
+        "sku": 1000000000,
+        "quantity": 1,
+        "name": "Sanitized product"
+      }
+    ],
+    "product_exemplars": [],
+    "requirements": {
+      "products_requiring_gtd": [],
+      "products_requiring_country": [],
+      "products_requiring_mandatory_mark": [],
+      "products_requiring_rnpt": [],
+      "products_requiring_jw_uin": [],
+      "products_requiring_change_country": [],
+      "products_requiring_imei": [],
+      "products_requiring_weight": []
+    }
+  }
+}

@@ -13,7 +13,7 @@ import {
   recoverStaleJobs,
   updateJobProgress,
 } from "@/lib/jobs/queue";
-import type { BackgroundJob } from "@/lib/jobs/types";
+import { CORE_JOB_TYPES, type BackgroundJob } from "@/lib/jobs/types";
 import { isRetryableOzonError } from "@/lib/ozon/client";
 import { executeImportPreview } from "@/lib/ozon/import-server";
 import { executeFinanceSync } from "@/lib/ozon/sync-finance";
@@ -46,7 +46,7 @@ export async function runBackgroundWorker() {
 
   try {
     while (!stopping) {
-      const job = await claimNextJob(workerId);
+      const job = await claimNextJob(workerId, [...CORE_JOB_TYPES]);
       if (!job) {
         await sleep(pollMs);
         continue;
