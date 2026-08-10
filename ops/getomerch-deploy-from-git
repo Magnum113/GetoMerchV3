@@ -40,6 +40,7 @@ releases_dir="${GETOMERCH_RELEASES_DIR:-$base_dir/releases}"
 current_link="${GETOMERCH_CURRENT_LINK:-$base_dir/current}"
 service_unit="${GETOMERCH_SERVICE_UNIT:-getomerch-admin.service}"
 worker_unit="${GETOMERCH_WORKER_UNIT:-getomerch-worker.service}"
+marking_worker_unit="${GETOMERCH_MARKING_WORKER_UNIT:-getomerch-marking-worker.service}"
 log_dir="${GETOMERCH_DEPLOY_LOG_DIR:-/var/log/getomerch/deploy}"
 registry_path="${GETOMERCH_DEPLOY_REGISTRY:-/var/lib/getomerch/deploy-registry.jsonl}"
 current_state_path="${GETOMERCH_DEPLOY_CURRENT:-/var/lib/getomerch/deploy-current.json}"
@@ -443,6 +444,9 @@ rollback_previous() {
     if systemctl is-enabled --quiet "$worker_unit" 2>/dev/null; then
       systemctl restart "$worker_unit" || true
     fi
+    if systemctl is-enabled --quiet "$marking_worker_unit" 2>/dev/null; then
+      systemctl restart "$marking_worker_unit" || true
+    fi
   fi
 }
 
@@ -573,6 +577,10 @@ systemctl restart "$service_unit"
 if systemctl is-enabled --quiet "$worker_unit" 2>/dev/null; then
   systemctl restart "$worker_unit"
   add_check "$worker_unit restarted"
+fi
+if systemctl is-enabled --quiet "$marking_worker_unit" 2>/dev/null; then
+  systemctl restart "$marking_worker_unit"
+  add_check "$marking_worker_unit restarted"
 fi
 
 log "waiting for service"
