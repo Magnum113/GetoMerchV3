@@ -221,9 +221,14 @@ export function OrderItemMarkingControls({
                 <Badge variant="outline">ГИС МТ: {crptState(assignment.crptState)}</Badge>
                 <Badge variant="outline">Ozon: {ozonState(assignment.ozonState)}</Badge>
               </div>
-              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-                GTIN {assignment.gtin} · КМ {assignment.codeFingerprint}
-              </div>
+              <details className="mt-1 text-[11px] text-muted-foreground">
+                <summary className="w-fit cursor-pointer select-none hover:text-foreground">
+                  Идентификаторы КМ
+                </summary>
+                <div className="mt-1 break-all font-mono">
+                  GTIN {assignment.gtin} · КМ {assignment.codeFingerprint}
+                </div>
+              </details>
               <div className="mt-1 text-xs text-muted-foreground">
                 {assignment.shippingBlocker}
               </div>

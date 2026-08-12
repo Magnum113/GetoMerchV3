@@ -12,10 +12,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { OrderItemMarkingControls } from "@/components/marking/order-item-controls";
 import { api } from "@/lib/api";
+import { downloadOzonPackageLabels } from "@/lib/ozon/package-label-client";
 import { toast } from "sonner";
 import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse, PrintInventory } from "@/lib/types";
 import { OZON_STATUS_LABELS, OZON_STATUS_COLORS, WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
-import { ShoppingBag, RefreshCw, CheckCircle2, AlertTriangle, PackageCheck, Hammer, X, Search, Undo2, ExternalLink, Truck, Send } from "lucide-react";
+import { ShoppingBag, RefreshCw, CheckCircle2, AlertTriangle, PackageCheck, Hammer, X, Search, Undo2, ExternalLink, Truck, Send, Download, Loader2, ChevronDown } from "lucide-react";
 
 const POST_SHIPMENT_STATUSES = new Set([
   "delivering",
@@ -27,7 +28,7 @@ const POST_SHIPMENT_STATUSES = new Set([
   "not_accepted",
 ]);
 const TERMINAL_STATUSES = new Set([...POST_SHIPMENT_STATUSES, "cancelled"]);
-import { formatDate, formatDateShort, formatMoney, errorMessage } from "@/lib/utils";
+import { formatDate, formatMoney, errorMessage } from "@/lib/utils";
 
 type StockStatus = "ready" | "partial" | "needs_production" | "missing" | "unmatched";
 
@@ -401,9 +402,12 @@ export default function OrdersPage() {
     const list = targets.filter((o) => fulfillKind(o) !== null).sort(urgencyCompare);
     if (list.length === 0) return toast.error("Нет заказов, готовых к отправке");
     const markedCount = list.filter((order) => order.marking_shipping).length;
+    const kinds = new Set(list.map((order) => fulfillKind(order)));
     const question = markedCount > 0
       ? `Подтвердить фактическую передачу Ozon ${list.length} заказ(ов), включая маркируемых: ${markedCount}? Для их КМ будет создан дистанционный вывод из оборота.`
-      : `Произвести и отправить ${list.length} заказ(ов)? Спишутся готовые изделия, а где нужно — пустые и принты со склада.`;
+      : kinds.size === 1 && kinds.has("ship")
+        ? `Подтвердить передачу Ozon ${list.length} готовых заказ(ов)? Товары будут списаны со склада.`
+        : `Обработать ${list.length} заказ(ов)? Готовые товары или материалы для производства будут списаны со склада.`;
     if (!confirm(question)) return;
     setBulkBusy(true);
     const ok: string[] = [];
@@ -421,7 +425,7 @@ export default function OrdersPage() {
           failed.push({ posting: o.posting_number, msg: errorMessage(e) });
         }
       }
-      if (ok.length) toast.success(`Произведено и отправлено: ${ok.length}${failed.length ? `, с ошибками: ${failed.length}` : ""}`);
+      if (ok.length) toast.success(`Обработано заказов: ${ok.length}${failed.length ? `, с ошибками: ${failed.length}` : ""}`);
       if (failed.length) toast.error(`Не удалось: ${failed.slice(0, 3).map((f) => `${f.posting} — ${f.msg}`).join("; ")}${failed.length > 3 ? ` и ещё ${failed.length - 3}` : ""}`);
       setSelected(new Set());
       await reload();
@@ -450,6 +454,10 @@ export default function OrdersPage() {
         if (!hay.includes(search.toLowerCase())) return false;
       }
       return true;
+    }).sort(tab === "active" ? urgencyCompare : (a, b) => {
+      const left = a.in_process_at ? Date.parse(a.in_process_at) : 0;
+      const right = b.in_process_at ? Date.parse(b.in_process_at) : 0;
+      return right - left;
     });
   }, [orders, tab, search]);
   const activeCount = useMemo(
@@ -471,6 +479,15 @@ export default function OrdersPage() {
   const allFulfillableSelected = fulfillable.length > 0 && selectedOrders.length === fulfillable.length;
   const showBulkBar = tab === "active" && fulfillable.length > 0;
   const selectable = tab === "active" && !bulkBusy;
+  const bulkTargets = selectedOrders.length > 0 ? selectedOrders : fulfillable;
+  const bulkKinds = new Set(bulkTargets.map((order) => fulfillKind(order)));
+  const bulkLabel = bulkKinds.size === 1 && bulkKinds.has("ship")
+    ? `Передать Ozon (${bulkTargets.length})`
+    : bulkKinds.size === 1 && bulkKinds.has("produce")
+      ? `Произвести и передать Ozon (${bulkTargets.length})`
+      : bulkKinds.size === 1 && bulkKinds.has("workshop")
+        ? `Завершить заказы из цеха (${bulkTargets.length})`
+        : `Обработать заказы (${bulkTargets.length})`;
 
   function toggleOne(id: string) {
     setSelected((prev) => {
@@ -491,7 +508,7 @@ export default function OrdersPage() {
     <div>
       <PageHeader
         title="Заказы Ozon"
-        description="Заказы FBS из личного кабинета Ozon. Видно наличие готовой продукции и пустых для производства. Подтверждение передачи списывает товар со склада."
+        description="Рабочая очередь FBS и готовность заказов к передаче Ozon."
         action={
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => doSync("active")} disabled={syncing} title="Тянет только заказы, требующие действий (ждут упаковки / отгрузки)">
@@ -539,15 +556,11 @@ export default function OrdersPage() {
             )}
             <Button
               size="sm"
-              onClick={() => bulkFulfill(selectedOrders.length > 0 ? selectedOrders : fulfillable)}
+              onClick={() => bulkFulfill(bulkTargets)}
               disabled={bulkBusy}
             >
               <Hammer className="h-3.5 w-3.5" />
-              {bulkBusy
-                ? "Отправка…"
-                : selectedOrders.length > 0
-                  ? `Произвести и отправить выбранные (${selectedOrders.length})`
-                  : `Произвести и отправить все заказы (${fulfillable.length})`}
+              {bulkBusy ? "Обработка…" : bulkLabel}
             </Button>
           </div>
         </div>
@@ -621,12 +634,29 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
   const wsLinked = !!order.workshop_order_id && !shipped && !cancelled && !onOzonSide;
   const ws = order.workshop_order ?? null;
   const markingBlocked = !markingCanShip(order);
+  const [labelBusy, setLabelBusy] = useState(false);
+  const unitCount = order.items?.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
+
+  async function downloadLabels() {
+    setLabelBusy(true);
+    try {
+      await downloadOzonPackageLabels({
+        orderId: order.id,
+        postingNumber: order.posting_number,
+      });
+      toast.success("Этикетки Ozon скачаны");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLabelBusy(false);
+    }
+  }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
+    <Card className={selected ? "border-foreground/30 bg-muted/10" : undefined}>
+      <CardHeader className="p-4 pb-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
             {selectable && (
               <Checkbox
                 className="mt-1 shrink-0"
@@ -636,41 +666,52 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
               />
             )}
             <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <CardTitle className="text-base font-mono">{order.posting_number}</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-[15px] font-semibold">
+                <span className="text-muted-foreground">Отправление </span>
+                <span className="font-mono text-foreground">{order.posting_number}</span>
+              </CardTitle>
               <Badge className={statusColor}>{statusLabel}</Badge>
-              {shipped && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"><PackageCheck className="h-3 w-3 mr-1" /> Отправлен</Badge>}
+              {shipped && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"><PackageCheck className="mr-1 h-3 w-3" /> Склад списан</Badge>}
               {wsLinked && ws && (
                 <Badge className={`${WORKSHOP_STATUS_COLORS[ws.status]} gap-1`}>
                   <Hammer className="h-3 w-3" /> Цех: {WORKSHOP_STATUS_LABELS[ws.status]}
                 </Badge>
               )}
-              {order.marking_shipping && (
+              {order.marking_shipping && order.marking_shipping.requiredUnits > 0 && (
                 <Badge variant={order.marking_shipping.allowed ? "outline"
                   : order.marking_shipping.mode === "enforce" ? "destructive" : "secondary"}
                   title="Предварительная готовность КМ. Окончательная проверка выполняется сервером при передаче."
                 >
-                  Маркировка {order.marking_shipping.readyUnits}/
-                  {order.marking_shipping.requiredUnits}
+                  КМ {order.marking_shipping.readyUnits}/{order.marking_shipping.requiredUnits}
                   {order.marking_shipping.mode === "observe" ? " · наблюдение" : ""}
                 </Badge>
               )}
             </div>
-            <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
-              {order.in_process_at && <span>Создан: {formatDate(order.in_process_at)}</span>}
-              {order.shipment_date && <span>Отгрузка до: {formatDateShort(order.shipment_date)}</span>}
-              {order.customer_name && <span>{order.customer_name}</span>}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              {order.shipment_date && (
+                <span className={deadlineClass(order.shipment_date, cancelled || onOzonSide)}>
+                  Отгрузить до {formatDate(order.shipment_date)}
+                </span>
+              )}
+              <span>{unitCount} {pluralizeUnits(unitCount)}</span>
               {order.total_price != null && <span className="font-medium text-foreground">{formatMoney(order.total_price)}</span>}
             </div>
-            {order.fulfillment && (
-              <div className="mt-1 text-[11px] text-muted-foreground font-mono break-all">
-                ID исполнения: {order.fulfillment.id} · {order.fulfillment.source_channel}/
-                {order.fulfillment.source_order_key}
-              </div>
-            )}
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            {!cancelled && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={downloadLabels}
+                disabled={labelBusy}
+                title="Скачать официальный PDF Ozon: QR заказа и штрихкод товара, 58x40 мм. Ozon формирует файл после сборки заказа."
+              >
+                {labelBusy ? <Loader2 className="animate-spin" /> : <Download />}
+                Этикетки Ozon
+              </Button>
+            )}
             {showActions && !shipped && wsLinked && (
               <Button size="sm" onClick={onFulfillViaWorkshop} disabled={markingBlocked}>
                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -700,9 +741,9 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
               </Button>
             )}
             {onOzonSide && !shipped && (
-              <Badge variant="outline" className="gap-1"><Truck className="h-3 w-3" /> На стороне Ozon</Badge>
+              <Badge variant="outline" className="gap-1"><Truck className="h-3 w-3" /> У Ozon</Badge>
             )}
-            <Button size="sm" variant="ghost" asChild>
+            <Button size="icon" variant="ghost" asChild title="Открыть отправление в Ozon" className="hidden sm:inline-flex">
               <a
                 href={`https://seller.ozon.ru/app/postings/${order.source === "fbo" ? "fbo" : "fbs"}?postingDetails=${order.posting_number}`}
                 target="_blank"
@@ -714,7 +755,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="px-4 pb-4 pt-0">
         {order.marking_shipping && !order.marking_shipping.allowed && (
           <div className={`mb-3 flex items-start gap-2 border-y px-3 py-2 text-xs ${
             order.marking_shipping.mode === "enforce"
@@ -730,7 +771,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
             </span>
           </div>
         )}
-        <div className="rounded-md border bg-muted/30">
+        <div className="border-y">
           {order.items?.map((it, idx) => (
             <ItemRow
               key={it.id}
@@ -743,8 +784,9 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
           ))}
         </div>
         {order.shipped_at && (
-          <div className="text-xs text-muted-foreground mt-2">Отправлен в {formatDate(order.shipped_at)}</div>
+          <div className="mt-2 text-xs text-muted-foreground">Склад списан {formatDate(order.shipped_at)}</div>
         )}
+        <OrderTechnicalDetails order={order} />
       </CardContent>
     </Card>
   );
@@ -770,7 +812,7 @@ function ItemRow({
   onMarkingChanged: () => Promise<void>;
 }) {
   return (
-    <div className={`flex items-start justify-between gap-3 p-3 ${top ? "" : "border-t"}`}>
+    <div className={`flex items-start justify-between gap-3 py-3 ${top ? "" : "border-t"}`}>
       <div className="flex-1 min-w-0">
         {item.product ? (
           <ProductDisplay p={item.product} compact />
@@ -778,6 +820,11 @@ function ItemRow({
           <div>
             <div className="font-medium">{item.name ?? item.offer_id}</div>
             <div className="text-[11px] font-mono text-muted-foreground">{item.offer_id}</div>
+          </div>
+        )}
+        {item.product && (
+          <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+            {item.offer_id}
           </div>
         )}
         {availability && (
@@ -789,17 +836,6 @@ function ItemRow({
           item={item}
           onChanged={onMarkingChanged}
         />
-        {item.fulfillment && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <MarkingRequirementBadge requirement={item.fulfillment.marking_requirement} />
-            <span
-              className="text-[10px] text-muted-foreground font-mono break-all"
-              title={item.fulfillment.source_item_key}
-            >
-              ID позиции исполнения: {item.fulfillment.id}
-            </span>
-          </div>
-        )}
       </div>
       <div className="text-right shrink-0">
         <div className="font-semibold tabular-nums">{item.quantity} шт</div>
@@ -807,40 +843,6 @@ function ItemRow({
       </div>
     </div>
   );
-}
-
-function MarkingRequirementBadge({
-  requirement,
-}: {
-  requirement: "unknown" | "required" | "not_required";
-}) {
-  if (requirement === "required") {
-    return (
-      <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-        Маркировка требуется
-      </Badge>
-    );
-  }
-  if (requirement === "not_required") {
-    return (
-      <Badge className="bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-        Маркировка не требуется
-      </Badge>
-    );
-  }
-  return (
-    <Badge className="bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-      Маркировка неизвестна
-    </Badge>
-  );
-}
-
-function whDetail(list: { warehouseName: string; qty: number }[], total?: number) {
-  if (list.length === 0) return "";
-  if (list.length === 1 && (total == null || list[0].qty === total)) {
-    return ` · ${list[0].warehouseName}`;
-  }
-  return ` · ${list.map((w) => `${w.warehouseName}: ${w.qty}`).join(", ")}`;
 }
 
 function sumByWarehouseType(list: WhQty[], type: Warehouse["type"], warehouseTypeById: Map<string, Warehouse["type"]>) {
@@ -851,15 +853,8 @@ function sumByWarehouseType(list: WhQty[], type: Warehouse["type"], warehouseTyp
   return total;
 }
 
-function blankGarmentLabel(product: Product | null) {
-  const raw = `${product?.category?.slug ?? ""} ${product?.category?.name ?? ""}`.toLowerCase();
-  if (raw.includes("hoodie") || raw.includes("худи")) return "худи";
-  if (raw.includes("sweatshirt") || raw.includes("свит")) return "свитшот";
-  if (raw.includes("tshirt") || raw.includes("shirt") || raw.includes("фут")) return "футболку";
-  return "изделие";
-}
-
 function AvailabilityBadge({ a }: { a: ItemAvailability }) {
+  const productionNeed = Math.max(0, a.need - a.finished);
   if (a.status === "unmatched") {
     return (
       <Badge className="bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 gap-1">
@@ -870,78 +865,131 @@ function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   if (a.status === "ready") {
     return (
       <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 gap-1">
-        <CheckCircle2 className="h-3 w-3" /> Готово: {a.finished}{whDetail(a.finishedByWh, a.finished)}
+        <CheckCircle2 className="h-3 w-3" /> Готово к упаковке · {a.finished}/{a.need}
       </Badge>
     );
   }
-  const blanksLabel = a.isPrint ? "Пустых на моём складе" : "Пустых";
-  const needForProduction = a.need - a.finished;
-  if (a.status === "partial") {
-    return (
-      <div className="flex flex-wrap gap-1.5">
-        <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 gap-1">
-          <AlertTriangle className="h-3 w-3" /> Готово: {a.finished} / {a.need}{whDetail(a.finishedByWh, a.finished)}
-        </Badge>
-        {a.blankProduct && a.blank > 0 && (
-          <Badge variant="outline" className="gap-1">
-            <Hammer className="h-3 w-3" /> {blanksLabel} для допроизводства: {a.blank}{whDetail(a.blankByWh, a.blank)}
-          </Badge>
-        )}
-        <WorkshopTransferBadge a={a} />
-        <PrintBadge a={a} need={needForProduction} />
-      </div>
-    );
-  }
-  if (a.status === "needs_production") {
-    return (
-      <div className="flex flex-wrap gap-1.5">
-        <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 gap-1">
-          <Hammer className="h-3 w-3" />{" "}
-          {a.isPrint
-            ? `Готовых нет, есть пустые на моём складе: ${a.blank}`
-            : `Готовых нет, есть пустые: ${a.blank}`}
-          {whDetail(a.blankByWh, a.blank)}
-        </Badge>
-        <WorkshopTransferBadge a={a} />
-        <PrintBadge a={a} need={needForProduction} />
-      </div>
-    );
-  }
+
+  const state = availabilityState(a, productionNeed);
   return (
-    <div className="flex flex-wrap gap-1.5">
-      <Badge className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 gap-1">
-        <X className="h-3 w-3" />{" "}
-        {a.isPrint ? "Готовых нет · пустых нет на моём складе" : "Нет ни готовых, ни пустых"}
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge className={`${state.className} gap-1`}>
+        <state.icon className="h-3 w-3" /> {state.label}
       </Badge>
-      <WorkshopTransferBadge a={a} />
-      <PrintBadge a={a} need={needForProduction} />
+      {a.finished > 0 && <ResourceBadge label="Готовые" value={a.finished} need={a.need} />}
+      {a.blankProduct && (
+        <ResourceBadge
+          label={a.isPrint ? "Заготовки" : "В цехе"}
+          value={a.isPrint ? a.blank : a.blankAtWorkshop}
+          need={productionNeed}
+        />
+      )}
+      {!a.isPrint && a.blankAtOwn > 0 && (
+        <ResourceBadge label="У меня" value={a.blankAtOwn} need={a.workshopTransferQty || productionNeed} />
+      )}
+      {a.hasPrintInfo && <ResourceBadge label="Принты" value={a.print} need={productionNeed} />}
     </div>
   );
 }
 
-function WorkshopTransferBadge({ a }: { a: ItemAvailability }) {
-  if (a.isPrint || !a.needsWorkshopTransfer) return null;
+function availabilityState(a: ItemAvailability, productionNeed: number) {
+  if (a.canOwnProduce) {
+    return {
+      label: a.finished > 0 ? "Допроизвести" : "Можно изготовить",
+      className: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+      icon: Hammer,
+    };
+  }
+  if (a.needsWorkshopTransfer) {
+    return {
+      label: `Передать в цех · ${a.workshopTransferQty}`,
+      className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+      icon: Truck,
+    };
+  }
+  if (a.printShort) {
+    return {
+      label: "Не хватает принтов",
+      className: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+      icon: X,
+    };
+  }
+  if (a.blank < productionNeed) {
+    return {
+      label: "Не хватает заготовок",
+      className: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+      icon: X,
+    };
+  }
+  return {
+    label: a.status === "partial" ? "Готово частично" : "Нужно изготовить",
+    className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    icon: AlertTriangle,
+  };
+}
+
+function ResourceBadge({ label, value, need }: { label: string; value: number; need: number }) {
+  const enough = value >= need;
   return (
-    <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 gap-1">
-      <Truck className="h-3 w-3" /> Нужно отправить {blankGarmentLabel(a.blankProduct)} на склад вышивки: {a.workshopTransferQty}
+    <Badge variant="outline" className={enough ? "text-emerald-700" : "text-red-700"}>
+      {label} {value}/{need}
     </Badge>
   );
 }
 
-// Наличие принтов на складе для производства печатной позиции.
-function PrintBadge({ a, need }: { a: ItemAvailability; need: number }) {
-  if (!a.hasPrintInfo) return null;
-  const enough = a.print >= need;
+function OrderTechnicalDetails({ order }: { order: OzonOrder }) {
+  const itemRows = order.items?.flatMap((item) => [
+    { label: `Позиция ${item.offer_id}`, value: item.fulfillment?.id ?? item.fulfillment_item_id },
+    { label: `Ozon SKU ${item.offer_id}`, value: item.ozon_sku },
+  ]) ?? [];
+  const rows = [
+    { label: "Номер заказа Ozon", value: order.order_number },
+    { label: "Ozon order ID", value: order.order_id?.toString() },
+    { label: "Внутренний ID", value: order.id },
+    { label: "ID исполнения", value: order.fulfillment?.id ?? order.fulfillment_order_id },
+    { label: "Ключ источника", value: order.fulfillment?.source_order_key },
+    ...itemRows,
+  ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+
+  if (rows.length === 0 && !order.customer_name && !order.in_process_at) return null;
   return (
-    <Badge
-      className={`gap-1 ${enough
-        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-        : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"}`}
-    >
-      {enough ? <CheckCircle2 className="h-3 w-3" /> : <X className="h-3 w-3" />}{" "}
-      {enough ? `Принты на складе: ${a.print}` : `Принтов не хватает: ${a.print} / ${need}`}
-    </Badge>
+    <details className="group mt-3 border-t pt-2 text-xs text-muted-foreground">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1 py-1 font-medium hover:text-foreground">
+        <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+        Технические данные
+      </summary>
+      <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+        {order.in_process_at && <TechnicalValue label="Создан" value={formatDate(order.in_process_at)} />}
+        {order.customer_name && <TechnicalValue label="Получатель" value={order.customer_name} />}
+        {rows.map((row) => <TechnicalValue key={`${row.label}:${row.value}`} label={row.label} value={row.value} mono />)}
+      </div>
+    </details>
   );
+}
+
+function TechnicalValue({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div>{label}</div>
+      <div className={`break-all text-foreground ${mono ? "font-mono" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+function deadlineClass(value: string, inactive: boolean) {
+  if (inactive) return "";
+  const remaining = Date.parse(value) - Date.now();
+  if (remaining < 0) return "font-semibold text-red-700";
+  if (remaining < 24 * 60 * 60 * 1_000) return "font-semibold text-amber-700";
+  return "font-medium text-foreground";
+}
+
+function pluralizeUnits(value: number) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return "товар";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "товара";
+  return "товаров";
 }
 
 function blankKey(cat: string, fab: string, col: string, sz: string) {

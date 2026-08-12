@@ -12,6 +12,7 @@ export type AdminApiErrorCode =
   | "method_not_allowed"
   | "supabase_query_failed"
   | "server_config_error"
+  | "upstream_error"
   | "internal_error";
 
 export class AdminApiError extends Error {

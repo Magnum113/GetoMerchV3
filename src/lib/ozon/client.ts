@@ -111,6 +111,90 @@ export async function ozonPost<T>(
     : new OzonApiError("Ozon request failed", { retryable: true });
 }
 
+export async function ozonPostPdf(
+  path: string,
+  body: unknown,
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    attempts?: number;
+  } = {},
+): Promise<Uint8Array> {
+  const credentials = ozonCredentials();
+  const attempts = clampInteger(options.attempts ?? DEFAULT_ATTEMPTS, 1, 6);
+  const timeoutMs = clampInteger(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 1_000, 60_000);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (options.signal?.aborted) throw cancelledError(options.signal.reason);
+    try {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : timeoutSignal;
+      const response = await fetch(`${ozonBaseUrl()}${path}`, {
+        method: "POST",
+        headers: {
+          "Client-Id": credentials.clientId,
+          "Api-Key": credentials.apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/pdf",
+        },
+        body: JSON.stringify(body),
+        cache: "no-store",
+        signal,
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!response.ok) {
+        const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        const error = new OzonApiError(
+          `Ozon ${path} returned ${response.status}${bytes.length > 0 ? `: ${sanitizeBody(new TextDecoder().decode(bytes))}` : ""}`,
+          {
+            status: response.status,
+            retryable,
+            code: `ozon_http_${response.status}`,
+          },
+        );
+        if (!retryable || attempt >= attempts) throw error;
+        const delayMs = parseRetryAfter(response.headers.get("retry-after")) ?? retryDelay(attempt);
+        await abortableSleep(delayMs, options.signal);
+        lastError = error;
+        continue;
+      }
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      const isPdf = bytes.length >= 5
+        && new TextDecoder("ascii").decode(bytes.slice(0, 5)) === "%PDF-";
+      if (!contentType.startsWith("application/pdf") || !isPdf) {
+        throw new OzonApiError(`Ozon ${path} returned an invalid PDF`, {
+          status: response.status,
+          retryable: false,
+          code: "ozon_invalid_pdf",
+        });
+      }
+      return bytes;
+    } catch (error) {
+      if (error instanceof OzonApiError) throw error;
+      if (options.signal?.aborted) throw cancelledError(options.signal.reason);
+      const retryable = isTransientNetworkError(error);
+      const wrapped = new OzonApiError(
+        retryable ? `Ozon ${path} request failed temporarily` : `Ozon ${path} request failed`,
+        {
+          retryable,
+          code: retryable ? "ozon_network_error" : "ozon_request_error",
+          cause: error,
+        },
+      );
+      lastError = wrapped;
+      if (!retryable || attempt >= attempts) throw wrapped;
+      await abortableSleep(retryDelay(attempt), options.signal);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new OzonApiError("Ozon PDF request failed", { retryable: true });
+}
+
 export function isRetryableOzonError(error: unknown) {
   let current: unknown = error;
   for (let depth = 0; depth < 5 && current; depth += 1) {
