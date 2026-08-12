@@ -12,7 +12,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { OrderItemMarkingControls } from "@/components/marking/order-item-controls";
 import { api } from "@/lib/api";
-import { downloadOzonPackageLabels } from "@/lib/ozon/package-label-client";
+import {
+  downloadOzonPackageLabelBundle,
+  downloadOzonPackageLabels,
+} from "@/lib/ozon/package-label-client";
 import { toast } from "sonner";
 import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse, PrintInventory } from "@/lib/types";
 import { OZON_STATUS_LABELS, OZON_STATUS_COLORS, WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
@@ -28,6 +31,7 @@ const POST_SHIPMENT_STATUSES = new Set([
   "not_accepted",
 ]);
 const TERMINAL_STATUSES = new Set([...POST_SHIPMENT_STATUSES, "cancelled"]);
+const BULK_LABEL_STATUSES = new Set(["awaiting_deliver", "acceptance_in_progress"]);
 import { formatDate, formatMoney, errorMessage } from "@/lib/utils";
 
 type StockStatus = "ready" | "partial" | "needs_production" | "missing" | "unmatched";
@@ -89,6 +93,7 @@ export default function OrdersPage() {
   const [tab, setTab] = useState<"active" | "shipped" | "all">("active");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [labelBundleBusy, setLabelBundleBusy] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -443,6 +448,24 @@ export default function OrdersPage() {
     } catch (e) { toast.error(errorMessage(e)); }
   }
 
+  async function downloadLabelBundle(targets: OzonOrder[]) {
+    if (targets.length === 0) return toast.error("Нет готовых этикеток Ozon");
+    setLabelBundleBusy(true);
+    try {
+      await downloadOzonPackageLabelBundle({
+        orders: targets.map((order) => ({
+          id: order.id,
+          postingNumber: order.posting_number,
+        })),
+      });
+      toast.success(`Скачан один PDF для ${targets.length} отправлений`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setLabelBundleBusy(false);
+    }
+  }
+
   const filtered = useMemo(() => {
     return orders.filter((o) => {
       // FBO-отправления отгружает сам Ozon — здесь они не нужны
@@ -460,10 +483,13 @@ export default function OrdersPage() {
       return right - left;
     });
   }, [orders, tab, search]);
-  const activeCount = useMemo(
-    () => orders.filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status)).length,
+  const activeOrders = useMemo(
+    () => orders
+      .filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status))
+      .sort(urgencyCompare),
     [orders],
   );
+  const activeCount = activeOrders.length;
   const shippedCount = useMemo(
     () => orders.filter((o) => o.source !== "fbo" && (o.shipped_at || POST_SHIPMENT_STATUSES.has(o.status))).length,
     [orders],
@@ -473,13 +499,20 @@ export default function OrdersPage() {
     [orders],
   );
 
-  // Заказы, которые реально можно закрыть одним действием (для чекбоксов и кнопок).
+  // Складские и печатные массовые действия используют один выбор, но свои
+  // наборы допустимых заказов. Этикетки Ozon появляются после упаковки.
   const fulfillable = filtered.filter((o) => fulfillKind(o) !== null);
-  const selectedOrders = fulfillable.filter((o) => selected.has(o.id));
-  const allFulfillableSelected = fulfillable.length > 0 && selectedOrders.length === fulfillable.length;
-  const showBulkBar = tab === "active" && fulfillable.length > 0;
-  const selectable = tab === "active" && !bulkBusy;
-  const bulkTargets = selectedOrders.length > 0 ? selectedOrders : fulfillable;
+  const selectedOrders = activeOrders.filter((o) => selected.has(o.id));
+  const selectedFulfillable = fulfillable.filter((o) => selected.has(o.id));
+  const visibleSelectable = tab === "active" ? filtered : [];
+  const allVisibleSelected = visibleSelectable.length > 0
+    && visibleSelectable.every((o) => selected.has(o.id));
+  const showBulkBar = tab === "active" && filtered.length > 0;
+  const selectable = tab === "active" && !bulkBusy && !labelBundleBusy;
+  const bulkTargets = selectedOrders.length > 0 ? selectedFulfillable : fulfillable;
+  const labelSource = selectedOrders.length > 0 ? selectedOrders : activeOrders;
+  const labelTargets = labelSource.filter(canDownloadBulkLabel);
+  const skippedLabelCount = labelSource.length - labelTargets.length;
   const bulkKinds = new Set(bulkTargets.map((order) => fulfillKind(order)));
   const bulkLabel = bulkKinds.size === 1 && bulkKinds.has("ship")
     ? `Передать Ozon (${bulkTargets.length})`
@@ -498,9 +531,9 @@ export default function OrdersPage() {
   }
   function toggleSelectAll() {
     setSelected((prev) =>
-      fulfillable.length > 0 && prev.size >= fulfillable.length && fulfillable.every((o) => prev.has(o.id))
-        ? new Set()
-        : new Set(fulfillable.map((o) => o.id)),
+      allVisibleSelected
+        ? new Set(Array.from(prev).filter((id) => !visibleSelectable.some((order) => order.id === id)))
+        : new Set([...prev, ...visibleSelectable.map((o) => o.id)]),
     );
   }
 
@@ -539,29 +572,47 @@ export default function OrdersPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3 rounded-md border bg-muted/30 px-3 py-2">
           <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
             <Checkbox
-              checked={allFulfillableSelected ? true : selectedOrders.length > 0 ? "indeterminate" : false}
+              checked={allVisibleSelected ? true : selectedOrders.length > 0 ? "indeterminate" : false}
               onCheckedChange={toggleSelectAll}
-              disabled={bulkBusy}
+              disabled={bulkBusy || labelBundleBusy}
               aria-label="Выбрать все заказы"
             />
             {selectedOrders.length > 0
-              ? `Выбрано: ${selectedOrders.length} из ${fulfillable.length}`
-              : `Выбрать готовые к действию (${fulfillable.length} из ${filtered.length})`}
+              ? `Выбрано: ${selectedOrders.length} из ${activeOrders.length}`
+              : `Выбрать все активные (${activeOrders.length})`}
           </label>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {selectedOrders.length > 0 && (
-              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkBusy}>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={bulkBusy || labelBundleBusy}>
                 Снять выделение
               </Button>
             )}
             <Button
               size="sm"
-              onClick={() => bulkFulfill(bulkTargets)}
-              disabled={bulkBusy}
+              variant="outline"
+              onClick={() => downloadLabelBundle(labelTargets)}
+              disabled={labelBundleBusy || bulkBusy || labelTargets.length === 0}
+              title={skippedLabelCount > 0
+                ? `${skippedLabelCount} заказ(ов) ещё ждут упаковки, Ozon пока не сформировал для них этикетки`
+                : "Скачать один PDF со всеми этикетками 58x40 мм"}
             >
-              <Hammer className="h-3.5 w-3.5" />
-              {bulkBusy ? "Обработка…" : bulkLabel}
+              {labelBundleBusy ? <Loader2 className="animate-spin" /> : <Download />}
+              {labelBundleBusy
+                ? "Сборка PDF…"
+                : selectedOrders.length > 0
+                  ? `Этикетки выбранных (${labelTargets.length}${skippedLabelCount > 0 ? ` из ${labelSource.length}` : ""})`
+                  : `Все этикетки (${labelTargets.length}${skippedLabelCount > 0 ? ` из ${labelSource.length}` : ""})`}
             </Button>
+            {bulkTargets.length > 0 && (
+              <Button
+                size="sm"
+                onClick={() => bulkFulfill(bulkTargets)}
+                disabled={bulkBusy || labelBundleBusy}
+              >
+                <Hammer className="h-3.5 w-3.5" />
+                {bulkBusy ? "Обработка…" : bulkLabel}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -591,7 +642,7 @@ export default function OrdersPage() {
               availabilityByItem={availabilityByItem}
               canSendToWorkshop={workshopEligible(o)}
               canProduceAndShip={canProduceAndShip(o)}
-              selectable={selectable && fulfillKind(o) !== null}
+              selectable={selectable}
               selected={selected.has(o.id)}
               onToggleSelect={() => toggleOne(o.id)}
               onShip={() => ship(o)}
@@ -796,6 +847,10 @@ function markingCanShip(order: OzonOrder) {
   return !order.marking_shipping
     || order.marking_shipping.mode !== "enforce"
     || order.marking_shipping.allowed;
+}
+
+function canDownloadBulkLabel(order: OzonOrder) {
+  return BULK_LABEL_STATUSES.has(order.status) && order.source !== "fbo";
 }
 
 function ItemRow({
