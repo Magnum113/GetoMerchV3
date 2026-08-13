@@ -2595,10 +2595,11 @@ Rollback не возвращает runtime на Supabase и не удаляет 
 импортировались. Все 138 актуальных Ozon SKU имеют опубликованные и
 подтвержденные GTIN, verified/enabled/ready profiles; blocked и conflicts
 отсутствуют. Завершенные и отмененные FBS posting сохраняются как история, но
-не участвуют в определении текущего Ozon marking requirement. Следующий
-production-шаг выполняется ограниченным canary, а
-следующий этап разработки: этап 14. Реальная detached подпись УКЭП, read-only ГИС МТ,
-контрольные `LP_INTRODUCE_GOODS` и `LK_RECEIPT/DISTANCE`, подтвержденные
+не участвуют в определении текущего Ozon marking requirement. Реальная
+attached CAdES-BES подпись и production auth-only True API canary этапа 9
+успешно выполнены; token остаётся только в памяти worker, все write-флаги
+выключены. Следующий этап разработки: этап 14. Реальная detached подпись
+документа, контрольные `LP_INTRODUCE_GOODS` и `LK_RECEIPT/DISTANCE`, подтвержденные
 `LP_RETURN`, `in_circulation`/`withdrawn`, а также физическая приемка шаблона
 `getomerch-58x40-v1` на двух принтерах остаются обязательными воротами перед
 pilot rollout.

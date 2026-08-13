@@ -49,6 +49,16 @@ function testOperationalFailureStates() {
     providerErrorFromStderr("Error: License is expired. [ErrorCode: 0x20000325]").code,
     "provider_license_expired",
   );
+  const opaqueProviderError = providerErrorFromStderr([
+    "internal provider detail that must not be exposed",
+    "[ErrorCode: 0x80090020]",
+  ].join("\n"));
+  assert.equal(opaqueProviderError.code, "provider_exit_error");
+  assert.equal(
+    opaqueProviderError.message,
+    "Signature provider returned an error (0x80090020)",
+  );
+  assert.equal(opaqueProviderError.message.includes("internal provider detail"), false);
 }
 
 async function testDelayedUnixSocketResponse() {

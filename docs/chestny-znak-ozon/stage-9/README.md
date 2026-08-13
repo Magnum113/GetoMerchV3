@@ -1,9 +1,10 @@
 # Этап 9: signer и read-only ГИС МТ
 
 Дата реализации: 4 августа 2026 года. Актуализировано: 13 августа 2026 года.
-Статус: код и production-инфраструктура этапа завершены, sandbox и production
-challenge доступны. Действующая лицензия CryptoPro CSP установлена на Mac;
-физическую подпись и auth canary после установки еще нужно выполнить.
+Статус: код и production-инфраструктура этапа завершены. Реальная attached
+CAdES-BES подпись через Рутокен и auth-only production True API canary успешно
+выполнены; unified token получен только в памяти worker. Все write-флаги
+остались выключенными.
 Подробный протокол:
 [PRODUCTION_CANARY_2026-08-10.md](PRODUCTION_CANARY_2026-08-10.md). Инструкция
 агента: [MAC_AGENT.md](MAC_AGENT.md).
@@ -122,8 +123,9 @@ PIN не помещается в env или credential: его читает `cry
 `limit_req_zone` и exact location snippets. Полные команды, порядок
 `nginx -t`, credential install и rollback приведены в [MAC_AGENT.md](MAC_AGENT.md).
 
-На Mac signer и relay до завершения физического canary запускаются вручную в
-двух терминалах. Это сохраняет интерактивный stdin CryptoPro и исключает
+На Mac signing-сессия запускается одной командой
+`ops/chestny-znak/run-mac-signing-session`: relay работает в фоне, а signer
+остаётся foreground-процессом с интерактивным stdin CryptoPro. Это исключает
 хранение PIN. Автозапуск через launchd допустим только после отдельного решения
 для интерактивного PIN.
 
@@ -176,12 +178,9 @@ npm run build
 
 ## Остаточный rollout gate
 
-- выполнить физическую attached CAdES-BES подпись сначала для sandbox, затем
-  auth-only production с уже установленной действующей лицензией CryptoPro
-  CSP;
 - статус КМ и документа проверить после появления реального объекта: сейчас в
   production нет ни одного КМ и документа, фиктивные значения запрещены.
 
-Egress challenge, nginx auth/rate-limit, offline/restart, срок сертификата и
-fail-closed flags проверены. Все CRPT/Ozon/SUZ write-флаги остаются
-выключенными.
+Egress challenge, nginx auth/rate-limit, offline/restart, срок сертификата,
+физическая подпись, production auth и fail-closed flags проверены. Все
+CRPT/Ozon/SUZ write-флаги остаются выключенными.

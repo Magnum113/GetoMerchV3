@@ -1,11 +1,10 @@
 # Честный знак в GetoMerch Admin
 
 Дата актуализации: 13 августа 2026 года.
-Статус: этапы 0-13 реализованы; production-блок 2 завершен. Этап 9 развернут в
-read-only sandbox-режиме, все внешние write-операции маркировки выключены.
-Действующая лицензия CryptoPro CSP установлена на Mac; физический auth canary
-после установки еще не выполнен. Миграции fulfillment/marking `0005`-`0019`
-развернуты в production.
+Статус: этапы 0-13 реализованы; production-блок 2 завершен. Этап 9 прошёл
+физическую УКЭП-подпись и auth-only canary в production read-only contour.
+Все внешние write-операции маркировки выключены. Миграции
+fulfillment/marking `0005`-`0019` развернуты в production.
 
 Канонический технический и операционный документ:
 [FLOW.md](FLOW.md).
@@ -373,9 +372,10 @@ merch_marking_code_order_items
 - после rollout создана и проверена зашифрованная резервная копия с успешной
   off-site загрузкой;
 - реальные КМ не импортировались; физическая приемка шаблона на принтерах,
-  реальный exemplar canary, физическая подпись через Mac signer, True API и
-  СУЗ еще не выполнялись. Локальные credentials созданы, реальный сертификат
-  проверен через CryptoPro, signer успешно прошёл start/stop без подписи.
+  реальный exemplar canary, документные операции True API и СУЗ еще не
+  выполнялись. Реальный сертификат и Рутокен проверены через CryptoPro;
+  attached CAdES-BES и production True API auth прошли с первой завершённой
+  попытки, unified token получен только в памяти worker.
 
 Подробный отчет production-блока 2:
 [BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md](BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
@@ -389,9 +389,10 @@ merch_marking_code_order_items
 [stage-11/README.md](stage-11/README.md) и
 [stage-12/README.md](stage-12/README.md) и
 [stage-13/README.md](stage-13/README.md). Следующий этап разработки: общий
-reconciliation, hardening и поэтапный rollout (этап 14). Production rollout этапов 10-13 всё ещё
-требует физического signer canary, одного подтверждённого `in_circulation` КМ
-и вручную сверенных дистанционного вывода и возврата в оборот.
+reconciliation, hardening и поэтапный rollout (этап 14). Production rollout
+этапов 10-13 всё ещё требует одного подтверждённого `in_circulation` КМ и
+вручную сверенных дистанционного вывода и возврата в оборот; signer auth gate
+этапа 9 закрыт.
 
 ## 12. Официальные источники
 

@@ -39,7 +39,7 @@ export function createMarkingSignerClient(input: {
       const response = await exchangeSignerRequest(
         input.socketPath,
         request,
-        input.timeoutMs ?? 70_000,
+        input.timeoutMs ?? 80_000,
       );
       const verified = verifySignerResponse(response, {
         requestId: request.requestId,
@@ -92,7 +92,7 @@ export function exchangeSignerRequest(socketPath: string, request: unknown, time
     };
     const timer = setTimeout(
       () => finish(new SignerProtocolError("signer_timeout", "Signer request timed out")),
-      Math.max(1_000, Math.min(75_000, timeoutMs)),
+      Math.max(1_000, Math.min(80_000, timeoutMs)),
     );
     socket.setEncoding("utf8");
     // Keep the writable side open until the signer finishes its asynchronous work.

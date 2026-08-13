@@ -885,9 +885,10 @@ posting_number + product_id + assignment_version + operation_kind
 Статус реализации: код, migrations `0013/0014`, signer boundary, CRPT auth/read
 adapter, изолированная marking-очередь, durable jobs, API/UI и outbound-only
 Mac-агент развернуты в production. Heartbeat с реальным Рутокеном, nginx
-`401/429` и challenge-контракты sandbox/production проверены. Владелец
-установил действующую лицензию CryptoPro CSP; физическую подпись и auth canary
-после установки еще нужно повторить. Подробности —
+`401/429` и challenge-контракты sandbox/production проверены. Действующая
+лицензия CryptoPro CSP установлена; реальная attached CAdES-BES подпись и
+auth-only production canary успешно выполнены. Unified token хранится только
+в памяти worker, write-флаги остались выключенными. Подробности —
 [`stage-9/PRODUCTION_CANARY_2026-08-10.md`](stage-9/PRODUCTION_CANARY_2026-08-10.md).
 
 ### Цель
@@ -1699,7 +1700,7 @@ entities: adapters переводят их в стабильные внутре�
 | 6 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Units, bindings, assignments, JIT-склад и reconciliation развернуты; runtime write paths выключены |
 | 7 | развернут, flags off | `stage-7/README.md` | off | Защищенная этикетка 58x40 и FBS UX доступны; физическая приемка шаблона остается rollout gate |
 | 8 | развернут, flags off | `stage-8/README.md` | off | Revisioned Ozon batches, exemplar adapter, durable jobs, async status и UI развернуты; реальный canary отдельно |
-| 9 | развернут, flags off | `stage-9/MAC_AGENT.md` | off | Local Unix signer, outbound-only Mac agent, encrypted broker, memory-only token, CRPT read jobs и UI развернуты; физическая подпись и canary отдельно |
+| 9 | canary | `stage-9/PRODUCTION_CANARY_2026-08-10.md` | off | Реальная attached CAdES-BES подпись и auth-only production True API прошли; token memory-only, CRPT/Ozon/SUZ write flags выключены; status реального КМ/документа после появления объекта |
 | 10 | развернут, flags off | `stage-10/README.md` | off | Revisioned `LP_INTRODUCE_GOODS`, detached signer pipeline и подтверждение `in_circulation` развернуты; production canary отдельно |
 | 11 | развернут, flags off | `stage-11/README.md` | off | Транзакционный shipping gate, physical handover и `LK_RECEIPT/DISTANCE` развернуты; production canary и производственный календарь отдельно |
 | 12 | развернут, flags off | `stage-12/README.md` | off | Ozon returns, `LP_RETURN`, физическая приемка и FBS -> FBO custody развернуты; реальные возвраты и ЭДО evidence отдельно |
@@ -1753,9 +1754,10 @@ marking signal включает JIT-поток, а terminal posting больше
 блока 2 удалены. Полный отчет находится в
 [`BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md`](./BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
 
-Следующий шаг: ограниченный canary signer/read-only ГИС МТ и только после его
-успеха последовательное включение отдельных внешних операций по воротам
-этапов 8-13.
+Signer/read-only auth canary этапа 9 успешно завершён. Следующий шаг — не
+массовое включение, а один контролируемый canary этапа 10 с реальным КМ:
+нанесение, `LP_INTRODUCE_GOODS` и подтверждение `in_circulation`. До него все
+внешние write-флаги остаются выключенными.
 
 ## 34. Источники и обязательная повторная проверка
 

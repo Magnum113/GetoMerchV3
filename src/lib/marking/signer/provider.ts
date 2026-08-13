@@ -146,7 +146,12 @@ async function executeProvider(input: {
     console.log("[marking-signer] CryptoPro signing started; enter PIN in this terminal when requested");
     const result = await runProvider(input.command, args);
     if (result.code !== 0) {
-      throw providerErrorFromStderr(result.stderr);
+      const error = providerErrorFromStderr(result.stderr);
+      console.error("[marking-signer] CryptoPro signing failed", {
+        code: error.code,
+        message: error.message,
+      });
+      throw error;
     }
     const signature = await readFile(outputPath);
     if (signature.length < 64 || signature.length > 131_072) {
@@ -261,7 +266,18 @@ export function providerErrorFromStderr(stderr: string) {
   if (/certificate|сертификат|expired|ист[её]к/i.test(stderr)) {
     return new MarkingSignatureProviderError("provider_certificate_error", "Signature certificate is unavailable");
   }
-  return new MarkingSignatureProviderError("provider_exit_error", "Signature provider returned an error");
+  const diagnosticCode = extractCryptoProErrorCode(stderr);
+  return new MarkingSignatureProviderError(
+    "provider_exit_error",
+    diagnosticCode
+      ? `Signature provider returned an error (${diagnosticCode})`
+      : "Signature provider returned an error",
+  );
+}
+
+function extractCryptoProErrorCode(stderr: string) {
+  const matches = [...stderr.matchAll(/(?:ErrorCode\s*:\s*|\b)(0x[0-9a-f]{8})\b/gi)];
+  return matches.at(-1)?.[1]?.toLowerCase() ?? null;
 }
 
 async function assertExecutable(path: string) {

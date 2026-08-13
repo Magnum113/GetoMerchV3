@@ -21,6 +21,9 @@ import {
 } from "@/lib/marking/signer/provider";
 
 const MAX_REQUEST_BYTES = 64_000;
+// CryptoPro may wait up to 60 seconds for physical PIN entry. Keep the Unix
+// response channel alive beyond the provider timeout and license preflight.
+const SIGNER_SOCKET_RESPONSE_TIMEOUT_MS = 75_000;
 
 export async function runMarkingSigner() {
   const config = getMarkingRuntimeConfig();
@@ -148,7 +151,7 @@ async function handleSocket(
   replay: SignerReplayGuard,
 ) {
   socket.setEncoding("utf8");
-  socket.setTimeout(20_000, () => socket.destroy());
+  socket.setTimeout(SIGNER_SOCKET_RESPONSE_TIMEOUT_MS, () => socket.destroy());
   let body = "";
   let handled = false;
   socket.on("data", (chunk) => {

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONFIG_DIR="${GETOMERCH_MARKING_CONFIG_DIR:-$HOME/.config/getomerch-marking}"
+ENV_FILE="${GETOMERCH_MARKING_MAC_AGENT_ENV:-$CONFIG_DIR/marking-mac-agent.env}"
+LOG_DIR="$CONFIG_DIR/logs"
+AGENT_LOG="$LOG_DIR/mac-agent.log"
+agent_pid=""
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM HUP
+  if [[ -n "$agent_pid" ]] && kill -0 "$agent_pid" 2>/dev/null; then
+    kill -TERM "$agent_pid" 2>/dev/null || true
+    wait "$agent_pid" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+
+[[ -f "$ENV_FILE" ]] || fail "protected Mac-agent env not found: $ENV_FILE"
+[[ -r "$ENV_FILE" ]] || fail "protected Mac-agent env is not readable"
+command -v npm >/dev/null 2>&1 || fail "npm is required"
+
+mkdir -p "$LOG_DIR"
+chmod 700 "$CONFIG_DIR" "$LOG_DIR"
+touch "$AGENT_LOG"
+chmod 600 "$AGENT_LOG"
+
+cd "$REPO_ROOT"
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+trap cleanup EXIT INT TERM HUP
+
+npm run marking:mac-agent >>"$AGENT_LOG" 2>&1 &
+agent_pid=$!
+sleep 1
+if ! kill -0 "$agent_pid" 2>/dev/null; then
+  wait "$agent_pid" || true
+  fail "Mac-agent failed to start; inspect $AGENT_LOG"
+fi
+
+printf 'Mac-agent started in background. Safe log: %s\n' "$AGENT_LOG"
+printf 'Signer is starting in this terminal.\n'
+printf 'When signing begins, enter the Rutoken PIN here and press Return.\n'
+printf 'Do not send the PIN in chat and do not store it in an environment variable.\n\n'
+
+npm run marking:signer

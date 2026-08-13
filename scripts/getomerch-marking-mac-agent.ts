@@ -35,7 +35,7 @@ async function main() {
     socketPath: config.signerSocketPath,
     caller: config.signerClientId,
     secretFile: config.signerClientSecretFile,
-    timeoutMs: 70_000,
+    timeoutMs: 80_000,
   });
   const runtime: AgentRuntime = {
     pinState: "unknown",
