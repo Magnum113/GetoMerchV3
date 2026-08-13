@@ -371,9 +371,16 @@ merch_marking_code_order_items
   развернуты, а все внешние marking write flags оставлены выключенными;
 - после rollout создана и проверена зашифрованная резервная копия с успешной
   off-site загрузкой;
-- реальные КМ не импортировались; физическая приемка шаблона на принтерах,
-  реальный exemplar canary, документные операции True API и СУЗ еще не
-  выполнялись. Реальный сертификат и Рутокен проверены через CryptoPro;
+- первый production-пилот СУЗ завершен для GTIN `04628837736075`: заказаны,
+  подписаны УКЭП и выданы 5 КМ, автоматически сформированный отчет о нанесении
+  обработан успешно `5 из 5`; PDF содержит пять этикеток приблизительно
+  `57,86 x 39,86 мм`, все DataMatrix декодируются и уникальны;
+- те же 5 КМ прошли штатный preview/apply без дублей и отказов и хранятся в
+  защищенном пуле как `available + emitted`; ручной import-флаг после операции
+  снова выключен, временные plaintext-файлы удалены;
+- физическая приемка шаблона на принтере, реальный exemplar canary и
+  документный `LP_INTRODUCE_GOODS` еще не выполнялись. Реальный сертификат и
+  Рутокен проверены через CryptoPro;
   attached CAdES-BES и production True API auth прошли с первой завершённой
   попытки, unified token получен только в памяти worker.
 
@@ -381,6 +388,8 @@ merch_marking_code_order_items
 [BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md](BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
 Фактическая сверка SKU--GTIN этапа 4:
 [stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md](stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md).
+Фактический выпуск и импорт пяти КМ:
+[stage-5/PRODUCTION_PILOT_IMPORT_2026-08-13.md](stage-5/PRODUCTION_PILOT_IMPORT_2026-08-13.md).
 
 Фактические границы этапа 9, Mac-агента и ввода в оборот приведены в
 [stage-9/README.md](stage-9/README.md) и

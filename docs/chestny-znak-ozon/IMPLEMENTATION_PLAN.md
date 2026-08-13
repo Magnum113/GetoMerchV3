@@ -1696,7 +1696,7 @@ entities: adapters переводят их в стабильные внутре�
 | 2 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Generic fulfillment и Ozon FBS projection развернуты; FBO isolation проверена; выполнен backfill 52 item |
 | 3 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Core schema, state machine, atomic events и read-only API/UI развернуты в production |
 | 4 | развернут, flags off | `stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md` | off | 138 profiles: все verified/enabled/ready, draft/blocked/conflicts=0; D26/D27 опубликованы; terminal Ozon posting исключены из текущего requirement |
-| 5 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | AES/HMAC pool, streaming preview/apply, quarantine и TTL cleanup развернуты; реальные КМ не импортировались |
+| 5 | canary | `stage-5/PRODUCTION_PILOT_IMPORT_2026-08-13.md` | off | Пять реальных КМ GTIN `04628837736075` выданы СУЗ, отчет о нанесении успешен `5/5`, preview/apply завершен без дублей и отказов; коды `available + emitted`, import-флаг снова выключен |
 | 6 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Units, bindings, assignments, JIT-склад и reconciliation развернуты; runtime write paths выключены |
 | 7 | развернут, flags off | `stage-7/README.md` | off | Защищенная этикетка 58x40 и FBS UX доступны; физическая приемка шаблона остается rollout gate |
 | 8 | развернут, flags off | `stage-8/README.md` | off | Revisioned Ozon batches, exemplar adapter, durable jobs, async status и UI развернуты; реальный canary отдельно |
@@ -1740,7 +1740,15 @@ entities: adapters переводят их в стабильные внутре�
 endpoint и периодическая очистка временных импортов. Выполнен идемпотентный
 backfill: создано 52 fulfillment для существующих Ozon FBS item, при этом FBO
 заказы не создают fulfillment. Внешние операции ГИС МТ, СУЗ и Ozon exemplar
-остаются выключенными fail-closed флагами; реальные КМ не импортировались.
+остаются выключенными fail-closed флагами.
+
+13 августа выполнен ограниченный production-пилот этапа 5 для GTIN
+`04628837736075`: через кабинет СУЗ подписан заказ пяти КМ, выдача и
+автоматический отчет о нанесении обработаны успешно `5 из 5`. Пять уникальных
+DataMatrix прошли штатный preview/apply без дублей и отказов и находятся в
+зашифрованном пуле как `available + emitted`. Import-флаг после операции снова
+выключен; временные plaintext-артефакты удалены. Подробности:
+[`stage-5/PRODUCTION_PILOT_IMPORT_2026-08-13.md`](./stage-5/PRODUCTION_PILOT_IMPORT_2026-08-13.md).
 
 Для этапа 4 применен точный манифест 138 Ozon SKU--GTIN: все 138 GTIN
 опубликованы, подтверждены и готовы, включая семь D26/D27. Optional Ozon

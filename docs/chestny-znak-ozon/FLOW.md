@@ -2591,15 +2591,18 @@ Rollback не возвращает runtime на Supabase и не удаляет 
 На 13 августа 2026 года этапы 0-13 реализованы. После rehearsal миграции
 `0005`-`0019` применены к `getomerch_production`, серверные marking credentials
 и изолированный worker развернуты, 52 существующих Ozon FBS item получили
-внутренние fulfillment. Все внешние write flags выключены, реальные КМ не
-импортировались. Все 138 актуальных Ozon SKU имеют опубликованные и
-подтвержденные GTIN, verified/enabled/ready profiles; blocked и conflicts
-отсутствуют. Завершенные и отмененные FBS posting сохраняются как история, но
-не участвуют в определении текущего Ozon marking requirement. Реальная
-attached CAdES-BES подпись и production auth-only True API canary этапа 9
-успешно выполнены; token остаётся только в памяти worker, все write-флаги
-выключены. Следующий этап разработки: этап 14. Реальная detached подпись
-документа, контрольные `LP_INTRODUCE_GOODS` и `LK_RECEIPT/DISTANCE`, подтвержденные
+внутренние fulfillment. Для GTIN `04628837736075` выпущены пять реальных КМ:
+СУЗ подтвердил выдачу и автоматический отчет о нанесении `5 из 5`, штатный
+preview/apply импортировал все пять без дублей и отказов. Они хранятся в
+зашифрованном пуле как `available + emitted`; import-флаг после операции снова
+выключен. Все внешние write flags также выключены. Все 138 актуальных Ozon SKU
+имеют опубликованные и подтвержденные GTIN, verified/enabled/ready profiles;
+blocked и conflicts отсутствуют. Завершенные и отмененные FBS posting
+сохраняются как история, но не участвуют в определении текущего Ozon marking
+requirement. Реальная attached CAdES-BES подпись и production auth-only True
+API canary этапа 9 успешно выполнены; token остаётся только в памяти worker.
+Следующий этап разработки: этап 14. Реальная detached подпись документа,
+контрольные `LP_INTRODUCE_GOODS` и `LK_RECEIPT/DISTANCE`, подтвержденные
 `LP_RETURN`, `in_circulation`/`withdrawn`, а также физическая приемка шаблона
 `getomerch-58x40-v1` на двух принтерах остаются обязательными воротами перед
 pilot rollout.
