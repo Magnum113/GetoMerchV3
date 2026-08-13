@@ -16,8 +16,10 @@ import {
   MARKING_LABEL_WIDTH_MM,
   createGs1DataMatrix,
   expectedScannerPayload,
+  inferSize,
   millimetersToPoints,
   renderMarkingLabelPdf,
+  wrapText,
 } from "@/lib/marking/labels/template";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import { assertLabelAccess } from "@/lib/marking/services/label-service";
@@ -113,6 +115,26 @@ async function main() {
     assert.equal(pdfBinary.includes(golden.signature), false);
     assert.equal(pdf.getTitle(), undefined);
     assert.equal(pdf.getSubject(), undefined);
+    assert.equal(MARKING_LABEL_TEMPLATE_VERSION, "getomerch-58x40-v2");
+    assert.equal(inferSize(golden.offerId), "S");
+    assert.equal(inferSize("D16-TSH-PRT-WBEG-2XL"), "XXL");
+    assert.deepEqual(
+      wrapText(
+        "D16-TSH-PRT-WGRY-XXL",
+        { widthOfTextAtSize: (value) => value.length * 5 },
+        5.2,
+        65,
+        2,
+      ),
+      ["D16-TSH-PRT-", "WGRY-XXL"],
+    );
+    assert.throws(() => wrapText(
+      "VALUE-WITHOUT-A-VALID-BREAK-THAT-DOES-NOT-FIT",
+      { widthOfTextAtSize: (value) => value.length * 5 },
+      5.2,
+      20,
+      2,
+    ));
 
     const route = await readFile(
       `${ROOT}/src/app/api/admin/marking/assignments/[id]/label/route.ts`,

@@ -11,7 +11,7 @@ import {
 import { parseGs1MarkingCode } from "@/lib/marking/domain/code-pool";
 import { MarkingDomainError } from "@/lib/marking/domain/errors";
 
-export const MARKING_LABEL_TEMPLATE_VERSION = "getomerch-58x40-v1";
+export const MARKING_LABEL_TEMPLATE_VERSION = "getomerch-58x40-v2";
 export const MARKING_LABEL_WIDTH_MM = 58;
 export const MARKING_LABEL_HEIGHT_MM = 40;
 export const MARKING_LABEL_DPI = 300;
@@ -198,9 +198,9 @@ function drawMetadata(
 ) {
   const left = millimetersToPoints(32);
   const maxWidth = millimetersToPoints(23);
-  let y = millimetersToPoints(35.5);
-  const line = (text: string, size = 6, selectedFont = font, gapMm = 3.2) => {
-    page.drawText(fitText(text, selectedFont, size, maxWidth), {
+  let y = millimetersToPoints(36);
+  const line = (text: string, size: number, selectedFont: PDFFont, gapMm: number) => {
+    page.drawText(text, {
       x: left,
       y,
       size,
@@ -210,24 +210,63 @@ function drawMetadata(
     y -= millimetersToPoints(gapMm);
   };
 
-  line("GETOMERCH", 8, bold, 4.2);
-  line("GS1 DATAMATRIX", 5.5, bold, 4);
-  line(`GTIN ${metadata.gtin}`, 5.5, font, 4);
-  line(`SKU ${safeAscii(metadata.offerId ?? metadata.productSku ?? "-")}`, 5.5);
-  line(`ORDER ${safeAscii(metadata.postingNumber ?? "-")}`, 5.5);
-  line(`UNIT ${metadata.unitOrdinal}/${metadata.itemQuantity}`, 5.5);
-  line(`ID ${metadata.fingerprint}`, 5.5);
-  line("SIZE 58x40 MM", 5, font, 3);
-  line(MARKING_LABEL_TEMPLATE_VERSION.toUpperCase(), 4.5);
+  const sku = safeAscii(metadata.offerId ?? metadata.productSku ?? "-");
+  const order = safeAscii(metadata.postingNumber ?? "-");
+  const size = inferSize(sku);
+
+  line("SKU", 4.2, font, 2.1);
+  for (const value of wrapText(sku, bold, 5.2, maxWidth, 2)) {
+    line(value, 5.2, bold, 2.55);
+  }
+  y -= millimetersToPoints(0.7);
+
+  line("ORDER", 4.2, font, 2.1);
+  for (const value of wrapText(order, bold, 5.2, maxWidth, 2)) {
+    line(value, 5.2, bold, 2.55);
+  }
+  y -= millimetersToPoints(0.7);
+
+  line(`SIZE ${size}`, 5.6, bold, 3.5);
+  line("GTIN", 4.2, font, 2.1);
+  line(metadata.gtin, 4.8, font, 2.5);
 }
 
-function fitText(text: string, font: PDFFont, size: number, maxWidth: number) {
-  if (font.widthOfTextAtSize(text, size) <= maxWidth) return text;
-  let value = text;
-  while (value.length > 1 && font.widthOfTextAtSize(`${value}...`, size) > maxWidth) {
-    value = value.slice(0, -1);
+export function wrapText(
+  text: string,
+  font: Pick<PDFFont, "widthOfTextAtSize">,
+  size: number,
+  maxWidth: number,
+  maxLines: number,
+) {
+  if (font.widthOfTextAtSize(text, size) <= maxWidth) return [text];
+  const chunks = text.split(/(?<=-)/);
+  const lines: string[] = [];
+  let current = "";
+  for (const chunk of chunks) {
+    const candidate = current + chunk;
+    if (current && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+      lines.push(current);
+      current = chunk;
+    } else {
+      current = candidate;
+    }
   }
-  return `${value}...`;
+  if (current) lines.push(current);
+  if (
+    lines.length > maxLines
+    || lines.some((value) => font.widthOfTextAtSize(value, size) > maxWidth)
+  ) {
+    throw new MarkingDomainError(
+      "invalid_label",
+      "Артикул или номер заказа не помещается на этикетку 58x40",
+    );
+  }
+  return lines;
+}
+
+export function inferSize(sku: string) {
+  const value = sku.match(/(?:^|-)(2XL|XXL|XL|L|M|S)$/i)?.[1]?.toUpperCase();
+  return value === "2XL" ? "XXL" : value ?? "-";
 }
 
 function safeAscii(value: string) {
