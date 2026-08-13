@@ -29,15 +29,18 @@ import {
   downloadMarkingLabel,
   postMarkingMutation,
 } from "@/lib/marking/client";
+import type { MarkingLabelDownloadReceipt } from "@/lib/marking/order-state";
 import type { MarkingAssignmentListItem } from "@/lib/marking/read-models/types";
 import type { OzonOrderItem } from "@/lib/types";
 
 export function OrderItemMarkingControls({
   item,
   onChanged,
+  onLabelRendered,
 }: {
   item: OzonOrderItem;
   onChanged: () => Promise<void>;
+  onLabelRendered: (receipt: MarkingLabelDownloadReceipt) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [cancelItem, setCancelItem] =
@@ -73,18 +76,18 @@ export function OrderItemMarkingControls({
   async function download(assignment: MarkingAssignmentListItem) {
     setBusy(`label:${assignment.id}`);
     try {
-      await downloadMarkingLabel({
+      const receipt = await downloadMarkingLabel({
         assignmentId: assignment.id,
         expectedRevision: assignment.assignmentRevision,
         postingNumber: assignment.postingNumber,
         unitOrdinal: assignment.unitOrdinal,
       });
+      onLabelRendered(receipt);
       toast.success(
         assignment.renderCount === 0
           ? "Этикетка 58x40 сформирована"
           : "Повторная этикетка сформирована",
       );
-      await onChanged();
     } catch (error) {
       toast.error(message(error, "Не удалось сформировать этикетку"));
     } finally {

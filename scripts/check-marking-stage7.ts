@@ -23,6 +23,8 @@ import {
 } from "@/lib/marking/labels/template";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import { assertLabelAccess } from "@/lib/marking/services/label-service";
+import { applyMarkingLabelDownload } from "@/lib/marking/order-state";
+import type { OzonOrder } from "@/lib/types";
 
 type Golden = {
   gtin: string;
@@ -135,6 +137,51 @@ async function main() {
       20,
       2,
     ));
+
+    const assignment = {
+      id: "11111111-1111-4111-8111-111111111111",
+      assignmentRevision: 1,
+      renderCount: 0,
+      templateVersion: null,
+      labelState: "not_rendered",
+      canRenderLabel: true,
+      canReprintLabel: false,
+      canConfirmApplied: false,
+    };
+    const otherOrder = { id: "other" } as OzonOrder;
+    const order = {
+      id: "target",
+      items: [{
+        id: "item",
+        marking: {
+          candidates: [],
+          assignments: [assignment],
+        },
+      }],
+    } as unknown as OzonOrder;
+    const originalOrders = [order, otherOrder];
+    const updatedOrders = applyMarkingLabelDownload(originalOrders, {
+      assignmentId: assignment.id,
+      assignmentRevision: 2,
+      renderCount: 1,
+      templateVersion: MARKING_LABEL_TEMPLATE_VERSION,
+    });
+    assert.notEqual(updatedOrders, originalOrders);
+    assert.notEqual(updatedOrders[0], order);
+    assert.equal(updatedOrders[1], otherOrder);
+    const updatedAssignment = updatedOrders[0]?.items?.[0]?.marking?.assignments[0];
+    assert.equal(updatedAssignment?.assignmentRevision, 2);
+    assert.equal(updatedAssignment?.renderCount, 1);
+    assert.equal(updatedAssignment?.labelState, "label_rendered");
+    assert.equal(updatedAssignment?.canRenderLabel, false);
+    assert.equal(updatedAssignment?.canReprintLabel, true);
+    assert.equal(updatedAssignment?.canConfirmApplied, true);
+    assert.equal(applyMarkingLabelDownload(originalOrders, {
+      assignmentId: "22222222-2222-4222-8222-222222222222",
+      assignmentRevision: 2,
+      renderCount: 1,
+      templateVersion: MARKING_LABEL_TEMPLATE_VERSION,
+    }), originalOrders);
 
     const route = await readFile(
       `${ROOT}/src/app/api/admin/marking/assignments/[id]/label/route.ts`,

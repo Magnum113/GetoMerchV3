@@ -11,6 +11,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
 import { OrderItemMarkingControls } from "@/components/marking/order-item-controls";
+import {
+  applyMarkingLabelDownload,
+  type MarkingLabelDownloadReceipt,
+} from "@/lib/marking/order-state";
 import { api } from "@/lib/api";
 import {
   downloadOzonPackageLabelBundle,
@@ -88,6 +92,10 @@ export default function OrdersPage() {
     }
   }
   useEffect(() => { reload(); }, []);
+
+  function updateDownloadedMarkingLabel(receipt: MarkingLabelDownloadReceipt) {
+    setOrders((current) => applyMarkingLabelDownload(current, receipt));
+  }
 
   const ownWarehouse = warehouses.find((w) => w.type === "own");
   const defaultWorkshop = warehouses.find((w) => w.type === "workshop");
@@ -522,6 +530,7 @@ export default function OrdersPage() {
               onFulfillViaWorkshop={() => fulfillViaWorkshop(o)}
               onProduceAndShip={() => produceAndShip(o)}
               onMarkingChanged={reload}
+              onMarkingLabelRendered={updateDownloadedMarkingLabel}
             />
           ))}
         </div>
@@ -530,7 +539,7 @@ export default function OrdersPage() {
   );
 }
 
-function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, selectable, selected, onToggleSelect, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip, onMarkingChanged }: {
+function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, selectable, selected, onToggleSelect, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip, onMarkingChanged, onMarkingLabelRendered }: {
   order: OzonOrder;
   ready: boolean;
   availabilityByItem: Map<string, ItemAvailability>;
@@ -545,6 +554,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
   onFulfillViaWorkshop: () => void;
   onProduceAndShip: () => void;
   onMarkingChanged: () => Promise<void>;
+  onMarkingLabelRendered: (receipt: MarkingLabelDownloadReceipt) => void;
 }) {
   const statusLabel = OZON_STATUS_LABELS[order.status] ?? order.status;
   const statusColor = OZON_STATUS_COLORS[order.status] ?? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
@@ -702,6 +712,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
               top={idx === 0}
               showPrice={(order.items?.length ?? 0) > 1}
               onMarkingChanged={onMarkingChanged}
+              onMarkingLabelRendered={onMarkingLabelRendered}
             />
           ))}
         </div>
@@ -730,12 +741,14 @@ function ItemRow({
   top,
   showPrice,
   onMarkingChanged,
+  onMarkingLabelRendered,
 }: {
   item: OzonOrderItem;
   availability: ItemAvailability | null;
   top: boolean;
   showPrice: boolean;
   onMarkingChanged: () => Promise<void>;
+  onMarkingLabelRendered: (receipt: MarkingLabelDownloadReceipt) => void;
 }) {
   return (
     <div className={`flex items-start justify-between gap-3 py-3 ${top ? "" : "border-t"}`}>
@@ -761,6 +774,7 @@ function ItemRow({
         <OrderItemMarkingControls
           item={item}
           onChanged={onMarkingChanged}
+          onLabelRendered={onMarkingLabelRendered}
         />
       </div>
       <div className="text-right shrink-0">

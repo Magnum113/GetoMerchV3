@@ -1,5 +1,7 @@
 "use client";
 
+import type { MarkingLabelDownloadReceipt } from "@/lib/marking/order-state";
+
 type ErrorPayload = {
   ok?: false;
   error?: { message?: string };
@@ -30,7 +32,7 @@ export async function downloadMarkingLabel(input: {
   expectedRevision: number;
   postingNumber: string | null;
   unitOrdinal: number;
-}) {
+}): Promise<MarkingLabelDownloadReceipt> {
   const response = await fetch(
     `/api/admin/marking/assignments/${input.assignmentId}/label`,
     {
@@ -48,6 +50,20 @@ export async function downloadMarkingLabel(input: {
   if (response.headers.get("content-type") !== "application/pdf") {
     throw new Error("Сервер вернул некорректный формат этикетки");
   }
+  const assignmentRevision = Number(
+    response.headers.get("x-marking-assignment-revision"),
+  );
+  const renderCount = Number(response.headers.get("x-marking-render-count"));
+  const templateVersion = response.headers.get("x-marking-template-version");
+  if (
+    !Number.isSafeInteger(assignmentRevision)
+    || assignmentRevision < 1
+    || !Number.isSafeInteger(renderCount)
+    || renderCount < 1
+    || !templateVersion
+  ) {
+    throw new Error("Сервер не подтвердил состояние сформированной этикетки");
+  }
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -60,10 +76,10 @@ export async function downloadMarkingLabel(input: {
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
   return {
-    assignmentRevision: Number(
-      response.headers.get("x-marking-assignment-revision"),
-    ),
-    renderCount: Number(response.headers.get("x-marking-render-count")),
+    assignmentId: input.assignmentId,
+    assignmentRevision,
+    renderCount,
+    templateVersion,
   };
 }
 
