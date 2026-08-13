@@ -85,6 +85,7 @@ const readModels = read("src/lib/marking/read-models/repository.ts");
 const service = read("src/lib/marking/services/product-readiness-service.ts");
 const page = read("src/app/marking/page.tsx");
 const reconciliation = read("scripts/reconcile-marking-product-profiles.ts");
+const liveRequirementMigration = read("db/migrations/0019_marking_live_ozon_requirement.sql");
 
 for (const table of [
   "merch_marking_product_profile_channels",
@@ -131,7 +132,13 @@ assert.match(reconciliation, /ozon_requirement_mismatch/);
 assert.match(reconciliation, /canReuseExistingProfile/);
 assert.match(reconciliation, /changed:\s*false/);
 assert.match(reconciliation, /profile:\$\{snapshotVersion\}/);
+assert.match(reconciliation, /fulfillment_order\.source_status <> ALL/);
 assert.doesNotMatch(reconciliation, /productName|ozonName/);
+assert.equal(
+  (readModels.match(/fulfillment_order\.source_status <> ALL/g) ?? []).length,
+  2,
+);
+assert.match(liveRequirementMigration, /fulfillment_order\.source_status <> ALL/);
 
 const apiRoutes = [
   "src/app/api/admin/marking/profiles/route.ts",

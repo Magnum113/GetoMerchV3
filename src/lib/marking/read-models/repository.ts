@@ -407,6 +407,18 @@ export class PostgresMarkingReadRepository {
             ON fulfillment_order.id = item.fulfillment_order_id
           WHERE fulfillment_order.source_channel = 'ozon_fbs'
             AND item.source_active
+            AND fulfillment_order.source_status <> ALL (
+              ARRAY[
+                'delivering',
+                'delivered',
+                'driver_pickup',
+                'sent_by_seller',
+                'arbitration',
+                'client_arbitration',
+                'not_accepted',
+                'cancelled'
+              ]::text[]
+            )
             AND item.offer_id IS NOT NULL
           ORDER BY item.offer_id, item.updated_at DESC, item.id DESC
         ),
@@ -748,6 +760,18 @@ export class PostgresMarkingReadRepository {
             ON fulfillment_order.id = item.fulfillment_order_id
           WHERE fulfillment_order.source_channel = 'ozon_fbs'
             AND item.source_active
+            AND fulfillment_order.source_status <> ALL (
+              ARRAY[
+                'delivering',
+                'delivered',
+                'driver_pickup',
+                'sent_by_seller',
+                'arbitration',
+                'client_arbitration',
+                'not_accepted',
+                'cancelled'
+              ]::text[]
+            )
             AND item.offer_id IS NOT NULL
           ORDER BY item.offer_id, item.updated_at DESC, item.id DESC
         ),

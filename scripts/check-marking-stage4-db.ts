@@ -193,7 +193,7 @@ async function main() {
       declaredColor: "Белый",
       declaredSize: "L",
     });
-    await insertOzonRequirement(
+    const mismatchOrderId = await insertOzonRequirement(
       fixture.ozonMismatchId,
       fixture.ozonMismatchSku,
       "not_required",
@@ -207,6 +207,21 @@ async function main() {
       ),
       (error) => pgCode(error) === "MZ107",
     );
+    await pool.query(
+      `
+        UPDATE public.merch_fulfillment_orders
+        SET source_status = 'cancelled', updated_at = clock_timestamp()
+        WHERE id = $1::uuid
+      `,
+      [mismatchOrderId],
+    );
+    const terminalIgnored = await setOperationalStatus(
+      ozonProfile.profile_id,
+      Number(ozonVerified.revision),
+      "enabled",
+      null,
+    );
+    assert.equal(terminalIgnored.operational_status, "enabled");
 
     const runId = await createBackfillPreview(
       fixture.backfillId,
@@ -593,6 +608,7 @@ async function insertOzonRequirement(
     `,
     [order.rows[0].id, `${key}:item`, productId, offerId, requirement],
   );
+  return order.rows[0].id;
 }
 
 async function createBackfillPreview(
