@@ -1,6 +1,6 @@
 # План разработки интеграции «Честный знак» в GetoMerch Admin
 
-Дата актуализации: 10 августа 2026 года.
+Дата актуализации: 13 августа 2026 года.
 Статус: этапы 0-13 реализованы; production-блок 2 завершен с внешними
 write-интеграциями, оставленными выключенными.
 
@@ -517,9 +517,8 @@ GET /api/admin/marking/events
 ## 12. Этап 4. Product readiness и GTIN
 
 Статус реализации: развернут в production с внешними flags off. Точный
-reconciliation выполнен для 138 актуальных Ozon-футболок: 124 профиля готовы,
-7 ожидают модерацию НК, 7 приостановлены из-за Ozon
-`ozon_requirement_mismatch`.
+reconciliation выполнен для 138 актуальных Ozon-футболок: все 138 профилей
+verified/enabled/ready, blocked и conflicts отсутствуют.
 
 ### Цель
 
@@ -886,9 +885,9 @@ posting_number + product_id + assignment_version + operation_kind
 Статус реализации: код, migrations `0013/0014`, signer boundary, CRPT auth/read
 adapter, изолированная marking-очередь, durable jobs, API/UI и outbound-only
 Mac-агент развернуты в production. Heartbeat с реальным Рутокеном, nginx
-`401/429` и challenge-контракты sandbox/production проверены. Физическая
-подпись остановилась до PIN из-за просроченной лицензии CryptoPro CSP; после её
-активации остается повторить auth canary. Подробности —
+`401/429` и challenge-контракты sandbox/production проверены. Владелец
+установил действующую лицензию CryptoPro CSP; физическую подпись и auth canary
+после установки еще нужно повторить. Подробности —
 [`stage-9/PRODUCTION_CANARY_2026-08-10.md`](stage-9/PRODUCTION_CANARY_2026-08-10.md).
 
 ### Цель
@@ -1695,7 +1694,7 @@ entities: adapters переводят их в стабильные внутре�
 | 1 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Fail-closed config, redaction, keyring, изолированные queue/DB role/worker/signer развернуты в production |
 | 2 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Generic fulfillment и Ozon FBS projection развернуты; FBO isolation проверена; выполнен backfill 52 item |
 | 3 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Core schema, state machine, atomic events и read-only API/UI развернуты в production |
-| 4 | развернут, flags off | `stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md` | off | 138 profiles: 131 verified/ready, 7 draft paused по текущему манифесту; optional Ozon projection исправлена, conflicts=0; exact manifest и change-only reconcile развернуты |
+| 4 | развернут, flags off | `stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md` | off | 138 profiles: все verified/enabled/ready, draft/blocked/conflicts=0; D26/D27 опубликованы; terminal Ozon posting исключены из текущего requirement |
 | 5 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | AES/HMAC pool, streaming preview/apply, quarantine и TTL cleanup развернуты; реальные КМ не импортировались |
 | 6 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Units, bindings, assignments, JIT-склад и reconciliation развернуты; runtime write paths выключены |
 | 7 | развернут, flags off | `stage-7/README.md` | off | Защищенная этикетка 58x40 и FBS UX доступны; физическая приемка шаблона остается rollout gate |
@@ -1732,9 +1731,9 @@ entities: adapters переводят их в стабильные внутре�
 
 ### 33.1. Статус production rollout
 
-На 10 августа 2026 года завершены блоки 1 и 2. После локального code freeze
-миграции `0005`-`0018` прошли rehearsal и DB lifecycle проверки, а затем были
-применены к `getomerch_production`. Production schema version равна `0018`.
+На 13 августа 2026 года завершены блоки 1 и 2. После локального code freeze
+миграции `0005`-`0019` прошли rehearsal и DB lifecycle проверки, а затем были
+применены к `getomerch_production`. Production schema version равна `0019`.
 
 Развернуты отдельные marking DB credentials, keyring, worker, Mac-agent broker
 endpoint и периодическая очистка временных импортов. Выполнен идемпотентный
@@ -1742,11 +1741,12 @@ backfill: создано 52 fulfillment для существующих Ozon FBS
 заказы не создают fulfillment. Внешние операции ГИС МТ, СУЗ и Ozon exemplar
 остаются выключенными fail-closed флагами; реальные КМ не импортировались.
 
-Для этапа 4 применен точный манифест 138 Ozon SKU--GTIN: 131 опубликованный
-GTIN подтвержден и готов, 7 draft-профилей D26/D27 остаются paused по текущему
-манифесту. Optional Ozon marking signal теперь включает JIT-поток, поэтому
-ложные `not_required` conflicts устранены. Повторный apply не перепроводит
-совпадающие profile/GTIN и выполняет только фактические изменения.
+Для этапа 4 применен точный манифест 138 Ozon SKU--GTIN: все 138 GTIN
+опубликованы, подтверждены и готовы, включая семь D26/D27. Optional Ozon
+marking signal включает JIT-поток, а terminal posting больше не определяют
+текущее требование к товару, поэтому ложные `not_required` conflicts
+устранены. Повторный apply не перепроводит совпадающие profile/GTIN и
+выполняет только фактические изменения.
 
 До и после rollout созданы зашифрованные резервные копии, проверено
 восстановление, последняя копия успешно загружена off-site. Временные базы

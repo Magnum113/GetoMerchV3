@@ -1,10 +1,11 @@
 # Честный знак в GetoMerch Admin
 
-Дата актуализации: 10 августа 2026 года.
+Дата актуализации: 13 августа 2026 года.
 Статус: этапы 0-13 реализованы; production-блок 2 завершен. Этап 9 развернут в
 read-only sandbox-режиме, все внешние write-операции маркировки выключены.
-Физическая УКЭП-подпись ожидает активации лицензии CryptoPro CSP на Mac.
-Миграции fulfillment/marking `0005`-`0018` развернуты в production.
+Действующая лицензия CryptoPro CSP установлена на Mac; физический auth canary
+после установки еще не выполнен. Миграции fulfillment/marking `0005`-`0019`
+развернуты в production.
 
 Канонический технический и операционный документ:
 [FLOW.md](FLOW.md).
@@ -320,7 +321,7 @@ merch_marking_code_order_items
 
 ## 11. Текущий статус реализации
 
-На 10 августа 2026 года:
+На 13 августа 2026 года:
 
 - этапы 0 и 1 завершены с внешними feature flags off;
 - generic fulfillment и append-only source events этапа 2 реализованы;
@@ -329,9 +330,9 @@ merch_marking_code_order_items
 - product readiness, проверяемые GTIN profiles, отчет конфликтов и безопасный
   preview/apply backfill этапа 4 реализованы;
 - production reconciliation этапа 4 применен к 138 актуальным Ozon-футболкам:
-  131 verified profiles готовы, 7 draft-профилей D26/D27 остаются paused по
-  текущему манифесту; optional-сигнал Ozon учитывается, conflicts равны нулю,
-  повторный apply выполняет только фактические изменения;
+  все 138 profiles verified/enabled/ready, draft/blocked/conflicts равны нулю;
+  семь D26/D27 опубликованы, optional-сигнал Ozon учитывается, а terminal
+  posting не блокируют актуальный профиль;
 - зашифрованный AES-256-GCM пул КМ, HMAC-дедупликация, двухфазный
   streaming-импорт, карантин и TTL-очистка этапа 5 реализованы;
 - физические единицы, назначения unit slots, конкурентный резерв КМ,
@@ -363,8 +364,8 @@ merch_marking_code_order_items
   profiles, подтверждение GTIN/evidence, конфликты и backfill;
 - migration rehearsal и isolated DB lifecycle tests прошли до production
   deployment;
-- миграции `0005`-`0018` применены к `getomerch_production`, schema version
-  равна `0018`;
+- миграции `0005`-`0019` применены к `getomerch_production`, schema version
+  равна `0019`;
 - создано 52 внутренних fulfillment для существующих Ozon FBS item; Ozon FBO
   не создает fulfillment и не затрагивает внутренний склад;
 - `getomerch-marking-worker.service` и периодическая очистка импортов
