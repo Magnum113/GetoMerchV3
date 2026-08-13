@@ -16,6 +16,11 @@ import {
   downloadOzonPackageLabelBundle,
   downloadOzonPackageLabels,
 } from "@/lib/ozon/package-label-client";
+import {
+  allocateOrderResources,
+  productBlankKey,
+  type ItemAvailability,
+} from "@/lib/ozon/order-resource-allocation";
 import { toast } from "sonner";
 import type { Inventory, OzonOrder, OzonOrderItem, Product, Warehouse, PrintInventory } from "@/lib/types";
 import { OZON_STATUS_LABELS, OZON_STATUS_COLORS, WORKSHOP_STATUS_LABELS, WORKSHOP_STATUS_COLORS } from "@/lib/types";
@@ -33,40 +38,6 @@ const POST_SHIPMENT_STATUSES = new Set([
 const TERMINAL_STATUSES = new Set([...POST_SHIPMENT_STATUSES, "cancelled"]);
 const BULK_LABEL_STATUSES = new Set(["awaiting_deliver", "acceptance_in_progress"]);
 import { formatDate, formatMoney, errorMessage } from "@/lib/utils";
-
-type StockStatus = "ready" | "partial" | "needs_production" | "missing" | "unmatched";
-
-interface WhQty { warehouseId: string; warehouseName: string; qty: number }
-
-interface ItemAvailability {
-  status: StockStatus;
-  /** Готовых, выделенных этому заказу (с учётом уже занятых более ранними заказами), не больше need. */
-  finished: number;
-  /** Пустых, доступных этому заказу (после вычета занятых ранее). */
-  blank: number;
-  /** Пустых на складе цеха, доступных этому заказу. Только для вышивки. */
-  blankAtWorkshop: number;
-  /** Пустых на моём складе, доступных этому заказу. */
-  blankAtOwn: number;
-  /** Принтов нужного дизайна, доступных этому заказу (только для печатных позиций). */
-  print: number;
-  blankProduct: Product | null;
-  need: number;
-  finishedByWh: WhQty[];
-  blankByWh: WhQty[];
-  /** true для изделий с принтом (made_at === "own" или не задано) — пустые из цеха
-   *  вышивки игнорируются, т.к. оттуда заготовки на мой склад для печати не возят. */
-  isPrint: boolean;
-  /** Показывать ли строку про принты (печатная позиция с заданным дизайном). */
-  hasPrintInfo: boolean;
-  /** Пустых хватает, но принтов на складе не хватает для производства. */
-  printShort: boolean;
-  /** Можно произвести недостающее у себя (готовые + пустые + принты покрывают заказ). */
-  canOwnProduce: boolean;
-  /** Для вышивки: заготовки есть у меня, но их нужно передать в цех. */
-  needsWorkshopTransfer: boolean;
-  workshopTransferQty: number;
-}
 
 // Срочность заказа: дата отгрузки ↑ → дата создания на Ozon ↑ → дата записи.
 // Тот же порядок используется и при распределении остатков (availabilityByItem),
@@ -146,7 +117,7 @@ export default function OrdersPage() {
   const blankByKey = useMemo(() => {
     const m = new Map<string, Product>();
     for (const b of blanks) {
-      m.set(blankKey(b.category_id, b.fabric_id, b.color_id, b.size_id), b);
+      m.set(productBlankKey(b.category_id, b.fabric_id, b.color_id, b.size_id), b);
     }
     return m;
   }, [blanks]);
@@ -162,126 +133,26 @@ export default function OrdersPage() {
     return m;
   }, [prints]);
 
-  // Распределение остатков по заказам: один и тот же товар не может быть «доступен»
-  // сразу двум заказам. Идём по активным заказам в порядке срочности (дата отгрузки,
-  // затем дата создания) и вычитаем занятое из общего пула остатков — готовых,
-  // пустых и принтов. Результат — карта itemId -> доступность с учётом резерва.
+  // Распределяем только полные производственные комплекты.
+  // Невыполнимый заказ остаётся в очереди, но не удерживает материалы у следующего.
   const availabilityByItem = useMemo(() => {
-    const rankWh = (wid: string, preferWorkshop = false) => {
-      const t = warehouseTypeById.get(wid);
-      if (preferWorkshop) return t === "workshop" ? 0 : t === "own" ? 1 : 2;
-      return t === "own" ? 0 : t === "workshop" ? 2 : 1;
-    };
-    // мутируемые копии пулов
-    const prodRem = new Map<string, Map<string, number>>();
-    for (const [pid, e] of stockByProduct) prodRem.set(pid, new Map(e.byWh));
-    const printRem = new Map<string, Map<string, number>>();
-    for (const [did, e] of printByDesign) printRem.set(did, new Map(e));
-
-    function peek(rem: Map<string, Map<string, number>>, key: string, excludeWorkshop: boolean) {
-      const byWh = rem.get(key);
-      const list: WhQty[] = [];
-      let total = 0;
-      if (byWh) {
-        for (const [wid, q] of byWh) {
-          if (q <= 0) continue;
-          if (excludeWorkshop && warehouseTypeById.get(wid) === "workshop") continue;
-          total += q;
-          list.push({ warehouseId: wid, warehouseName: warehouseNameById.get(wid) ?? "—", qty: q });
-        }
-      }
-      return { total, list };
-    }
-    // Списывает up to `want` из пула. Для печати — свой склад первым; для
-    // вышивки — склад цеха первым, чтобы заготовки в цехе резервировались под
-    // заказы раньше заготовок на моём складе.
-    function take(rem: Map<string, Map<string, number>>, key: string, want: number, excludeWorkshop: boolean, preferWorkshop = false): WhQty[] {
-      const taken: WhQty[] = [];
-      const byWh = rem.get(key);
-      if (!byWh || want <= 0) return taken;
-      const wids = Array.from(byWh.keys()).sort((a, b) => rankWh(a, preferWorkshop) - rankWh(b, preferWorkshop));
-      let left = want;
-      for (const wid of wids) {
-        if (left <= 0) break;
-        if (excludeWorkshop && warehouseTypeById.get(wid) === "workshop") continue;
-        const avail = byWh.get(wid) ?? 0;
-        if (avail <= 0) continue;
-        const t = Math.min(avail, left);
-        byWh.set(wid, avail - t);
-        left -= t;
-        taken.push({ warehouseId: wid, warehouseName: warehouseNameById.get(wid) ?? "—", qty: t });
-      }
-      return taken;
-    }
-
-    function allocItem(item: OzonOrderItem): ItemAvailability {
-      const need = item.quantity;
-      const p = item.product;
-      if (!p) {
-        return { status: "unmatched", finished: 0, blank: 0, blankAtWorkshop: 0, blankAtOwn: 0, print: 0, blankProduct: null, need, finishedByWh: [], blankByWh: [], isPrint: false, hasPrintInfo: false, printShort: false, canOwnProduce: false, needsWorkshopTransfer: false, workshopTransferQty: 0 };
-      }
-      // Принт делается у меня на складе (или decoration_type не указан) — пустые из
-      // цеха вышивки не учитываем, т.к. оттуда заготовки на мой склад не возят.
-      const isPrint = p.decoration_type?.made_at !== "workshop";
-      // 1. Готовые — резервируем под этот заказ.
-      const finPeek = peek(prodRem, p.id, false);
-      const finished = Math.min(need, finPeek.total);
-      const finishedByWh = take(prodRem, p.id, finished, false);
-      const remainingNeed = need - finished;
-
-      // 2. Пустые и принты для производства недостающего.
-      const blankProd = blankByKey.get(blankKey(p.category_id, p.fabric_id, p.color_id, p.size_id)) ?? null;
-      let blank = 0;
-      let blankAtWorkshop = 0;
-      let blankAtOwn = 0;
-      let blankByWh: WhQty[] = [];
-      let print = 0;
-      const hasPrintInfo = isPrint && !!p.design_id;
-      if (blankProd) {
-        const blkPeek = peek(prodRem, blankProd.id, isPrint);
-        blank = blkPeek.total;
-        blankByWh = blkPeek.list;
-        blankAtWorkshop = isPrint ? 0 : sumByWarehouseType(blkPeek.list, "workshop", warehouseTypeById);
-        blankAtOwn = sumByWarehouseType(blkPeek.list, "own", warehouseTypeById);
-      }
-      if (hasPrintInfo) {
-        print = peek(printRem, p.design_id!, true).total;
-      }
-      // Резервируем пустые/принты, которые этот заказ пустит в производство,
-      // чтобы их не «увидел» доступными следующий заказ.
-      if (remainingNeed > 0 && blankProd) {
-        take(prodRem, blankProd.id, Math.min(remainingNeed, blank), isPrint, !isPrint);
-        if (hasPrintInfo) take(printRem, p.design_id!, Math.min(remainingNeed, print), true);
-      }
-
-      let status: StockStatus;
-      if (finished >= need) status = "ready";
-      else if (finished > 0) status = "partial";
-      else if (blankProd && blank >= remainingNeed) status = "needs_production";
-      else status = "missing";
-
-      const printShort = isPrint && status === "needs_production" && print < remainingNeed;
-      // Можно произвести у себя: печатная позиция, недостающее покрывается пустыми + принтами.
-      const canOwnProduce =
-        isPrint && finished < need && !!blankProd &&
-        finished + Math.min(blank, print) >= need;
-      const workshopTransferQty = !isPrint && remainingNeed > 0
-        ? Math.min(Math.max(0, remainingNeed - blankAtWorkshop), blankAtOwn)
-        : 0;
-      const needsWorkshopTransfer = workshopTransferQty > 0;
-
-      return { status, finished, blank, blankAtWorkshop, blankAtOwn, print, blankProduct: blankProd, need, finishedByWh, blankByWh, isPrint, hasPrintInfo, printShort, canOwnProduce, needsWorkshopTransfer, workshopTransferQty };
-    }
-
     const competing = orders
-      .filter((o) => o.source !== "fbo" && !o.shipped_at && !TERMINAL_STATUSES.has(o.status))
+      .filter((order) => (
+        order.source !== "fbo"
+        && !order.shipped_at
+        && !TERMINAL_STATUSES.has(order.status)
+      ))
       .sort(urgencyCompare);
-
-    const map = new Map<string, ItemAvailability>();
-    for (const o of competing) {
-      for (const it of o.items ?? []) map.set(it.id, allocItem(it));
-    }
-    return map;
+    return allocateOrderResources({
+      orders: competing,
+      productStock: new Map(
+        [...stockByProduct].map(([productId, stock]) => [productId, stock.byWh]),
+      ),
+      printStock: printByDesign,
+      blankByKey,
+      warehouseTypeById,
+      warehouseNameById,
+    });
   }, [orders, stockByProduct, printByDesign, blankByKey, warehouseTypeById, warehouseNameById]);
 
   function orderReady(order: OzonOrder): boolean {
@@ -900,14 +771,6 @@ function ItemRow({
   );
 }
 
-function sumByWarehouseType(list: WhQty[], type: Warehouse["type"], warehouseTypeById: Map<string, Warehouse["type"]>) {
-  let total = 0;
-  for (const row of list) {
-    if (warehouseTypeById.get(row.warehouseId) === type) total += row.qty;
-  }
-  return total;
-}
-
 function AvailabilityBadge({ a }: { a: ItemAvailability }) {
   const productionNeed = Math.max(0, a.need - a.finished);
   if (a.status === "unmatched") {
@@ -1047,10 +910,6 @@ function pluralizeUnits(value: number) {
   return "товаров";
 }
 
-function blankKey(cat: string, fab: string, col: string, sz: string) {
-  return `${cat}|${fab}|${col}|${sz}`;
-}
-
 function blankKeysFromOrders(orders: OzonOrder[]) {
   const keys = new Map<string, { category_id: string; fabric_id: string; color_id: string; size_id: string }>();
   for (const order of orders) {
@@ -1063,7 +922,7 @@ function blankKeysFromOrders(orders: OzonOrder[]) {
         color_id: product.color_id,
         size_id: product.size_id,
       };
-      keys.set(blankKey(key.category_id, key.fabric_id, key.color_id, key.size_id), key);
+      keys.set(productBlankKey(key.category_id, key.fabric_id, key.color_id, key.size_id), key);
     }
   }
   return Array.from(keys.values());
