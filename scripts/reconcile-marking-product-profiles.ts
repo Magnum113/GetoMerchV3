@@ -50,6 +50,7 @@ type ExistingProfileRow = {
   sku: string;
   profile_id: string | null;
   gtin: string | null;
+  marking_requirement_source: string | null;
   verification_status: string | null;
   operational_status: string | null;
   operational_status_reason: string | null;
@@ -357,6 +358,7 @@ async function loadState(manifest: Manifest) {
         product.sku,
         profile.id AS profile_id,
         trade_item.gtin,
+        profile.marking_requirement_source,
         profile.verification_status,
         profile.operational_status,
         profile.operational_status_reason,
@@ -475,7 +477,7 @@ async function applyProduct(
     let reusedExistingState = false;
     const existingState = plan.existing;
 
-    if (canReuseExistingProfile(plan)) {
+    if (canReuseExistingProfile(plan, manifest.sourceId)) {
       profileId = existingState!.profile_id!;
       revision = Number(existingState!.revision);
       reusedExistingState = true;
@@ -572,12 +574,16 @@ async function applyProduct(
   }
 }
 
-function canReuseExistingProfile(plan: ReturnType<typeof planProduct>) {
+function canReuseExistingProfile(
+  plan: ReturnType<typeof planProduct>,
+  sourceId: string,
+) {
   const existing = plan.existing;
   if (
     !existing?.profile_id
     || existing.revision == null
     || !Number.isSafeInteger(Number(existing.revision))
+    || existing.marking_requirement_source !== sourceId
   ) {
     return false;
   }

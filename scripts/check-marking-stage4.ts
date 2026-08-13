@@ -130,6 +130,7 @@ assert.match(reconciliation, /PostgresMarkingReadRepository/);
 assert.match(reconciliation, /product_profile_mapping/);
 assert.match(reconciliation, /ozon_requirement_mismatch/);
 assert.match(reconciliation, /canReuseExistingProfile/);
+assert.match(reconciliation, /existing\.marking_requirement_source !== sourceId/);
 assert.match(reconciliation, /changed:\s*false/);
 assert.match(reconciliation, /profile:\$\{snapshotVersion\}/);
 assert.match(reconciliation, /fulfillment_order\.source_status <> ALL/);
