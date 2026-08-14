@@ -425,12 +425,8 @@ export async function executeCrptIntroductionReconciliation(
     "lp",
     { includeContent: true },
   );
-  if ((remote.type && remote.type !== "LP_INTRODUCE_GOODS")
-      || (remote.productGroup && remote.productGroup !== "lp")) {
-    throw new Error("CRPT reconciliation returned another document type or product group");
-  }
-  if (!runtime.config.crptInn || remote.senderInn !== runtime.config.crptInn) {
-    throw new Error("CRPT reconciliation sender INN does not match the configured participant");
+  if (!matchesCrptIntroductionMetadata(remote, runtime.config.crptInn)) {
+    throw new Error("CRPT reconciliation metadata does not match the local introduction document");
   }
   if (!local.payload_hash || !remote.content
       || !matchesCrptDocumentContentHash(remote.content, local.payload_hash)) {
@@ -480,6 +476,20 @@ export function matchesCrptDocumentContentHash(content: string, expectedHash: st
   } finally {
     decoded.fill(0);
   }
+}
+
+export function matchesCrptIntroductionMetadata(
+  remote: { type: string | null; productGroup: string | null; senderInn: string | null },
+  participantInn: string,
+) {
+  if (!/^\d{10}(?:\d{2})?$/.test(participantInn)) return false;
+  if (remote.type !== null && remote.type.trim().toUpperCase() !== "LP_INTRODUCE_GOODS") {
+    return false;
+  }
+  if (remote.productGroup !== null && remote.productGroup.trim().toLowerCase() !== "lp") {
+    return false;
+  }
+  return remote.senderInn === null || remote.senderInn === participantInn;
 }
 
 async function enqueueIntroductionSubmit(context: JobExecutionContext, documentId: string) {

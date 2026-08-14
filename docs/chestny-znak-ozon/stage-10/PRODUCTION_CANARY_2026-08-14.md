@@ -51,9 +51,13 @@
 
 Дополнительная миграция `0022_marking_reconciliation_worker_acl.sql` устраняет
 ошибку первого web-вызова сверки: админка теперь только ставит read-only
-reconciliation в durable queue, а True API, signer и привязка результата
+  reconciliation в durable queue, а True API, signer и привязка результата
 выполняются изолированной ролью `getomerch_marking_worker`. Веб-роль
 `getomerch_app` лишена права прямой привязки внешнего документа.
+Фактический status-ответ True API возвращает товарную группу `LP` и не содержит
+необязательный `senderInn`; проверка нормализует регистр группы, проверяет ИНН
+при наличии поля и всегда требует точного совпадения hash удалённого content с
+ранее подписанным локальным payload.
 
 ## Следующий canary
 

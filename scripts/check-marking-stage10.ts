@@ -11,7 +11,10 @@ import {
   introductionRetryJobIdempotencyKey,
   shouldForceIntroductionCorrection,
 } from "@/lib/marking/services/crpt-introduction-service";
-import { matchesCrptDocumentContentHash } from "@/lib/marking/services/crpt-introduction-execution";
+import {
+  matchesCrptDocumentContentHash,
+  matchesCrptIntroductionMetadata,
+} from "@/lib/marking/services/crpt-introduction-execution";
 import { createSignerRequest, verifySignerRequest, type SignerCertificateInfo } from "@/lib/marking/signer/protocol";
 
 main().catch((error) => {
@@ -37,6 +40,26 @@ function testReconciliationContentHash() {
   assert.equal(matchesCrptDocumentContentHash(content.toString("base64"), hash), true);
   assert.equal(matchesCrptDocumentContentHash("different", hash), false);
   assert.equal(matchesCrptDocumentContentHash("not-base64=", hash), false);
+  assert.equal(matchesCrptIntroductionMetadata({
+    type: "LP_INTRODUCE_GOODS",
+    productGroup: "LP",
+    senderInn: null,
+  }, "050000000000"), true);
+  assert.equal(matchesCrptIntroductionMetadata({
+    type: "LP_INTRODUCE_GOODS",
+    productGroup: "lp",
+    senderInn: "050000000000",
+  }, "050000000000"), true);
+  assert.equal(matchesCrptIntroductionMetadata({
+    type: "LP_INTRODUCE_GOODS",
+    productGroup: "shoes",
+    senderInn: null,
+  }, "050000000000"), false);
+  assert.equal(matchesCrptIntroductionMetadata({
+    type: "LP_INTRODUCE_GOODS",
+    productGroup: "LP",
+    senderInn: "050000000001",
+  }, "050000000000"), false);
   content.fill(0);
 }
 
