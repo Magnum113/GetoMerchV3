@@ -20,8 +20,11 @@ export async function retryCrptIntroduction(
     throw new MarkingDomainError("crpt_write_disabled", "Ввод в оборот ГИС МТ пока выключен");
   }
   return withServerDatabaseTransaction(async (query) => {
-    const current = (await query<{ error_code: string | null }>(
-      `SELECT document.error_code
+    const current = (await query<{
+      status: string;
+      error_code: string | null;
+    }>(
+      `SELECT document.status, document.error_code
        FROM getomerch_marking.document_safe AS document
        JOIN getomerch_marking.document_code_safe AS code
          ON code.document_id = document.id
@@ -39,7 +42,7 @@ export async function retryCrptIntroduction(
       assignmentId,
       actorId: context.actor,
       requestId: context.requestId,
-      forceCorrection: true,
+      forceCorrection: shouldForceIntroductionCorrection(current),
     });
     const queued = await enqueueJob({
       type: "marking_crpt_application_submit",
@@ -50,6 +53,13 @@ export async function retryCrptIntroduction(
     }, { query });
     return { document, job: queued.job, reused: queued.reused };
   });
+}
+
+export function shouldForceIntroductionCorrection(
+  current: { status: string } | undefined,
+) {
+  return current != null
+    && ["rejected", "requires_manual_review"].includes(current.status);
 }
 
 export async function retryCrptCirculationConfirmation(

@@ -6,6 +6,7 @@ import { CrptTokenManager, CrptTrueApiClient } from "@/lib/marking/adapters/crpt
 import { parseCrptDocumentStatus } from "@/lib/marking/adapters/crpt/contracts";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import { buildLpIntroduceGoodsPayload, canonicalJson } from "@/lib/marking/domain/crpt-introduction";
+import { shouldForceIntroductionCorrection } from "@/lib/marking/services/crpt-introduction-service";
 import { createSignerRequest, verifySignerRequest, type SignerCertificateInfo } from "@/lib/marking/signer/protocol";
 
 main().catch((error) => {
@@ -17,9 +18,20 @@ async function main() {
   testConfiguration();
   testCanonicalPayload();
   testDetachedSignerPurpose();
+  testIntroductionRetryMode();
   await testTrueApiContracts();
   await testStaticSafety();
   console.log("Stage 10 payload, signer, True API and no-duplicate safety checks passed");
+}
+
+function testIntroductionRetryMode() {
+  assert.equal(shouldForceIntroductionCorrection(undefined), false);
+  assert.equal(shouldForceIntroductionCorrection({ status: "draft" }), false);
+  assert.equal(shouldForceIntroductionCorrection({ status: "payload_built" }), false);
+  assert.equal(shouldForceIntroductionCorrection({ status: "signed" }), false);
+  assert.equal(shouldForceIntroductionCorrection({ status: "processing" }), false);
+  assert.equal(shouldForceIntroductionCorrection({ status: "rejected" }), true);
+  assert.equal(shouldForceIntroductionCorrection({ status: "requires_manual_review" }), true);
 }
 
 function testConfiguration() {
