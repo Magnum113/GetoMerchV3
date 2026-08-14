@@ -19,6 +19,7 @@ import {
   MarkingSignatureProviderError,
   type MarkingSignatureProvider,
 } from "@/lib/marking/signer/provider";
+import { readSignerSessionPin } from "@/lib/marking/signer/session-pin";
 
 const MAX_REQUEST_BYTES = 64_000;
 // CryptoPro may wait up to 60 seconds for physical PIN entry. Keep the Unix
@@ -36,36 +37,44 @@ export async function runMarkingSigner() {
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o750 });
   await removeStaleSocket(config.signerSocketPath);
   const clients = await loadSignerClients(config.signerClientsFile);
-  const provider = await createCommandSignatureProvider({
-    command: config.signerProviderCommand,
-    argsJson: process.env.GETOMERCH_MARKING_SIGNER_PROVIDER_ARGS_JSON,
-    certificateFile: config.signerCertificateFile,
-    expectedInn: config.crptInn || undefined,
-    runtimeDirectory,
-  });
-  const replay = new SignerReplayGuard();
+  const sessionPin = await readSignerSessionPin();
+  let provider: MarkingSignatureProvider | null = null;
   const signerId = `${hostname()}:${process.pid}:signer`;
-  const server = createServer((socket) => handleSocket(socket, clients, provider, replay));
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.signerSocketPath, () => {
-      server.off("error", reject);
-      resolve();
+  try {
+    provider = await createCommandSignatureProvider({
+      command: config.signerProviderCommand,
+      argsJson: process.env.GETOMERCH_MARKING_SIGNER_PROVIDER_ARGS_JSON,
+      certificateFile: config.signerCertificateFile,
+      expectedInn: config.crptInn || undefined,
+      runtimeDirectory,
+      sessionPin,
     });
-  });
-  await chmod(config.signerSocketPath, 0o660);
-  console.log("[marking-signer] ready", {
-    signerId,
-    certificateThumbprint: provider.certificate.thumbprint,
-    certificateValidTo: provider.certificate.validTo,
-    clientCount: clients.size,
-  });
+    const replay = new SignerReplayGuard();
+    const server = createServer((socket) => handleSocket(socket, clients, provider!, replay));
 
-  await waitForStop(server);
-  await unlink(config.signerSocketPath).catch(() => undefined);
-  for (const secret of clients.values()) secret.fill(0);
-  console.log("[marking-signer] stopped", { signerId });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(config.signerSocketPath, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+    await chmod(config.signerSocketPath, 0o660);
+    console.log("[marking-signer] ready; PIN is unlocked for this local process only", {
+      signerId,
+      certificateThumbprint: provider.certificate.thumbprint,
+      certificateValidTo: provider.certificate.validTo,
+      clientCount: clients.size,
+    });
+
+    await waitForStop(server);
+  } finally {
+    sessionPin.fill(0);
+    provider?.dispose?.();
+    await unlink(config.signerSocketPath).catch(() => undefined);
+    for (const secret of clients.values()) secret.fill(0);
+    console.log("[marking-signer] stopped", { signerId });
+  }
 }
 
 export async function processSignerRequest(input: {

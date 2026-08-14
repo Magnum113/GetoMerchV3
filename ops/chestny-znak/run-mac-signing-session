@@ -53,7 +53,7 @@ fi
 
 printf 'Mac-agent started in background. Safe log: %s\n' "$AGENT_LOG"
 printf 'Signer is starting in this terminal.\n'
-printf 'When signing begins, enter the Rutoken PIN here and press Return.\n'
+printf 'Enter the Rutoken PIN once now; it will unlock this signer session.\n'
 printf 'Do not send the PIN in chat and do not store it in an environment variable.\n\n'
 
 npm run marking:signer

@@ -373,16 +373,20 @@ Signer этапа 9 — изолированный локальный проце
 Signer проверяет allowlist operation type, максимальный размер payload,
 ожидаемый hash/correlation ID и срок сертификата. Mac-агент сам инициирует
 HTTPS к VPS, используя отдельный HMAC credential, timestamp и durable nonce.
-Входящего порта на Mac нет. PIN вводится только в CryptoPro на Mac; PIN,
-challenge, access token и private key никогда не пишутся в journal.
+Входящего порта на Mac нет. PIN вводится скрыто один раз при запуске signer,
+хранится только в очищаемом буфере памяти локального процесса и передаётся
+дочернему `cryptcp -askpin` через stdin. PIN, challenge, access token и private
+key никогда не пишутся в env, argv, файлы, сеть или journal.
 
 VPS хранит запрос и результат подписи только как AES-256-GCM ciphertext.
 Safe views содержат hash, статусы и публичные метаданные сертификата. Сетевой
 relay не вызывает CryptoPro напрямую: он делегирует локальному Unix signer.
-Во время ожидания PIN relay продолжает heartbeat каждые 10 секунд. Timeout
-CryptoPro составляет 60 секунд, lease broker — 90 секунд, ожидание worker —
-100 секунд; это не даёт интерфейсу ложно показывать Mac offline во время
-нормального ввода PIN.
+Signer публикует Unix socket только после разблокировки PIN-сессии. Во время
+подписи relay продолжает heartbeat каждые 10 секунд. Timeout CryptoPro
+составляет 60 секунд, lease broker продлевается heartbeat, а worker ожидает
+remote result до пяти минут. Одинаковый broker payload переиспользуется по
+`purpose + SHA-256 + requested_by`; новый CRPT challenge подписывается без
+повторного ввода PIN в рамках той же локальной сессии.
 
 Реализован только purpose `crpt_auth_attached_cades_bes`. Challenge
 декодируется из base64, подписывается attached CAdES-BES и используется для

@@ -7,6 +7,7 @@ import type { SignerCertificateInfo, SignerPurpose } from "@/lib/marking/signer/
 export type MarkingSignatureProvider = {
   certificate: SignerCertificateInfo;
   sign(input: Uint8Array, purpose: SignerPurpose): Promise<Buffer>;
+  dispose?(): void;
 };
 
 export class MarkingSignatureProviderError extends Error {
@@ -22,20 +23,48 @@ export async function createCommandSignatureProvider(input: {
   certificateFile: string;
   expectedInn?: string;
   runtimeDirectory: string;
+  sessionPin: Uint8Array;
 }): Promise<MarkingSignatureProvider> {
   await assertExecutable(input.command);
   const certificate = await loadCertificateInfo(input.certificateFile, input.expectedInn);
   const args = parseProviderArgs(input.argsJson);
+  if (input.sessionPin.length < 1 || input.sessionPin.length > 128) {
+    throw new MarkingSignatureProviderError("provider_pin_invalid", "Signer session PIN is invalid");
+  }
+  const sessionPin = Buffer.from(input.sessionPin);
+  let disposed = false;
   return {
     certificate,
-    sign: (payload, purpose) => executeProvider({
-      command: input.command,
-      args,
-      certificate,
-      payload,
-      purpose,
-      runtimeDirectory: input.runtimeDirectory,
-    }),
+    async sign(payload, purpose) {
+      if (disposed) {
+        throw new MarkingSignatureProviderError(
+          "provider_pin_unavailable",
+          "Signer session is locked; restart it and enter the PIN again",
+        );
+      }
+      try {
+        return await executeProvider({
+          command: input.command,
+          args,
+          certificate,
+          payload,
+          purpose,
+          runtimeDirectory: input.runtimeDirectory,
+          sessionPin,
+        });
+      } catch (error) {
+        if (error instanceof MarkingSignatureProviderError
+            && error.code === "provider_pin_unavailable") {
+          disposed = true;
+          sessionPin.fill(0);
+        }
+        throw error;
+      }
+    },
+    dispose() {
+      disposed = true;
+      sessionPin.fill(0);
+    },
   };
 }
 
@@ -115,6 +144,12 @@ function parseProviderArgs(source: string | undefined) {
   if (!parsed.includes("{input}") || !parsed.includes("{output}")) {
     throw new MarkingSignatureProviderError("provider_args_invalid", "Signer provider arguments require input and output placeholders");
   }
+  if (!parsed.includes("-askpin") || parsed.includes("-pin")) {
+    throw new MarkingSignatureProviderError(
+      "provider_args_invalid",
+      "Signer provider arguments must read PIN from stdin with -askpin",
+    );
+  }
   return parsed;
 }
 
@@ -125,6 +160,7 @@ async function executeProvider(input: {
   payload: Uint8Array;
   purpose: SignerPurpose;
   runtimeDirectory: string;
+  sessionPin: Uint8Array;
 }) {
   if (input.purpose !== "crpt_auth_attached_cades_bes"
       && input.purpose !== "crpt_document_detached_cades_bes"
@@ -143,8 +179,8 @@ async function executeProvider(input: {
       .replaceAll("{thumbprint}", input.certificate.thumbprint)
       .replaceAll("{input}", inputPath)
       .replaceAll("{output}", outputPath));
-    console.log("[marking-signer] CryptoPro signing started; enter PIN in this terminal when requested");
-    const result = await runProvider(input.command, args);
+    console.log("[marking-signer] CryptoPro signing started with the unlocked local session");
+    const result = await runProvider(input.command, args, input.sessionPin);
     if (result.code !== 0) {
       const error = providerErrorFromStderr(result.stderr);
       console.error("[marking-signer] CryptoPro signing failed", {
@@ -222,10 +258,10 @@ function providerArgsForPurpose(args: string[], purpose: SignerPurpose) {
   return output;
 }
 
-function runProvider(command: string, args: string[]) {
+export function runProvider(command: string, args: string[], sessionPin: Uint8Array) {
   return new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ["inherit", "ignore", "pipe"],
+      stdio: ["pipe", "ignore", "pipe"],
       env: {
         PATH: "/usr/bin:/bin:/opt/cprocsp/bin/arm64:/opt/cprocsp/bin/amd64",
         NODE_ENV: "production",
@@ -246,6 +282,11 @@ function runProvider(command: string, args: string[]) {
     });
     child.once("error", (error) => finish(error));
     child.once("close", (code) => finish(undefined, code));
+    child.stdin.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") finish(error);
+    });
+    child.stdin.write(sessionPin);
+    child.stdin.end(Buffer.from([0x0a]));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       finish(new MarkingSignatureProviderError("provider_timeout", "Signature provider timed out"));

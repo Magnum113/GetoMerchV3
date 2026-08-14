@@ -112,8 +112,9 @@ ops/chestny-znak/init-mac-agent-credentials
 ```
 
 Нужно сверить subject, ИНН/ОГРН, срок, ГОСТ 2012 и `PrivateKey Link: Yes`.
-PIN не помещается в env или credential: его читает `cryptcp -askpin` напрямую
-из terminal stdin.
+PIN не помещается в env или credential. Signer скрыто читает его один раз при
+старте, хранит только в очищаемом буфере памяти процесса и передаёт каждому
+`cryptcp -askpin` через stdin. При остановке или ошибке PIN буфер очищается.
 
 ## Systemd rollout
 
@@ -124,10 +125,9 @@ PIN не помещается в env или credential: его читает `cry
 `nginx -t`, credential install и rollback приведены в [MAC_AGENT.md](MAC_AGENT.md).
 
 На Mac signing-сессия запускается одной командой
-`ops/chestny-znak/run-mac-signing-session`: relay работает в фоне, а signer
-остаётся foreground-процессом с интерактивным stdin CryptoPro. Это исключает
-хранение PIN. Автозапуск через launchd допустим только после отдельного решения
-для интерактивного PIN.
+`ops/chestny-znak/run-mac-signing-session`: relay работает в фоне, signer
+остаётся foreground-процессом и один раз запрашивает PIN. Автозапуск через
+launchd без интерактивной разблокировки не используется.
 
 ## Порядок canary
 

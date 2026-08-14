@@ -31,7 +31,7 @@ export function createRemoteMarkingSignerClient(input: {
   pollIntervalMs?: number;
 }): MarkingSignerClient {
   const requestedBy = input.requestedBy ?? "marking-worker";
-  const timeoutMs = bounded(input.timeoutMs ?? 100_000, 5_000, 120_000);
+  const timeoutMs = bounded(input.timeoutMs ?? 300_000, 5_000, 600_000);
   const pollIntervalMs = bounded(input.pollIntervalMs ?? 1_000, 250, 5_000);
   return {
     async sign(payload, purpose) {
@@ -48,7 +48,7 @@ export function createRemoteMarkingSignerClient(input: {
         encryptedPayload: encrypted,
         requestedBy,
         requestId: crypto.randomUUID(),
-        expiresAt: new Date(Date.now() + Math.min(180_000, timeoutMs + 60_000)),
+        expiresAt: new Date(Date.now() + Math.min(840_000, timeoutMs + 60_000)),
       });
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {

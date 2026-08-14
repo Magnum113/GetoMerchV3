@@ -5,6 +5,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import type { QueryResultRow } from "pg";
 import {
   createAgentRequestAuth,
@@ -19,9 +20,10 @@ import type { DatabaseQueryExecutor, DatabaseQueryResult } from "@/lib/db/pool";
 import { MarkingKeyring } from "@/lib/marking/security/keyring";
 import { resolveSigningAgentState } from "@/lib/marking/repositories/remote-signer";
 import { exchangeSignerRequest } from "@/lib/marking/signer/client";
-import { providerErrorFromStderr } from "@/lib/marking/signer/provider";
+import { providerErrorFromStderr, runProvider } from "@/lib/marking/signer/provider";
 import { createRemoteMarkingSignerClient } from "@/lib/marking/signer/remote-client";
 import type { SignerCertificateInfo } from "@/lib/marking/signer/protocol";
+import { readSignerSessionPin } from "@/lib/marking/signer/session-pin";
 
 const TEST_ID = "10000000-0000-4000-8000-000000000001";
 
@@ -36,9 +38,59 @@ async function main() {
   testRecoveredConnectionError();
   testOperationalFailureStates();
   testRemoteConfiguration();
+  await testHiddenSessionPin();
+  await testProviderPinUsesStdin();
   await testDelayedUnixSocketResponse();
   await testEncryptedBrokerClient();
   console.log("Mac marking agent protocol, encryption and remote signer checks passed");
+}
+
+async function testHiddenSessionPin() {
+  const stdin = new PassThrough() as PassThrough & {
+    isTTY: boolean;
+    isRaw: boolean;
+    setRawMode(mode: boolean): void;
+  };
+  const output = new PassThrough();
+  const rawModes: boolean[] = [];
+  Object.defineProperty(stdin, "isTTY", { value: true });
+  stdin.isRaw = false;
+  stdin.setRawMode = (mode) => {
+    rawModes.push(mode);
+    stdin.isRaw = mode;
+  };
+  let rendered = "";
+  output.setEncoding("utf8");
+  output.on("data", (chunk: string) => { rendered += chunk; });
+
+  const pending = readSignerSessionPin({ stdin, output });
+  stdin.write(Buffer.from([0x31, 0x32, 0x7f, 0x33, 0x0a]));
+  const pin = await pending;
+  try {
+    assert.equal(pin.toString("utf8"), "13");
+    assert.equal(rendered.includes("13"), false);
+    assert.deepEqual(rawModes, [true, false]);
+  } finally {
+    pin.fill(0);
+    stdin.destroy();
+    output.destroy();
+  }
+}
+
+async function testProviderPinUsesStdin() {
+  const pin = Buffer.from("synthetic-session-pin", "utf8");
+  try {
+    const script = [
+      "IFS= read -r received",
+      "test -n \"$received\" || exit 7",
+      "for argument in \"$@\"; do test \"$argument\" != \"$received\" || exit 8; done",
+    ].join("; ");
+    const result = await runProvider("/bin/sh", ["-c", script, "provider", "safe-argument"], pin);
+    assert.equal(result.code, 0);
+    assert.equal(result.stderr, "");
+  } finally {
+    pin.fill(0);
+  }
 }
 
 function testOperationalFailureStates() {

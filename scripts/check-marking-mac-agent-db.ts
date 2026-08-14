@@ -32,6 +32,11 @@ async function main() {
   );
   const created = await createRequest("1".repeat(64));
   assert.equal(created.request_status, "pending");
+  assert.equal(created.reused, false);
+  const pendingDuplicate = await createRequest("1".repeat(64));
+  assert.equal(pendingDuplicate.signature_request_id, created.signature_request_id);
+  assert.equal(pendingDuplicate.request_status, "pending");
+  assert.equal(pendingDuplicate.reused, true);
   await assert.rejects(
     asApp(
       "SELECT * FROM getomerch_marking.create_remote_signature_request($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -81,6 +86,10 @@ async function main() {
       "GOST R 34.10-2012-256",
     ],
   );
+  const signedDuplicate = await createRequest("1".repeat(64));
+  assert.equal(signedDuplicate.signature_request_id, created.signature_request_id);
+  assert.equal(signedDuplicate.request_status, "signed");
+  assert.equal(signedDuplicate.reused, true);
   const signed = await pool.query<{ request_status: string; certificate_inn: string }>(
     "SELECT * FROM getomerch_marking.get_remote_signature_result($1::uuid,$2)",
     [created.signature_request_id, "marking-worker"],

@@ -106,7 +106,7 @@ async function processClaim(input: {
     if (digest !== input.claimed.payloadSha256 || Date.parse(input.claimed.expiresAt) <= Date.now()) {
       throw codedError("agent_claim_invalid", "Signing request is invalid or expired");
     }
-    input.runtime.pinState = "required";
+    input.runtime.pinState = "ready";
     input.runtime.lastError = null;
     await sendSigningHeartbeat(input).catch((error) => {
       console.error("[marking-mac-agent] signing heartbeat failed", safeError(error));
@@ -179,10 +179,10 @@ async function sendSigningHeartbeat(input: Parameters<typeof processClaim>[0]) {
     operation: "heartbeat",
     telemetry: {
       displayName: input.config.displayName,
-      state: "pin_required",
+      state: "ready",
       readerDetected: input.runtime.cardProbe.detected,
       signerReachable: true,
-      pinState: "required",
+      pinState: "ready",
       certificateThumbprint: input.certificate.thumbprint,
       certificateValidTo: input.certificate.validTo,
       softwareVersion: AGENT_VERSION,
@@ -221,11 +221,14 @@ async function collectTelemetry(
     };
   }
   const signerReachable = await signerSocketExists(config.signerSocketPath);
+  const pinState = signerReachable && runtime.pinState === "unknown"
+    ? "ready"
+    : runtime.pinState;
   const state = !runtime.cardProbe.detected
     ? "token_missing"
     : !signerReachable
       ? "signer_unavailable"
-      : runtime.pinState === "required" || runtime.pinState === "blocked"
+      : pinState === "required" || pinState === "blocked"
         ? "pin_required"
         : runtime.lastError
           ? "degraded"
@@ -235,7 +238,7 @@ async function collectTelemetry(
     state,
     readerDetected: runtime.cardProbe.detected,
     signerReachable,
-    pinState: runtime.pinState,
+    pinState,
     certificateThumbprint: certificate.thumbprint,
     certificateValidTo: certificate.validTo,
     softwareVersion: AGENT_VERSION,
@@ -376,7 +379,6 @@ function retryableSignerError(code: string) {
   return [
     "signer_timeout",
     "signer_unavailable",
-    "provider_pin_unavailable",
     "provider_unavailable",
     "provider_timeout",
   ].includes(code);
