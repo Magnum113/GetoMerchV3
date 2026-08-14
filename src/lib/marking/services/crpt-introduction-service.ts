@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import type { ServerMutationContext } from "@/lib/db/mutations/runner";
 import { withServerDatabaseTransaction } from "@/lib/db/transaction";
 import { enqueueJob } from "@/lib/jobs/queue";
@@ -47,7 +48,11 @@ export async function retryCrptIntroduction(
     const queued = await enqueueJob({
       type: "marking_crpt_application_submit",
       dedupeKey: `crpt-application:${assignmentId}:r${document.revision}`,
-      idempotencyKey: `crpt-application:${assignmentId}:r${document.revision}`,
+      idempotencyKey: introductionRetryJobIdempotencyKey({
+        assignmentId,
+        documentRevision: document.revision,
+        requestIdempotencyKey: context.idempotencyKey,
+      }),
       payload: { assignmentId }, actor: context.actor, requestId: context.requestId,
       maxAttempts: 5,
     }, { query });
@@ -60,6 +65,17 @@ export function shouldForceIntroductionCorrection(
 ) {
   return current != null
     && ["rejected", "requires_manual_review"].includes(current.status);
+}
+
+export function introductionRetryJobIdempotencyKey(input: {
+  assignmentId: string;
+  documentRevision: number;
+  requestIdempotencyKey: string;
+}) {
+  const digest = createHash("sha256")
+    .update(`${input.assignmentId}:${input.documentRevision}:${input.requestIdempotencyKey}`)
+    .digest("hex");
+  return `crpt-application-retry:${digest}`;
 }
 
 export async function retryCrptCirculationConfirmation(

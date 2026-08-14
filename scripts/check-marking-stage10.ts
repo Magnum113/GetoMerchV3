@@ -6,7 +6,10 @@ import { CrptTokenManager, CrptTrueApiClient } from "@/lib/marking/adapters/crpt
 import { parseCrptDocumentStatus } from "@/lib/marking/adapters/crpt/contracts";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import { buildLpIntroduceGoodsPayload, canonicalJson } from "@/lib/marking/domain/crpt-introduction";
-import { shouldForceIntroductionCorrection } from "@/lib/marking/services/crpt-introduction-service";
+import {
+  introductionRetryJobIdempotencyKey,
+  shouldForceIntroductionCorrection,
+} from "@/lib/marking/services/crpt-introduction-service";
 import { createSignerRequest, verifySignerRequest, type SignerCertificateInfo } from "@/lib/marking/signer/protocol";
 
 main().catch((error) => {
@@ -32,6 +35,22 @@ function testIntroductionRetryMode() {
   assert.equal(shouldForceIntroductionCorrection({ status: "processing" }), false);
   assert.equal(shouldForceIntroductionCorrection({ status: "rejected" }), true);
   assert.equal(shouldForceIntroductionCorrection({ status: "requires_manual_review" }), true);
+
+  const first = introductionRetryJobIdempotencyKey({
+    assignmentId: "00000000-0000-4000-8000-000000000001",
+    documentRevision: 1,
+    requestIdempotencyKey: "request-one",
+  });
+  assert.equal(first, introductionRetryJobIdempotencyKey({
+    assignmentId: "00000000-0000-4000-8000-000000000001",
+    documentRevision: 1,
+    requestIdempotencyKey: "request-one",
+  }));
+  assert.notEqual(first, introductionRetryJobIdempotencyKey({
+    assignmentId: "00000000-0000-4000-8000-000000000001",
+    documentRevision: 1,
+    requestIdempotencyKey: "request-two",
+  }));
 }
 
 function testConfiguration() {
