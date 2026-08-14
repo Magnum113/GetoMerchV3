@@ -228,7 +228,7 @@ async function enqueueWithdrawalPoll(context: JobExecutionContext, documentId: s
     actor: context.job.actor,
     requestId: context.job.requestId,
     maxAttempts: 20,
-  })).job;
+  }, { scope: "marking" })).job;
 }
 
 async function manual(

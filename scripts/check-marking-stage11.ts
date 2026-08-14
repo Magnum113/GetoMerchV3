@@ -167,6 +167,7 @@ async function testStaticSafety() {
   assert.match(execution, /documentType: "LK_RECEIPT"/);
   assert.match(execution, /crpt_submit_outcome_unknown/);
   assert.match(execution, /inCanaryScope/);
+  assert.equal([...execution.matchAll(/\{ scope: "marking" \}/g)].length, 1);
   assert.match(worker, /reconcileTerminalWithdrawalFailure/);
   assert.match(queue, /marking_withdrawal_cancel_forbidden/);
   assert.match(queue, /marking_crpt_document_poll[\s\S]*withdrawal_remote_sale/);

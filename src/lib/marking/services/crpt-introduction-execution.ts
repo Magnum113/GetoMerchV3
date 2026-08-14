@@ -373,7 +373,7 @@ async function enqueueIntroductionSubmit(context: JobExecutionContext, documentI
     idempotencyKey: `crpt-introduction-submit:${documentId}`,
     payload: { documentId }, actor: context.job.actor, requestId: context.job.requestId,
     maxAttempts: 2,
-  })).job;
+  }, { scope: "marking" })).job;
 }
 async function enqueueIntroductionPoll(context: JobExecutionContext, documentId: string) {
   return (await enqueueJob({
@@ -382,7 +382,7 @@ async function enqueueIntroductionPoll(context: JobExecutionContext, documentId:
     idempotencyKey: `crpt-introduction-poll:${documentId}`,
     payload: { documentId }, actor: context.job.actor, requestId: context.job.requestId,
     maxAttempts: 20,
-  })).job;
+  }, { scope: "marking" })).job;
 }
 
 async function createRuntime(dependencies: Dependencies): Promise<Runtime> {

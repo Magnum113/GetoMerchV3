@@ -181,6 +181,7 @@ async function testStaticSafety() {
   assert.match(execution, /inCanaryScope/);
   assert.match(execution, /recordIntroductionCirculationReview/);
   assert.match(execution, /extractIdentificationCode\(code\)/);
+  assert.equal([...execution.matchAll(/\{ scope: "marking" \}/g)].length, 2);
   assert.match(readExecution, /extractIdentificationCode\(code\)/);
   assert.doesNotMatch(execution, /getCodeStatus\(stripSymbology/);
   assert.doesNotMatch(readExecution, /getCodeStatus\(payload/);

@@ -170,6 +170,7 @@ async function testStaticSafety() {
   assert.doesNotMatch(adapter, /destination:/);
   assert.match(execution, /documentType: "LP_RETURN"/);
   assert.match(execution, /crpt_submit_outcome_unknown/);
+  assert.equal([...execution.matchAll(/\{ scope: "marking" \}/g)].length, 1);
   assert.match(service, /lockSellerReceiptContext[\s\S]*applyInventoryDeltas/);
   assert.match(worker, /marking_return_to_circulation_submit/);
   assert.match(route, /requireMarkingMutationContext/);
