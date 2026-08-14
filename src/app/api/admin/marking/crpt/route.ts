@@ -14,6 +14,7 @@ import {
 } from "@/lib/marking/services/crpt-read-service";
 import {
   retryCrptCirculationConfirmation,
+  reconcileCrptIntroduction,
   retryCrptIntroduction,
 } from "@/lib/marking/services/crpt-introduction-service";
 import { retryCrptWithdrawal } from "@/lib/marking/services/crpt-withdrawal-service";
@@ -55,6 +56,13 @@ export async function POST(request: NextRequest) {
     if (operation === "retry_introduction") {
       const data = await retryCrptIntroduction(requiredString(body, "assignmentId"), context);
       return adminJson({ data }, { status: 202 });
+    }
+    if (operation === "reconcile_introduction") {
+      const data = await reconcileCrptIntroduction({
+        documentId: requiredString(body, "documentId"),
+        externalDocumentId: requiredString(body, "externalDocumentId"),
+      }, context);
+      return adminJson({ data });
     }
     if (operation === "retry_circulation") {
       const data = await retryCrptCirculationConfirmation(

@@ -32,11 +32,14 @@ async function main() {
     assignment_id: string;
     warehouse_id: string;
     trade_item_id: string;
+    profile_id: string;
+    profile_revision: number;
     marking_code_id: string;
     marking_unit_id: string;
   }>(
     `SELECT assignment.id AS assignment_id, unit.warehouse_id,
-      profile.trade_item_id, code.id AS marking_code_id,
+      profile.trade_item_id, profile.id AS profile_id,
+      profile.revision AS profile_revision, code.id AS marking_code_id,
       unit.id AS marking_unit_id
      FROM public.merch_marking_assignments AS assignment
      JOIN public.merch_marking_units AS unit ON unit.id = assignment.marking_unit_id
@@ -70,16 +73,63 @@ async function main() {
     [fixture.warehouse_id],
   );
 
+  const conformity = (await asApp<{
+    document_id: string;
+    profile_revision: number;
+    trade_item_id: string;
+  }>(
+    `SELECT document_id, profile_revision, trade_item_id
+     FROM getomerch_marking.upsert_trade_item_conformity_document(
+       $1::uuid,$2,$3,$4,$5::date,NULL,$6,NULL,$7,$8
+     )`,
+    [fixture.profile_id, fixture.profile_revision, "CONFORMITY_DECLARATION",
+      "STAGE10-DECLARATION", new Date().toISOString().slice(0, 10),
+      "stage10_db_fixture", randomBytes(32).toString("hex"), "stage10-db-test"],
+  )).rows[0];
+  assert.equal(conformity.trade_item_id, fixture.trade_item_id);
+  assert.equal(Number(conformity.profile_revision), Number(fixture.profile_revision) + 1);
+  await assert.rejects(
+    asApp(
+      `SELECT * FROM getomerch_marking.upsert_trade_item_conformity_document(
+        $1::uuid,$2,$3,$4,$5::date,NULL,$6,NULL,$7,$8
+      )`,
+      [fixture.profile_id, fixture.profile_revision, "CONFORMITY_DECLARATION",
+        "STALE-DECLARATION", new Date().toISOString().slice(0, 10),
+        "stage10_db_fixture", randomBytes(32).toString("hex"), "stage10-db-test"],
+    ),
+    (error) => pgCode(error) === "MZE02",
+  );
+
   const revisionOne = await prepare(fixture.assignment_id, false);
   assert.equal(revisionOne.document_status, "draft");
   assert.equal(Number(revisionOne.document_revision), 1);
-  await buildSignAndSubmit(revisionOne.document_id, "STAGE10-DOC-REJECTED");
-  assert.equal(await poll(revisionOne.document_id, "IN_PROGRESS"), "processing");
-  assert.equal(await poll(
+  const material = (await pool.query<{ conformity_documents: Array<Record<string, string>> }>(
+    `SELECT conformity_documents
+     FROM getomerch_marking.get_introduction_document_material($1::uuid,$2)`,
+    [revisionOne.document_id, "stage10-db-test"],
+  )).rows[0];
+  assert.deepEqual(material.conformity_documents, [{
+    type: "CONFORMITY_DECLARATION",
+    number: "STAGE10-DECLARATION",
+    date: new Date().toISOString().slice(0, 10),
+  }]);
+  await buildSignAndStart(revisionOne.document_id);
+  await asApp(
+    `SELECT getomerch_marking.record_introduction_manual_review(
+      $1::uuid,$2,$3,$4::jsonb
+    )`,
+    [revisionOne.document_id, "crpt_submit_outcome_unknown",
+      "Synthetic ambiguous create response", JSON.stringify({ phase: "submit_ambiguous" })],
+  );
+  assert.equal(await reconcile(
     revisionOne.document_id,
-    "CHECKED_NOT_OK",
-    "INTRO_ERROR",
-    "Synthetic validation rejection",
+    "STAGE10-DOC-REJECTED",
+    "PARSE_ERROR",
+  ), "rejected");
+  assert.equal(await reconcile(
+    revisionOne.document_id,
+    "STAGE10-DOC-REJECTED",
+    "PARSE_ERROR",
   ), "rejected");
 
   const revisionTwo = await prepare(fixture.assignment_id, true);
@@ -173,6 +223,18 @@ async function prepare(assignmentId: string, forceCorrection: boolean) {
 }
 
 async function buildSignAndSubmit(documentId: string, externalDocumentId: string) {
+  await buildSignAndStart(documentId);
+  const status = (await asApp<{ status: string }>(
+    `SELECT getomerch_marking.record_introduction_submitted(
+      $1::uuid,$2,$3::jsonb,$4
+    ) AS status`,
+    [documentId, externalDocumentId, JSON.stringify({ acceptedForProcessing: true }),
+      "stage10-db-test"],
+  )).rows[0].status;
+  assert.equal(status, "processing");
+}
+
+async function buildSignAndStart(documentId: string) {
   await asApp(
     `SELECT getomerch_marking.store_introduction_payload(
       $1::uuid,$2,$3::bytea,$4::bytea,$5::bytea,1,$6
@@ -192,14 +254,17 @@ async function buildSignAndSubmit(documentId: string, externalDocumentId: string
     [documentId, "stage10-db-test"],
   )).rows[0].status;
   assert.equal(started, "submitting");
-  const status = (await asApp<{ status: string }>(
-    `SELECT getomerch_marking.record_introduction_submitted(
-      $1::uuid,$2,$3::jsonb,$4
+}
+
+async function reconcile(documentId: string, externalDocumentId: string, remoteStatus: string) {
+  return (await asApp<{ status: string }>(
+    `SELECT getomerch_marking.reconcile_introduction_submission(
+      $1::uuid,$2,$3,$4::jsonb,$5,$6,$7
     ) AS status`,
-    [documentId, externalDocumentId, JSON.stringify({ acceptedForProcessing: true }),
-      "stage10-db-test"],
+    [documentId, externalDocumentId, remoteStatus,
+      JSON.stringify({ status: remoteStatus, contentVerified: true }),
+      "INTRO_ERROR", "Synthetic validation rejection", "stage10-db-test"],
   )).rows[0].status;
-  assert.equal(status, "processing");
 }
 
 async function poll(

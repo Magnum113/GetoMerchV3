@@ -10,6 +10,7 @@ import {
   CornerDownLeft,
   Database,
   Download,
+  FileCheck2,
   FileUp,
   History,
   KeyRound,
@@ -219,6 +220,7 @@ export default function MarkingPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [gtinOpen, setGtinOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [conformityOpen, setConformityOpen] = useState(false);
   const [backfillOpen, setBackfillOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importDetail, setImportDetail] = useState<MarkingCodeImportDetail | null>(null);
@@ -349,6 +351,7 @@ export default function MarkingPage() {
     setProfileOpen(false);
     setGtinOpen(false);
     setEvidenceOpen(false);
+    setConformityOpen(false);
     setSelected(null);
     await loadInitial();
   }
@@ -525,6 +528,28 @@ export default function MarkingPage() {
     }
   }
 
+  async function reconcileCrptIntroductionDocument(
+    localDocumentId: string,
+    externalDocumentId: string,
+  ) {
+    const key = `crpt:reconcile_introduction:${localDocumentId}`;
+    setAssignmentActionId(key);
+    try {
+      await postMarkingMutation("/api/admin/marking/crpt", {
+        operation: "reconcile_introduction",
+        documentId: localDocumentId,
+        externalDocumentId,
+      });
+      toast.success("Документ сверен с ГИС МТ");
+      setCrptDocumentId("");
+      await loadCrpt();
+    } catch (error) {
+      toast.error(errorMessage(error, "Не удалось сверить документ ГИС МТ"));
+    } finally {
+      setAssignmentActionId(null);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -640,6 +665,10 @@ export default function MarkingPage() {
               setSelected(item);
               setEvidenceOpen(true);
             }}
+            onConformity={(item) => {
+              setSelected(item);
+              setConformityOpen(true);
+            }}
           />
         </TabsContent>
         <TabsContent value="conflicts">
@@ -753,6 +782,9 @@ export default function MarkingPage() {
               "retry_withdrawal",
               handoverId,
             )}
+            onReconcileIntroduction={(documentId, externalDocumentId) => (
+              reconcileCrptIntroductionDocument(documentId, externalDocumentId)
+            )}
           />
         </TabsContent>
         <TabsContent value="events">
@@ -786,6 +818,12 @@ export default function MarkingPage() {
         item={selected}
         open={evidenceOpen}
         onOpenChange={setEvidenceOpen}
+        onSaved={refreshAfterMutation}
+      />
+      <ConformityDocumentDialog
+        item={selected}
+        open={conformityOpen}
+        onOpenChange={setConformityOpen}
         onSaved={refreshAfterMutation}
       />
       <AssignmentCancelDialog
@@ -918,6 +956,7 @@ function ReadinessTable({
   onEdit,
   onGtin,
   onEvidence,
+  onConformity,
 }: {
   state: PageState<MarkingReadinessItem>;
   setState: React.Dispatch<React.SetStateAction<PageState<MarkingReadinessItem>>>;
@@ -925,6 +964,7 @@ function ReadinessTable({
   onEdit: (item: MarkingReadinessItem) => void;
   onGtin: (item: MarkingReadinessItem) => void;
   onEvidence: (item: MarkingReadinessItem) => void;
+  onConformity: (item: MarkingReadinessItem) => void;
 }) {
   if (state.loading && state.items.length === 0) return <LoadingPanel />;
   if (state.items.length === 0) {
@@ -969,6 +1009,11 @@ function ReadinessTable({
                 <div className="mt-1 text-xs text-muted-foreground">
                   {channelLabel(item.channel)}
                   {item.offerId && item.offerId !== item.sku ? ` · ${item.offerId}` : ""}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {item.conformityDocumentNumber
+                    ? `РД: ${item.conformityDocumentNumber}`
+                    : "РД для ввода в оборот не указан"}
                 </div>
               </TableCell>
               <TableCell>
@@ -1036,6 +1081,15 @@ function ReadinessTable({
                     onClick={() => onEvidence(item)}
                   >
                     <ShieldCheck />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Документ соответствия"
+                    disabled={!item.profileId || !item.tradeItemId}
+                    onClick={() => onConformity(item)}
+                  >
+                    <FileCheck2 />
                   </Button>
                 </div>
               </TableCell>
@@ -2086,6 +2140,7 @@ function CrptReadPanel({
   onRetryIntroduction,
   onRetryCirculation,
   onRetryWithdrawal,
+  onReconcileIntroduction,
 }: {
   workspace: MarkingCrptWorkspace;
   loading: boolean;
@@ -2097,6 +2152,7 @@ function CrptReadPanel({
   onRetryIntroduction: (assignmentId: string) => void;
   onRetryCirculation: (documentId: string) => void;
   onRetryWithdrawal: (handoverId: string) => void;
+  onReconcileIntroduction: (documentId: string, externalDocumentId: string) => void;
 }) {
   const documentValid = /^[A-Za-z0-9._:-]{1,200}$/.test(documentId.trim());
   const agent = workspace.signingAgents[0] ?? null;
@@ -2318,7 +2374,7 @@ function CrptReadPanel({
                         )}
                         {item.errorCode === "crpt_submit_outcome_unknown" && (
                           <div className="mt-1 max-w-[320px] text-xs text-muted-foreground">
-                            Сначала сверьте документ в личном кабинете Честного знака.
+                            Введите найденный ID документа ниже и запустите сверку.
                           </div>
                         )}
                       </TableCell>
@@ -2326,6 +2382,23 @@ function CrptReadPanel({
                         {formatDate(item.updatedAt)}
                       </TableCell>
                       <TableCell>
+                        {item.errorCode === "crpt_submit_outcome_unknown" && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Сверить с документом из личного кабинета"
+                            disabled={!workspace.runtime.readEnabled || !remoteSignerReady
+                              || !documentValid
+                              || actionId === `crpt:reconcile_introduction:${item.id}`}
+                            onClick={() => onReconcileIntroduction(item.id, documentId.trim())}
+                          >
+                            <Search className={
+                              actionId === `crpt:reconcile_introduction:${item.id}`
+                                ? "animate-pulse"
+                                : ""
+                            } />
+                          </Button>
+                        )}
                         {retryable && code && (
                           <Button
                             size="icon"
@@ -3070,6 +3143,145 @@ function GtinDialog({
           <Button disabled={saving || !gtin.trim() || !source.trim()} onClick={save}>
             {saving && <RefreshCw className="animate-spin" />}
             Подтвердить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConformityDocumentDialog({
+  item,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  item: MarkingReadinessItem | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [documentType, setDocumentType] = useState("CONFORMITY_DECLARATION");
+  const [documentNumber, setDocumentNumber] = useState("");
+  const [issuedAt, setIssuedAt] = useState("");
+  const [validUntil, setValidUntil] = useState("");
+  const [source, setSource] = useState("national_catalog_personal_account");
+  const [reference, setReference] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open || !item) return;
+    setDocumentType(item.conformityDocumentType ?? "CONFORMITY_DECLARATION");
+    setDocumentNumber(item.conformityDocumentNumber ?? "");
+    setIssuedAt(item.conformityDocumentIssuedAt?.slice(0, 10) ?? "");
+    setValidUntil(item.conformityDocumentValidUntil?.slice(0, 10) ?? "");
+    setReference("");
+  }, [item, open]);
+
+  async function save() {
+    if (!item?.profileId || item.revision == null) return;
+    setSaving(true);
+    try {
+      await postMutation(
+        `/api/admin/marking/profiles/${item.profileId}/conformity-document`,
+        {
+          expectedRevision: item.revision,
+          documentType,
+          documentNumber,
+          issuedAt,
+          validUntil: validUntil || null,
+          verificationSource: source,
+          externalReference: reference || null,
+          sourceSnapshot: {
+            profileId: item.profileId,
+            gtin: item.gtin,
+            documentType,
+            documentNumber,
+            issuedAt,
+            validUntil: validUntil || null,
+            verificationSource: source,
+            externalReference: reference || null,
+          },
+        },
+      );
+      toast.success("Документ соответствия сохранён");
+      await onSaved();
+    } catch (error) {
+      toast.error(errorMessage(error, "Не удалось сохранить документ соответствия"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Документ соответствия</DialogTitle>
+          <DialogDescription>
+            Реквизиты попадут в документ ввода GTIN {item?.gtin ?? ""} в оборот.
+            Заказ, печать и нанесение КМ от этого поля не зависят.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Вид документа">
+            <Select value={documentType} onValueChange={setDocumentType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CONFORMITY_DECLARATION">Декларация соответствия</SelectItem>
+                <SelectItem value="CONFORMITY_CERTIFICATE">Сертификат соответствия</SelectItem>
+                <SelectItem value="STATE_REGISTRATION_CERTIFICATE">
+                  Свидетельство госрегистрации
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Номер документа">
+            <Input
+              value={documentNumber}
+              onChange={(event) => setDocumentNumber(event.target.value)}
+            />
+          </Field>
+          <Field label="Дата документа">
+            <Input
+              type="date"
+              value={issuedAt}
+              onChange={(event) => setIssuedAt(event.target.value)}
+            />
+          </Field>
+          <Field label="Действует до">
+            <Input
+              type="date"
+              value={validUntil}
+              onChange={(event) => setValidUntil(event.target.value)}
+            />
+          </Field>
+          <Field label="Источник данных">
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="national_catalog_personal_account">
+                  Национальный каталог
+                </SelectItem>
+                <SelectItem value="crpt_personal_account">Личный кабинет ГИС МТ</SelectItem>
+                <SelectItem value="owner_document">Документ владельца</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Ссылка или номер источника">
+            <Input
+              value={reference}
+              onChange={(event) => setReference(event.target.value)}
+            />
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button
+            disabled={saving || !documentNumber.trim() || !issuedAt || !source.trim()}
+            onClick={save}
+          >
+            {saving && <RefreshCw className="animate-spin" />}
+            Сохранить
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -4050,6 +4262,7 @@ function blockerLabel(value: string) {
 
 function warningLabel(value: string) {
   return ({
+    conformity_document_missing_for_introduction: "нет РД для ввода в оборот",
     document_reference_attention: "справочный документ требует внимания",
     ozon_requirement_not_observed: "нет наблюдения требования Ozon",
   } as Record<string, string>)[value] ?? value;

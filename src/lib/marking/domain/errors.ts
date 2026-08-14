@@ -12,6 +12,7 @@ export type MarkingDomainErrorCode =
   | "invalid_ozon_submission"
   | "invalid_crpt_query"
   | "invalid_crpt_document"
+  | "invalid_conformity_document"
   | "invalid_return"
   | "invalid_suz_order"
   | "suz_order_not_found"

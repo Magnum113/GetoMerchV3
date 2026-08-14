@@ -72,6 +72,15 @@ export async function executeCrptApplicationConfirmation(
     });
     return { documentId: prepared.id, status: "requires_manual_review" };
   }
+  if (material.status === "draft" && material.conformityDocuments.length === 0) {
+    await recordIntroductionManualReview(runtime.query, {
+      documentId: prepared.id,
+      errorCode: "crpt_conformity_document_missing",
+      errorMessage: "Для ввода в оборот у GTIN не указан действующий документ соответствия",
+      phase: "conformity_document",
+    });
+    return { documentId: prepared.id, status: "requires_manual_review" };
+  }
   if (material.status === "draft") {
     await context.report({ phase: "application_report", documentId: prepared.id }, "crpt_application_report_check_started");
     const code = runtime.keyring.decryptBytes(material.encryptedCode);
@@ -130,6 +139,7 @@ export async function executeCrptApplicationConfirmation(
         tnvedCode: material.tnvedCode,
         productionDate: material.productionDate,
         markingCode: code,
+        conformityDocuments: material.conformityDocuments,
       });
       payload = built.bytes;
       const digest = sha256(payload);

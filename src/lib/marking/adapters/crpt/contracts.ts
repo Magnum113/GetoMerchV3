@@ -15,6 +15,8 @@ export type CrptDocumentStatus = {
   type: string | null;
   status: string;
   productGroup: string | null;
+  senderInn: string | null;
+  content: string | null;
   errorCode: string | null;
   errorMessage: string | null;
 };
@@ -103,11 +105,21 @@ export function parseCrptDocumentStatus(
     type: optionalString(value.type, 1, 200),
     status: requiredString(value.status, "document status", 1, 120),
     productGroup: parseProductGroup(value.productGroup),
+    senderInn: optionalString(value.senderInn, 10, 12),
+    content: optionalDocumentContent(value.content),
     errorCode: commonError ? optionalString(commonError.errorCode, 1, 120) : null,
     errorMessage: commonError
       ? optionalString(commonError.errorMessage, 1, 500) ?? optionalString(firstError, 1, 500)
       : optionalString(firstError, 1, 500),
   };
+}
+
+function optionalDocumentContent(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > 750_000 || value.includes("\u0000")) {
+    throw invalid("CRPT response contains invalid document content");
+  }
+  return value;
 }
 
 function parseProductGroup(value: unknown) {
@@ -119,6 +131,7 @@ function parseProductGroup(value: unknown) {
 }
 
 export function parseCrptDocumentCreate(value: unknown): CrptDocumentCreateResult {
+  if (typeof value === "string") value = { id: value };
   if (!isRecord(value)) throw invalid("CRPT document create response is not an object");
   const id = requiredString(value.id, "document id", 1, 200);
   if (!/^[A-Za-z0-9._:-]{1,200}$/.test(id)) throw invalid("CRPT document id is invalid");

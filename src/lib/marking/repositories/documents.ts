@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { DatabaseQueryExecutor } from "@/lib/db/pool";
+import {
+  CRPT_CONFORMITY_DOCUMENT_TYPES,
+  type CrptConformityDocument,
+} from "@/lib/marking/domain/crpt-introduction";
 import type { EncryptedMarkingValue } from "@/lib/marking/security/keyring";
 
 export type MarkingDocumentStatus =
@@ -95,7 +99,7 @@ export async function getIntroductionDocumentMaterial(
 ) {
   const row = (await query<MaterialRow>(
     `SELECT document_id, document_status, api_contract_version, gtin, offer_id,
-      tnved_code, production_date, code_fingerprint, code_ciphertext,
+      tnved_code, production_date, conformity_documents, code_fingerprint, code_ciphertext,
       code_nonce, code_auth_tag, code_key_version, payload_hash,
       payload_ciphertext, payload_nonce, payload_auth_tag, payload_key_version,
       signature_hash, signature_ciphertext, signature_nonce,
@@ -117,6 +121,7 @@ export async function getIntroductionDocumentMaterial(
       offerId: row.offer_id,
       tnvedCode: row.tnved_code,
       productionDate: isoDate(row.production_date),
+      conformityDocuments: parseConformityDocuments(row.conformity_documents),
       fingerprint: row.code_fingerprint,
       encryptedCode: encrypted(
         row.code_ciphertext, row.code_nonce, row.code_auth_tag, row.code_key_version,
@@ -241,6 +246,29 @@ export async function recordIntroductionManualReview(
   return result.rows[0].status;
 }
 
+export async function reconcileIntroductionSubmission(
+  query: DatabaseQueryExecutor,
+  input: {
+    documentId: string;
+    externalDocumentId: string;
+    remoteStatus: string;
+    response: Record<string, unknown>;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    actorId: string;
+  },
+) {
+  const result = await query<{ status: MarkingDocumentStatus }>(
+    `SELECT getomerch_marking.reconcile_introduction_submission(
+      $1::uuid,$2,$3,$4::jsonb,$5,$6,$7
+    ) AS status`,
+    [input.documentId, input.externalDocumentId, input.remoteStatus,
+      JSON.stringify(input.response), input.errorCode ?? null,
+      input.errorMessage ?? null, input.actorId],
+  );
+  return result.rows[0].status;
+}
+
 export async function confirmIntroductionCirculation(
   query: DatabaseQueryExecutor,
   input: { documentId: string; rawStatus: string; actorId: string },
@@ -351,7 +379,7 @@ export async function listMarkingDocuments(query: DatabaseQueryExecutor, limit =
 type MaterialRow = {
   document_id: string; document_status: MarkingDocumentStatus; api_contract_version: string;
   gtin: string; offer_id: string | null; tnved_code: string;
-  production_date: Date | string; code_fingerprint: string;
+  production_date: Date | string; conformity_documents: unknown; code_fingerprint: string;
   code_ciphertext: Buffer; code_nonce: Buffer; code_auth_tag: Buffer; code_key_version: number;
   payload_hash: string | null; payload_ciphertext: Buffer | null; payload_nonce: Buffer | null;
   payload_auth_tag: Buffer | null; payload_key_version: number | null;
@@ -359,6 +387,32 @@ type MaterialRow = {
   signature_auth_tag: Buffer | null; signature_key_version: number | null;
   external_document_id: string | null;
 };
+
+function parseConformityDocuments(value: unknown): CrptConformityDocument[] {
+  if (!Array.isArray(value)) throw new Error("CRPT conformity document projection is invalid");
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("CRPT conformity document projection is invalid");
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      typeof record.type !== "string"
+      || !CRPT_CONFORMITY_DOCUMENT_TYPES.includes(record.type as never)
+      || typeof record.number !== "string"
+      || record.number.length < 1
+      || record.number.length > 300
+      || typeof record.date !== "string"
+      || !/^\d{4}-\d{2}-\d{2}$/.test(record.date)
+    ) {
+      throw new Error("CRPT conformity document projection is invalid");
+    }
+    return {
+      type: record.type as CrptConformityDocument["type"],
+      number: record.number,
+      date: record.date,
+    };
+  });
+}
 type DocumentRow = {
   id: string; document_type: "introduction" | "withdrawal_remote_sale" | "return_to_circulation";
   operation_mode: "own_production" | "distance_sale" | "remote_sale_return";

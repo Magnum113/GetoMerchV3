@@ -29,9 +29,14 @@ import {
   insertProfileBackfillPreview,
   listProductBackfillCandidates,
   updateProductProfileOperationalStatus,
+  upsertTradeItemConformityDocument,
   upsertProductProfileDraft,
   verifyTradeItemAndProfile,
 } from "@/lib/marking/repositories/product-profiles";
+import {
+  CRPT_CONFORMITY_DOCUMENT_TYPES,
+  type CrptConformityDocumentType,
+} from "@/lib/marking/domain/crpt-introduction";
 
 type ActorInput = {
   actorType?: "admin" | "system" | "migration";
@@ -250,6 +255,86 @@ export async function attachMarkingProductEvidence(
   });
 }
 
+export async function saveTradeItemConformityDocument(
+  input: {
+    profileId: string;
+    expectedRevision: number;
+    documentType: CrptConformityDocumentType;
+    documentNumber: string;
+    issuedAt: string;
+    validUntil?: string | null;
+    verificationSource: string;
+    externalReference?: string | null;
+    sourceSnapshot: Record<string, unknown>;
+  } & ActorInput,
+  context: ServerMutationContext,
+) {
+  assertUuid(input.profileId, "profileId");
+  assertPositiveRevision(input.expectedRevision);
+  if (!CRPT_CONFORMITY_DOCUMENT_TYPES.includes(input.documentType)) {
+    throw new MarkingDomainError(
+      "invalid_conformity_document",
+      "Неизвестный вид документа соответствия",
+    );
+  }
+  assertRequiredText(input.documentNumber, "documentNumber", 300);
+  assertRequiredText(input.verificationSource, "verificationSource", 120);
+  assertOptionalText(input.externalReference, "externalReference", 500);
+  assertDate(input.issuedAt, "issuedAt");
+  if (input.validUntil) assertDate(input.validUntil, "validUntil");
+  assertSourceSnapshot(input.sourceSnapshot);
+  const sourceSnapshotHash = readinessSnapshotHash(input.sourceSnapshot);
+  const actorId = input.actorId?.trim() || context.actor;
+  return runServerMutation({
+    operation: "marking.trade-item.conformity-document.upsert",
+    payload: {
+      ...input,
+      actorType: undefined,
+      actorId: undefined,
+      sourceSnapshotHash,
+    },
+    context,
+    execute: async (query, checkpoint) => {
+      const before = await getProductProfileState(query, input.profileId);
+      if (!before) {
+        throw new MarkingDomainError("profile_not_found", "Профиль маркировки не найден");
+      }
+      if (before.revision !== input.expectedRevision) {
+        throw new MarkingDomainError(
+          "profile_revision_conflict",
+          "Профиль маркировки уже изменился",
+        );
+      }
+      if (!before.tradeItemId) {
+        throw new MarkingDomainError(
+          "invalid_conformity_document",
+          "Сначала подтвердите GTIN товара",
+        );
+      }
+      const document = await upsertTradeItemConformityDocument(query, {
+        ...input,
+        sourceSnapshotHash,
+        actorId,
+      });
+      checkpoint("trade_item_conformity_document_saved");
+      return {
+        data: document,
+        audit: {
+          entityType: "marking_trade_item",
+          entityId: document.tradeItemId,
+          before: { profileRevision: before.revision },
+          after: {
+            documentId: document.documentId,
+            documentType: input.documentType,
+            sourceSnapshotHash,
+            profileRevision: document.profileRevision,
+          },
+        },
+      };
+    },
+  });
+}
+
 export async function setMarkingProductOperationalStatus(
   input: {
     profileId: string;
@@ -454,5 +539,16 @@ function assertOptionalPattern(
   if (value == null || value === "") return;
   if (!pattern.test(value)) {
     throw new MarkingDomainError("invalid_product_profile", `${name} is invalid`);
+  }
+}
+
+function assertDate(value: string, name: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    throw new MarkingDomainError("invalid_conformity_document", `${name} is invalid`);
+  }
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (date.toISOString().slice(0, 10) !== value) {
+    throw new MarkingDomainError("invalid_conformity_document", `${name} is invalid`);
   }
 }

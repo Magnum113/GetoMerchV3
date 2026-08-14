@@ -59,6 +59,11 @@ type ReadinessRow = {
   product_group: string | null;
   national_catalog_card_id: string | null;
   national_catalog_status: string | null;
+  conformity_document_type: string | null;
+  conformity_document_number: string | null;
+  conformity_document_issued_at: Date | string | null;
+  conformity_document_valid_until: Date | string | null;
+  conformity_document_status: string | null;
   trade_item_verification_status: MarkingVerificationStatus | null;
   verified_evidence_count: string;
   conflict_count: number;
@@ -472,6 +477,11 @@ export class PostgresMarkingReadRepository {
             trade_item.product_group,
             trade_item.national_catalog_card_id,
             trade_item.national_catalog_status,
+            conformity.document_type AS conformity_document_type,
+            conformity.document_number AS conformity_document_number,
+            conformity.issued_at AS conformity_document_issued_at,
+            conformity.valid_until AS conformity_document_valid_until,
+            conformity.status AS conformity_document_status,
             trade_item.verification_status AS trade_item_verification_status,
             coalesce(evidence.verified_evidence_count, 0)::text
               AS verified_evidence_count,
@@ -607,6 +617,12 @@ export class PostgresMarkingReadRepository {
             ], NULL) AS blocker_reasons,
             array_remove(ARRAY[
               CASE
+                WHEN profile.marking_requirement = 'required'
+                  AND profile.production_mode = 'own_production'
+                  AND conformity.id IS NULL
+                  THEN 'conformity_document_missing_for_introduction'
+              END,
+              CASE
                 WHEN EXISTS (
                   SELECT 1
                   FROM public.merch_marking_trade_item_documents AS document
@@ -656,6 +672,24 @@ export class PostgresMarkingReadRepository {
           LEFT JOIN public.merch_designs AS design ON design.id = product.design_id
           LEFT JOIN public.merch_marking_trade_items AS trade_item
             ON trade_item.id = profile.trade_item_id
+          LEFT JOIN LATERAL (
+            SELECT document.id, document.document_type, document.document_number,
+              document.issued_at, document.valid_until, document.status
+            FROM public.merch_marking_trade_item_documents AS document
+            WHERE document.trade_item_id = trade_item.id
+              AND document.archived_at IS NULL
+              AND document.status = 'valid'
+              AND document.issued_at IS NOT NULL
+              AND document.issued_at <= current_date
+              AND (document.valid_until IS NULL OR document.valid_until >= current_date)
+              AND document.document_type = ANY (ARRAY[
+                'CONFORMITY_CERTIFICATE'::text,
+                'CONFORMITY_DECLARATION'::text,
+                'STATE_REGISTRATION_CERTIFICATE'::text
+              ])
+            ORDER BY document.issued_at DESC NULLS LAST, document.id DESC
+            LIMIT 1
+          ) AS conformity ON true
           LEFT JOIN evidence_counts AS evidence
             ON evidence.product_profile_id = profile.id
           LEFT JOIN trade_profile_counts AS trade_count
@@ -708,6 +742,11 @@ export class PostgresMarkingReadRepository {
           readiness.product_group,
           readiness.national_catalog_card_id,
           readiness.national_catalog_status,
+          readiness.conformity_document_type,
+          readiness.conformity_document_number,
+          readiness.conformity_document_issued_at,
+          readiness.conformity_document_valid_until,
+          readiness.conformity_document_status,
           readiness.trade_item_verification_status,
           readiness.verified_evidence_count,
           readiness.conflict_count,
@@ -1784,6 +1823,11 @@ function mapReadiness(row: ReadinessRow): MarkingReadinessItem {
     productGroup: row.product_group,
     nationalCatalogCardId: row.national_catalog_card_id,
     nationalCatalogStatus: row.national_catalog_status,
+    conformityDocumentType: row.conformity_document_type,
+    conformityDocumentNumber: row.conformity_document_number,
+    conformityDocumentIssuedAt: nullableIso(row.conformity_document_issued_at),
+    conformityDocumentValidUntil: nullableIso(row.conformity_document_valid_until),
+    conformityDocumentStatus: row.conformity_document_status,
     tradeItemVerificationStatus: row.trade_item_verification_status,
     verifiedEvidenceCount: Number(row.verified_evidence_count),
     conflictCount: Number(row.conflict_count),

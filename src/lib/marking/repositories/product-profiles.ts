@@ -302,6 +302,42 @@ export async function updateProductProfileOperationalStatus(
   };
 }
 
+export async function upsertTradeItemConformityDocument(
+  query: DatabaseQueryExecutor,
+  input: {
+    profileId: string;
+    expectedRevision: number;
+    documentType: string;
+    documentNumber: string;
+    issuedAt: string;
+    validUntil?: string | null;
+    verificationSource: string;
+    externalReference?: string | null;
+    sourceSnapshotHash: string;
+    actorId: string;
+  },
+) {
+  const row = (await query<{
+    document_id: string;
+    profile_revision: string;
+    trade_item_id: string;
+  }>(
+    `SELECT document_id, profile_revision, trade_item_id
+     FROM getomerch_marking.upsert_trade_item_conformity_document(
+       $1::uuid,$2::bigint,$3,$4,$5::date,$6::date,$7,$8,$9,$10
+     )`,
+    [input.profileId, input.expectedRevision, input.documentType,
+      input.documentNumber, input.issuedAt, input.validUntil ?? null,
+      input.verificationSource, input.externalReference ?? null,
+      input.sourceSnapshotHash, input.actorId],
+  )).rows[0];
+  return {
+    documentId: row.document_id,
+    profileRevision: Number(row.profile_revision),
+    tradeItemId: row.trade_item_id,
+  };
+}
+
 export async function listProductBackfillCandidates(
   query: DatabaseQueryExecutor,
 ): Promise<ProductBackfillCandidate[]> {

@@ -1,6 +1,6 @@
 # План разработки интеграции «Честный знак» в GetoMerch Admin
 
-Дата актуализации: 13 августа 2026 года.
+Дата актуализации: 14 августа 2026 года.
 Статус: этапы 0-13 реализованы; production-блок 2 завершен с внешними
 write-интеграциями, оставленными выключенными.
 
@@ -460,7 +460,8 @@ Ozon FBO остается только аналитикой и не создае
 1. GTIN хранится в нормализованном формате и проверяется по длине/check digit.
 2. Один product profile имеет явный fulfillment mode и manufacturing model.
 3. Профиль нельзя включить без GTIN, product group и evidence связи с
-   товарной карточкой. РД и диагностические флаги НК не являются gate.
+   товарной карточкой. РД и диагностические флаги НК не блокируют включение
+   профиля, но РД проверяется отдельно перед вводом в оборот.
 4. State transition выполняется только через service/mutation layer.
 5. Event append происходит в той же транзакции, что и изменение состояния.
 6. Время хранится в `timestamptz`, внешний payload — только sanitized subset.
@@ -975,8 +976,8 @@ marking pool принимает только код с подтвержденн�
 ### Работы
 
 1. Payload builder с versioned schema и deterministic canonicalization.
-2. Проверка profile, GTIN, location и ownership КМ. Данные РД не являются
-   условием отправки.
+2. Проверка profile, GTIN, location, ownership КМ и действующих реквизитов РД.
+   Без вида, номера и даты РД внешний submit не выполняется.
 3. Создание immutable payload digest.
 4. Подпись через signer.
 5. Submission worker и status polling через
@@ -1002,7 +1003,8 @@ marking pool принимает только код с подтвержденн�
 - accepted/rejected/processing;
 - duplicate submission после timeout;
 - подпись устаревшей версии payload;
-- отсутствие справочного РД не меняет результат submission;
+- отсутствие РД блокирует submit до внешней записи и создаёт понятную ручную
+  задачу; заказ/импорт/печать/нанесение КМ остаются доступными;
 - mixed GTIN batch запрещен, если контракт этого не допускает;
 - partial document errors;
 - process restart между sign и submit.
@@ -1676,7 +1678,7 @@ entities: adapters переводят их в стабильные внутре�
 | Материал | Нужен к этапу |
 |---|---|
 | Пилотный GTIN и карточка Национального каталога | 0/4 |
-| Разрешительные документы (необязательные метаданные) | не блокируют этапы |
+| Разрешительные документы | до первого `LP_INTRODUCE_GOODS`; не блокируют подготовительные этапы 0-7 |
 | Актуальные API-документы ГИС МТ/СУЗ | 0/9 |
 | УКЭП, сертификат и сведения о криптопровайдере | 1/9 |
 | Тестовый пул выпущенных КМ | 5 |
@@ -1691,21 +1693,21 @@ entities: adapters переводят их в стабильные внутре�
 
 | Этап | Статус | Последний артефакт | Production flag | Примечание |
 |---|---|---|---|---|
-| 0 | завершен | `stage-0/contract-manifest-2026-07-26.json` | — | CRPT/СУЗ и актуальные Ozon exemplar contracts зафиксированы; РД не является gate |
+| 0 | завершен | `stage-0/contract-manifest-2026-07-26.json` | — | CRPT/СУЗ и Ozon exemplar contracts зафиксированы; правило РД уточнено production canary 14.08.2026 |
 | 1 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Fail-closed config, redaction, keyring, изолированные queue/DB role/worker/signer развернуты в production |
 | 2 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Generic fulfillment и Ozon FBS projection развернуты; FBO isolation проверена; выполнен backfill 52 item |
 | 3 | развернут, flags off | `BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md` | off | Core schema, state machine, atomic events и read-only API/UI развернуты в production |
 | 4 | развернут, flags off | `stage-4/PRODUCTION_RECONCILIATION_2026-08-10.md` | off | 138 profiles: все verified/enabled/ready, draft/blocked/conflicts=0; D26/D27 опубликованы; terminal Ozon posting исключены из текущего requirement |
 | 5 | canary | `stage-7/PRODUCTION_ACTIVE_ORDER_CANARY_2026-08-13.md` | off | Всего импортировано 12 реальных КМ: исходный пилот 5 КМ и 7 КМ для семи активных FBS-позиций; все preview/apply без дублей и отказов, import-флаг снова выключен |
 | 6 | canary | `stage-7/PRODUCTION_ACTIVE_ORDER_CANARY_2026-08-13.md` | limited | Один реальный КМ назначен `D16-TSH-PRT-WGRY-XL` без изменения склада; шесть назначений ожидают фактических заготовок/вышивки |
-| 7 | canary | `stage-7/PRODUCTION_ACTIVE_ORDER_CANARY_2026-08-13.md` | limited | Реальная этикетка 58x40 создана для одного FBS-заказа, повторно декодирована и совпала с КМ СУЗ; физическое нанесение остается следующим gate |
+| 7 | canary | `stage-10/PRODUCTION_CANARY_2026-08-14.md` | limited | Этикетка 58x40 декодирована, физически нанесена и товар передан Ozon; дальнейший document canary завершился инцидентом этапа 10 |
 | 8 | развернут, flags off | `stage-8/README.md` | off | Revisioned Ozon batches, exemplar adapter, durable jobs, async status и UI развернуты; реальный canary отдельно |
 | 9 | canary | `stage-9/PRODUCTION_CANARY_2026-08-10.md` | off | Реальная attached CAdES-BES подпись и auth-only production True API прошли; token memory-only, CRPT/Ozon/SUZ write flags выключены; status реального КМ/документа после появления объекта |
-| 10 | развернут, flags off | `stage-10/README.md` | off | Revisioned `LP_INTRODUCE_GOODS`, detached signer pipeline и подтверждение `in_circulation` развернуты; production canary отдельно |
-| 11 | развернут, flags off | `stage-11/README.md` | off | Транзакционный shipping gate, physical handover и `LK_RECEIPT/DISTANCE` развернуты; production canary и производственный календарь отдельно |
+| 10 | canary с инцидентом | `stage-10/PRODUCTION_CANARY_2026-08-14.md` | off | Первый документ отклонён из-за отсутствующих реквизитов РД; заказ передан без принятого ввода и без Ozon exemplar, успешный canary не закрыт |
+| 11 | canary с инцидентом | `stage-10/PRODUCTION_CANARY_2026-08-14.md` | off | Physical handover записан в observe-режиме после фактической передачи; `LK_RECEIPT/DISTANCE` не запускался, успешный production canary не закрыт |
 | 12 | развернут, flags off | `stage-12/README.md` | off | Ozon returns, `LP_RETURN`, физическая приемка и FBS -> FBO custody развернуты; реальные возвраты и ЭДО evidence отдельно |
 | 13 | развернут, flags off | `stage-13/README.md` | off | Ручные draft/approval, signed SUZ order, получение блоков и `REPORT_UTILIZE` развернуты; реальные OMS credentials и платный pilot отдельно |
-| 14 | не начат | — | off | — |
+| 14 | в работе | `stage-10/PRODUCTION_CANARY_2026-08-14.md` | off | Начаты reconciliation/hardening после первого production canary; массовый rollout запрещён |
 
 Допустимые статусы: `не начат`, `в работе`, `реализован с flags off`,
 `развернут, flags off`, `canary`, `production`, `заблокирован`.
@@ -1732,9 +1734,10 @@ entities: adapters переводят их в стабильные внутре�
 
 ### 33.1. Статус production rollout
 
-На 13 августа 2026 года завершены блоки 1 и 2. После локального code freeze
-миграции `0005`-`0019` прошли rehearsal и DB lifecycle проверки, а затем были
-применены к `getomerch_production`. Production schema version равна `0019`.
+На 14 августа 2026 года завершены блоки 1 и 2. После локального code freeze
+миграции `0005`-`0020` прошли rehearsal и DB lifecycle проверки, а затем были
+применены к `getomerch_production`. Миграция hardening `0021` подготовлена
+после первого document canary.
 
 Развернуты отдельные marking DB credentials, keyring, worker, Mac-agent broker
 endpoint и периодическая очистка временных импортов. Выполнен идемпотентный
@@ -1771,10 +1774,12 @@ marking signal включает JIT-поток, а terminal posting больше
 блока 2 удалены. Полный отчет находится в
 [`BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md`](./BLOCK_2_PRODUCTION_ROLLOUT_2026-08-10.md).
 
-Signer/read-only auth canary этапа 9 успешно завершён. Следующий шаг — не
-массовое включение, а один контролируемый canary этапа 10 с реальным КМ:
-нанесение, `LP_INTRODUCE_GOODS` и подтверждение `in_circulation`. До него все
-внешние write-флаги остаются выключенными.
+Signer/read-only auth canary этапа 9 успешно завершён. Первый реальный canary
+этапа 10 был подписан и отправлен, но ГИС МТ отклонила документ из-за
+отсутствующих реквизитов РД. Товар передан Ozon без принятого ввода и без
+принятого exemplar; это инцидент, а не закрытие этапа. Следующий canary
+выполняется на новом FBS-заказе только после добавления проверенного РД. Все
+внешние write-флаги до этого остаются выключенными.
 
 ## 34. Источники и обязательная повторная проверка
 

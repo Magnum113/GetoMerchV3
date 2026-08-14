@@ -184,7 +184,7 @@ select
   '43' as expected
 from actual
 union all
-select 'working_columns', column_count = 563, column_count::text, '563'
+select 'working_columns', column_count = 566, column_count::text, '566'
 from actual
 union all
 select 'working_defaults', default_count = 193, default_count::text, '193'
@@ -193,7 +193,7 @@ union all
 select 'working_not_null', not_null_count = 322, not_null_count::text, '322'
 from actual
 union all
-select 'working_constraints', constraint_count = 388, constraint_count::text, '388'
+select 'working_constraints', constraint_count = 391, constraint_count::text, '391'
 from actual
 union all
 select 'primary_keys', primary_key_count = 43, primary_key_count::text, '43'
@@ -211,15 +211,15 @@ from actual
 union all
 select
   'check_constraints',
-  check_constraint_count = 227,
+  check_constraint_count = 230,
   check_constraint_count::text,
-  '227'
+  '230'
 from actual
 union all
-select 'working_indexes', index_count = 159, index_count::text, '159'
+select 'working_indexes', index_count = 160, index_count::text, '160'
 from actual
 union all
-select 'partial_indexes', partial_index_count = 38, partial_index_count::text, '38'
+select 'partial_indexes', partial_index_count = 39, partial_index_count::text, '39'
 from actual
 union all
 select 'unique_indexes', unique_index_count = 93, unique_index_count::text, '93'

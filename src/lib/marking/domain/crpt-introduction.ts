@@ -1,6 +1,21 @@
 import { parseGs1MarkingCode } from "@/lib/marking/domain/code-pool";
 
-export const CRPT_INTRODUCTION_CONTRACT_VERSION = "true-api-v649.0-2026-04-15";
+export const CRPT_INTRODUCTION_CONTRACT_VERSION = "true-api-v716.0-2026-08-12";
+
+export const CRPT_CONFORMITY_DOCUMENT_TYPES = [
+  "CONFORMITY_CERTIFICATE",
+  "CONFORMITY_DECLARATION",
+  "STATE_REGISTRATION_CERTIFICATE",
+] as const;
+
+export type CrptConformityDocumentType =
+  (typeof CRPT_CONFORMITY_DOCUMENT_TYPES)[number];
+
+export type CrptConformityDocument = {
+  type: CrptConformityDocumentType;
+  number: string;
+  date: string;
+};
 
 export class CrptIntroductionPayloadError extends Error {
   readonly code = "crpt_introduction_payload_invalid";
@@ -17,6 +32,7 @@ export function buildLpIntroduceGoodsPayload(input: {
   tnvedCode: string;
   productionDate: string;
   markingCode: Uint8Array;
+  conformityDocuments: readonly CrptConformityDocument[];
 }) {
   if (!/^\d{10}(?:\d{2})?$/.test(input.inn)) {
     throw new CrptIntroductionPayloadError("INN is required for CRPT introduction");
@@ -27,6 +43,26 @@ export function buildLpIntroduceGoodsPayload(input: {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.productionDate)) {
     throw new CrptIntroductionPayloadError("Production date is invalid");
   }
+  if (input.conformityDocuments.length < 1 || input.conformityDocuments.length > 20) {
+    throw new CrptIntroductionPayloadError("A conformity document is required for CRPT introduction");
+  }
+  const conformityDocuments = input.conformityDocuments.map((document) => {
+    if (!CRPT_CONFORMITY_DOCUMENT_TYPES.includes(document.type)) {
+      throw new CrptIntroductionPayloadError("Conformity document type is invalid");
+    }
+    const number = document.number.trim();
+    if (number.length < 1 || number.length > 300 || /[\u0000-\u001f]/.test(number)) {
+      throw new CrptIntroductionPayloadError("Conformity document number is invalid");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(document.date)) {
+      throw new CrptIntroductionPayloadError("Conformity document date is invalid");
+    }
+    return {
+      certificate_type: document.type,
+      certificate_number: number,
+      certificate_date: document.date,
+    };
+  });
   const parsed = parseGs1MarkingCode(Buffer.from(input.markingCode));
   if (!parsed.ok || parsed.gtin !== input.gtin) {
     throw new CrptIntroductionPayloadError("Marking code does not match the verified GTIN");
@@ -38,7 +74,11 @@ export function buildLpIntroduceGoodsPayload(input: {
     producer_inn: input.inn,
     production_date: input.productionDate,
     production_type: "OWN_PRODUCTION",
-    products: [{ tnved_code: input.tnvedCode, uit_code: uitCode }],
+    products: [{
+      tnved_code: input.tnvedCode,
+      uit_code: uitCode,
+      certificate_document_data: conformityDocuments,
+    }],
   } as const;
   return {
     document,

@@ -141,12 +141,16 @@ export class CrptTrueApiClient {
     }
   }
 
-  async getDocumentStatus(externalDocumentId: string, productGroup = "lp") {
+  async getDocumentStatus(
+    externalDocumentId: string,
+    productGroup = "lp",
+    options: { includeContent?: boolean } = {},
+  ) {
     if (!/^[A-Za-z0-9._:-]{1,200}$/.test(externalDocumentId)) {
       throw new CrptContractError("crpt_document_id_invalid", "CRPT document ID is invalid");
     }
     const response = await this.authorizedJson(
-      `${this.baseV4()}/doc/${encodeURIComponent(externalDocumentId)}/info?pg=${encodeURIComponent(productGroup)}&body=false`,
+      `${this.baseV4()}/doc/${encodeURIComponent(externalDocumentId)}/info?pg=${encodeURIComponent(productGroup)}&body=false&content=${options.includeContent === true ? "true" : "false"}`,
       { method: "GET", headers: { Accept: "application/json" } },
     );
     return parseCrptDocumentStatus(response, externalDocumentId);
@@ -179,6 +183,7 @@ export class CrptTrueApiClient {
             signature: input.detachedSignatureBase64,
           }),
         },
+        "document_id",
       );
       return parseCrptDocumentCreate(response);
     } finally {
@@ -186,7 +191,11 @@ export class CrptTrueApiClient {
     }
   }
 
-  private async authorizedJson(url: string, init: RequestInit) {
+  private async authorizedJson(
+    url: string,
+    init: RequestInit,
+    responseMode: "json" | "document_id" = "json",
+  ) {
     let token = await this.input.tokenManager.getToken();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -198,6 +207,7 @@ export class CrptTrueApiClient {
             headers: { ...init.headers, Authorization: `Bearer ${token.value}` },
           },
           this.input.timeoutMs,
+          responseMode,
         );
       } catch (error) {
         if (!(error instanceof CrptApiError) || error.status !== 401 || attempt > 0) throw error;
@@ -222,6 +232,7 @@ async function requestJson(
   url: string,
   init: RequestInit,
   timeoutMs = 15_000,
+  responseMode: "json" | "document_id" = "json",
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, Math.min(60_000, timeoutMs)));
@@ -250,7 +261,22 @@ async function requestJson(
     try {
       payload = JSON.parse(text);
     } catch (error) {
-      throw new CrptApiError("crpt_response_invalid", "CRPT returned invalid JSON", response.status >= 500, response.status, { cause: error });
+      const normalized = text.trim();
+      if (
+        response.ok
+        && responseMode === "document_id"
+        && /^[A-Za-z0-9._:-]{1,200}$/.test(normalized)
+      ) {
+        payload = { id: normalized };
+      } else {
+        throw new CrptApiError(
+          "crpt_response_invalid",
+          "CRPT returned invalid JSON",
+          response.status >= 500,
+          response.status,
+          { cause: error },
+        );
+      }
     }
   }
   if (!response.ok) {

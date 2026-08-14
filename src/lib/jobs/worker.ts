@@ -29,8 +29,10 @@ export async function runBackgroundWorker() {
   const heartbeatMs = readIntegerEnv("GETOMERCH_WORKER_HEARTBEAT_MS", 10_000, 2_000, 60_000);
   const staleSeconds = readIntegerEnv("GETOMERCH_WORKER_STALE_SECONDS", 120, 30, 3_600);
   const retentionDays = readIntegerEnv("GETOMERCH_JOB_RETENTION_DAYS", 30, 7, 3_650);
+  const recoveryIntervalMs = Math.max(15_000, Math.min(60_000, staleSeconds * 500));
   let stopping = false;
   let activeAbort: AbortController | null = null;
+  let nextRecoveryAt = Date.now() + recoveryIntervalMs;
 
   const stop = () => {
     stopping = true;
@@ -48,6 +50,13 @@ export async function runBackgroundWorker() {
     while (!stopping) {
       const job = await claimNextJob(workerId, [...CORE_JOB_TYPES]);
       if (!job) {
+        if (Date.now() >= nextRecoveryAt) {
+          const idleRecovered = await recoverStaleJobs(staleSeconds);
+          if (idleRecovered.length > 0) {
+            console.warn("[worker] recovered stale jobs", { recovered: idleRecovered.length });
+          }
+          nextRecoveryAt = Date.now() + recoveryIntervalMs;
+        }
         await sleep(pollMs);
         continue;
       }

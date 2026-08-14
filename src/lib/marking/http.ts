@@ -344,4 +344,10 @@ const POSTGRES_MARKING_ERRORS: Record<
   MZD21: { status: 409, code: "conflict", message: "Заказ КМ ещё не ожидает отчёт о нанесении" },
   MZD22: { status: 400, code: "bad_request", message: "Некорректная остановка заказа КМ" },
   MZD23: { status: 409, code: "conflict", message: "Завершённый заказ КМ нельзя остановить" },
+  MZE00: { status: 400, code: "bad_request", message: "Некорректные реквизиты документа соответствия" },
+  MZE01: { status: 404, code: "not_found", message: "Подтверждённый профиль товара не найден" },
+  MZE02: { status: 409, code: "conflict", message: "Профиль уже изменён. Обновите страницу" },
+  MZE10: { status: 400, code: "bad_request", message: "Некорректные данные сверки документа ГИС МТ" },
+  MZE11: { status: 404, code: "not_found", message: "Документ ввода в оборот не найден" },
+  MZE12: { status: 409, code: "conflict", message: "Документ уже сверен или изменил состояние" },
 };

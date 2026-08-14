@@ -57,6 +57,11 @@ export type MarkingReadinessItem = {
   productGroup: string | null;
   nationalCatalogCardId: string | null;
   nationalCatalogStatus: string | null;
+  conformityDocumentType: string | null;
+  conformityDocumentNumber: string | null;
+  conformityDocumentIssuedAt: string | null;
+  conformityDocumentValidUntil: string | null;
+  conformityDocumentStatus: string | null;
   tradeItemVerificationStatus: MarkingVerificationStatus | null;
   verifiedEvidenceCount: number;
   conflictCount: number;

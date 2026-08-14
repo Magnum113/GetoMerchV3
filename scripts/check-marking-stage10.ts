@@ -73,6 +73,11 @@ function testCanonicalPayload() {
       tnvedCode: "6109100000",
       productionDate: "2026-08-04",
       markingCode: code,
+      conformityDocuments: [{
+        type: "CONFORMITY_DECLARATION",
+        number: "STAGE10-DECLARATION-1",
+        date: "2026-08-01",
+      }],
     });
     const second = buildLpIntroduceGoodsPayload({
       inn: "050000000000",
@@ -80,11 +85,20 @@ function testCanonicalPayload() {
       tnvedCode: "6109100000",
       productionDate: "2026-08-04",
       markingCode: code,
+      conformityDocuments: [{
+        type: "CONFORMITY_DECLARATION",
+        number: "STAGE10-DECLARATION-1",
+        date: "2026-08-01",
+      }],
     });
     assert.deepEqual(first.bytes, second.bytes);
     assert.equal(first.document.products[0].uit_code, "010462883773607521STAGE10-00001");
     assert.equal(JSON.stringify(first.document).includes("SIGNATURE"), false);
-    assert.equal(JSON.stringify(first.document).includes("certificate_document_data"), false);
+    assert.deepEqual(first.document.products[0].certificate_document_data, [{
+      certificate_type: "CONFORMITY_DECLARATION",
+      certificate_number: "STAGE10-DECLARATION-1",
+      certificate_date: "2026-08-01",
+    }]);
     assert.equal(canonicalJson({ z: 1, a: { y: 2, x: 3 } }), '{"a":{"x":3,"y":2},"z":1}');
     first.bytes.fill(0);
     second.bytes.fill(0);
@@ -146,6 +160,19 @@ async function testTrueApiContracts() {
     detachedSignatureBase64: Buffer.alloc(96, 2).toString("base64"),
   });
   assert.equal(result.externalDocumentId, createFixture.id);
+  const plainId = crypto.randomUUID();
+  const plainClient = new CrptTrueApiClient({
+    contour: "sandbox", tokenManager: tokens,
+    fetch: (async () => new Response(plainId, {
+      status: 201,
+      headers: { "Content-Type": "text/plain" },
+    })) as typeof fetch,
+  });
+  assert.equal((await plainClient.createManualDocument({
+    documentType: "LP_INTRODUCE_GOODS",
+    productDocument: payload,
+    detachedSignatureBase64: Buffer.alloc(96, 2).toString("base64"),
+  })).externalDocumentId, plainId);
   assert.match(captured!.url, /\/api\/v3\/true-api\/lk\/documents\/create\?pg=lp$/);
   assert.equal(captured!.body.type, "LP_INTRODUCE_GOODS");
   assert.equal(captured!.body.document_format, "MANUAL");
@@ -161,6 +188,17 @@ async function testTrueApiContracts() {
   assert.equal(rejectedStatus.status, "PARSE_ERROR");
   assert.equal(rejectedStatus.errorCode, "INTRO_ERROR");
   assert.equal(rejectedStatus.errorMessage, "SANITIZED_VALIDATION_ERROR");
+  const linkedContent = '{"synthetic":true}';
+  const linkedStatus = parseCrptDocumentStatus({
+    number: createFixture.id,
+    type: "LP_INTRODUCE_GOODS",
+    status: "PARSE_ERROR",
+    productGroup: ["lp"],
+    senderInn: "050000000000",
+    content: linkedContent,
+  }, createFixture.id);
+  assert.equal(linkedStatus.senderInn, "050000000000");
+  assert.equal(linkedStatus.content, linkedContent);
   payload.fill(0);
 }
 
@@ -170,6 +208,10 @@ async function testStaticSafety() {
   const migration = await readFile("db/migrations/0015_marking_crpt_introduction.sql", "utf8");
   const materialOfferSourceMigration = await readFile(
     "db/migrations/0020_marking_crpt_material_offer_source.sql",
+    "utf8",
+  );
+  const hardeningMigration = await readFile(
+    "db/migrations/0021_marking_crpt_conformity_reconciliation.sql",
     "utf8",
   );
   const repository = await readFile("src/lib/marking/repositories/documents.ts", "utf8");
@@ -196,6 +238,9 @@ async function testStaticSafety() {
     /JOIN public\.merch_fulfillment_order_items AS item/,
   );
   assert.doesNotMatch(materialOfferSourceMigration, /assignment\.offer_id/);
+  assert.match(hardeningMigration, /certificate_document_data|conformity_documents/);
+  assert.match(hardeningMigration, /reconcile_introduction_submission/);
+  assert.match(execution, /crpt_conformity_document_missing/);
   assert.match(workerBootstrap, /GRANT SELECT ON getomerch_marking\.document_safe,[\s\S]*?TO \$ROLE/);
   for (const routine of [
     "prepare_introduction_document",

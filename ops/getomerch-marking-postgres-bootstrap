@@ -262,6 +262,12 @@ GRANT EXECUTE ON FUNCTION getomerch_marking.prepare_introduction_document(
 GRANT EXECUTE ON FUNCTION getomerch_marking.get_introduction_document_material(
   uuid, text
 ) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.upsert_trade_item_conformity_document(
+  uuid, bigint, text, text, date, date, text, text, text, text
+) TO getomerch_app;
+GRANT EXECUTE ON FUNCTION getomerch_marking.reconcile_introduction_submission(
+  uuid, text, text, jsonb, text, text, text
+) TO getomerch_app;
 GRANT EXECUTE ON FUNCTION getomerch_marking.store_introduction_payload(
   uuid, text, bytea, bytea, bytea, integer, text
 ) TO $ROLE;
