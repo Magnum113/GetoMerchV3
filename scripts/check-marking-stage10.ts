@@ -136,6 +136,10 @@ async function testTrueApiContracts() {
 async function testStaticSafety() {
   const execution = await readFile("src/lib/marking/services/crpt-introduction-execution.ts", "utf8");
   const migration = await readFile("db/migrations/0015_marking_crpt_introduction.sql", "utf8");
+  const materialOfferSourceMigration = await readFile(
+    "db/migrations/0020_marking_crpt_material_offer_source.sql",
+    "utf8",
+  );
   const repository = await readFile("src/lib/marking/repositories/documents.ts", "utf8");
   const workerBootstrap = await readFile("ops/getomerch-marking-postgres-bootstrap", "utf8");
   assert.doesNotMatch(execution, /\/utilisation|REPORT_UTILIZE/);
@@ -149,6 +153,12 @@ async function testStaticSafety() {
   assert.match(migration, /ambiguous submission must be reconciled before correction/);
   assert.match(migration, /circulation_state/);
   assert.match(migration, /payload_ciphertext/);
+  assert.match(materialOfferSourceMigration, /item\.offer_id/);
+  assert.match(
+    materialOfferSourceMigration,
+    /JOIN public\.merch_fulfillment_order_items AS item/,
+  );
+  assert.doesNotMatch(materialOfferSourceMigration, /assignment\.offer_id/);
   assert.match(workerBootstrap, /GRANT SELECT ON getomerch_marking\.document_safe,[\s\S]*?TO \$ROLE/);
   for (const routine of [
     "prepare_introduction_document",
