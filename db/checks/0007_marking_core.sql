@@ -128,11 +128,13 @@ select
   'true'
 union all
 select
-  'marking_future_documents_empty',
+  'marking_document_event_integrity',
   not exists (
     select 1
-    from public.merch_marking_events
-    where document_id is not null
+    from public.merch_marking_events event
+    left join public.merch_marking_documents document
+      on document.id = event.document_id
+    where event.document_id is not null and document.id is null
   ),
   'true',
   'true'
