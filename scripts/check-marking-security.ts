@@ -147,6 +147,9 @@ function testRedaction() {
   assert.equal(serialized.includes(syntheticKm), false);
   assert.equal(serialized.includes("[REDACTED]"), true);
   assert.equal(redactText(`failure=${syntheticKm}`).includes(syntheticKm), false);
+  const identificationCode = "0104628837736914215Ca'AMGYCM9Tc";
+  assert.equal(redactText(`CRPT error for ${identificationCode}.`).includes(identificationCode), false);
+  assert.equal(containsSensitiveMarkingData(`CRPT error for ${identificationCode}.`), true);
 
   const error = new Error(`external failure for ${syntheticKm}`) as Error & {
     code?: string;

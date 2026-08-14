@@ -31,6 +31,7 @@ const SENSITIVE_KEYS = new Set([
 
 const RAW_GS1_PATTERN = /(?:\(01\)|01)\d{14}(?:\(21\)|21)[^\s]{1,40}(?:\u001d|\(91\)|91)[^\s]{1,12}(?:\u001d|\(92\)|92)[^\s]{8,}/gi;
 const BRACKETED_GS1_PATTERN = /\(01\)\d{14}\(21\)[^\s]{1,40}(?:\(91\)[^\s]{1,12})?(?:\(92\)[^\s]{8,})?/gi;
+const GS1_IDENTIFICATION_PATTERN = /(?:\(01\)|01)\d{14}(?:\(21\)|21)[^\s,;]{1,40}/gi;
 
 export function redactSensitiveData(value: unknown): unknown {
   return redactValue(value, 0, new WeakSet<object>());
@@ -40,6 +41,7 @@ export function redactText(value: string) {
   return value
     .replace(RAW_GS1_PATTERN, REDACTED)
     .replace(BRACKETED_GS1_PATTERN, REDACTED)
+    .replace(GS1_IDENTIFICATION_PATTERN, REDACTED)
     .replace(/[\u001d\u001e\u0000]/g, "");
 }
 
@@ -95,7 +97,10 @@ function findSensitiveValue(value: unknown, depth: number, seen: WeakSet<object>
   if (typeof value === "string") {
     RAW_GS1_PATTERN.lastIndex = 0;
     BRACKETED_GS1_PATTERN.lastIndex = 0;
-    return RAW_GS1_PATTERN.test(value) || BRACKETED_GS1_PATTERN.test(value);
+    GS1_IDENTIFICATION_PATTERN.lastIndex = 0;
+    return RAW_GS1_PATTERN.test(value)
+      || BRACKETED_GS1_PATTERN.test(value)
+      || GS1_IDENTIFICATION_PATTERN.test(value);
   }
   if (!value || typeof value !== "object") return false;
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) return true;
