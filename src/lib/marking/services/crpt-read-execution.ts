@@ -13,6 +13,7 @@ import {
   normalizeCrptCodeState,
 } from "@/lib/marking/adapters/crpt/contracts";
 import { getMarkingRuntimeConfig, type MarkingRuntimeConfig } from "@/lib/marking/config";
+import { extractIdentificationCode } from "@/lib/marking/domain/crpt-introduction";
 import {
   claimCrptReadQuery,
   recordCrptReadFailure,
@@ -145,11 +146,13 @@ async function executeCodeStatus(
     authTag: query.code_auth_tag.toString("base64"),
   };
   const code = runtime.keyring.decryptBytes(encrypted);
+  let identificationCode: Buffer | null = null;
   try {
-    const payload = code.subarray(0, 3).equals(Buffer.from("]d2", "ascii"))
-      ? code.subarray(3)
-      : code;
-    const remote = await runtime.client.getCodeStatus(payload, query.product_group);
+    identificationCode = Buffer.from(extractIdentificationCode(code), "ascii");
+    const remote = await runtime.client.getCodeStatus(
+      identificationCode,
+      query.product_group,
+    );
     if (remote.errorCode) {
       throw new CrptApiError(
         "crpt_code_status_error",
@@ -182,6 +185,7 @@ async function executeCodeStatus(
     return { status, normalizedStatus: normalized, fingerprint: query.fingerprint };
   } finally {
     code.fill(0);
+    identificationCode?.fill(0);
     query.code_ciphertext.fill(0);
     query.code_nonce.fill(0);
     query.code_auth_tag.fill(0);

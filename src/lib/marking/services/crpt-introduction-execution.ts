@@ -11,6 +11,7 @@ import { getMarkingRuntimeConfig, type MarkingRuntimeConfig } from "@/lib/markin
 import {
   buildLpIntroduceGoodsPayload,
   CRPT_INTRODUCTION_CONTRACT_VERSION,
+  extractIdentificationCode,
 } from "@/lib/marking/domain/crpt-introduction";
 import {
   confirmIntroductionCirculation,
@@ -74,9 +75,11 @@ export async function executeCrptApplicationConfirmation(
   if (material.status === "draft") {
     await context.report({ phase: "application_report", documentId: prepared.id }, "crpt_application_report_check_started");
     const code = runtime.keyring.decryptBytes(material.encryptedCode);
+    let identificationCode: Buffer | null = null;
     let payload: Buffer | null = null;
     try {
-      const remote = await runtime.client.getCodeStatus(stripSymbology(code), "lp");
+      identificationCode = Buffer.from(extractIdentificationCode(code), "ascii");
+      const remote = await runtime.client.getCodeStatus(identificationCode, "lp");
       const state = normalizeCrptCodeState(remote.status);
       if (remote.errorCode) {
         await recordIntroductionManualReview(runtime.query, {
@@ -139,6 +142,7 @@ export async function executeCrptApplicationConfirmation(
       });
     } finally {
       code.fill(0);
+      identificationCode?.fill(0);
       payload?.fill(0);
     }
     material = await getIntroductionDocumentMaterial(runtime.query, prepared.id, context.job.actor);
@@ -309,8 +313,10 @@ export async function executeCrptIntroductionPoll(
   }
   if (material.status === "accepted") {
     const code = runtime.keyring.decryptBytes(material.encryptedCode);
+    let identificationCode: Buffer | null = null;
     try {
-      const remote = await runtime.client.getCodeStatus(stripSymbology(code), "lp");
+      identificationCode = Buffer.from(extractIdentificationCode(code), "ascii");
+      const remote = await runtime.client.getCodeStatus(identificationCode, "lp");
       const state = normalizeCrptCodeState(remote.status);
       if (remote.errorCode) {
         await recordIntroductionCirculationReview(runtime.query, {
@@ -354,6 +360,7 @@ export async function executeCrptIntroductionPoll(
       return { documentId, status: "accepted", codeState: "in_circulation" };
     } finally {
       code.fill(0);
+      identificationCode?.fill(0);
     }
   }
   return { documentId, status: material.status, reused: true };
@@ -414,9 +421,6 @@ function inCanaryScope(config: MarkingRuntimeConfig, gtin: string, offerId: stri
   return config.allowedGtins.includes(gtin)
     && offerId !== null
     && config.allowedOffers.includes(offerId);
-}
-function stripSymbology(code: Buffer) {
-  return code.subarray(0, 3).equals(Buffer.from("]d2", "ascii")) ? code.subarray(3) : code;
 }
 function requiredUuid(value: unknown, name: string) {
   if (typeof value !== "string" || !/^[0-9a-f-]{36}$/i.test(value)) throw new Error(`Invalid ${name}`);

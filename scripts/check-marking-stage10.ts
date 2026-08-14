@@ -147,6 +147,7 @@ async function testTrueApiContracts() {
 
 async function testStaticSafety() {
   const execution = await readFile("src/lib/marking/services/crpt-introduction-execution.ts", "utf8");
+  const readExecution = await readFile("src/lib/marking/services/crpt-read-execution.ts", "utf8");
   const migration = await readFile("db/migrations/0015_marking_crpt_introduction.sql", "utf8");
   const materialOfferSourceMigration = await readFile(
     "db/migrations/0020_marking_crpt_material_offer_source.sql",
@@ -160,6 +161,10 @@ async function testStaticSafety() {
   assert.match(execution, /material\.status === "submitting"/);
   assert.match(execution, /inCanaryScope/);
   assert.match(execution, /recordIntroductionCirculationReview/);
+  assert.match(execution, /extractIdentificationCode\(code\)/);
+  assert.match(readExecution, /extractIdentificationCode\(code\)/);
+  assert.doesNotMatch(execution, /getCodeStatus\(stripSymbology/);
+  assert.doesNotMatch(readExecution, /getCodeStatus\(payload/);
   assert.match(execution, /requires_manual_review/);
   assert.match(migration, /terminal marking document is immutable/);
   assert.match(migration, /ambiguous submission must be reconciled before correction/);
