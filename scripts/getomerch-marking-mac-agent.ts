@@ -14,6 +14,10 @@ import {
   type MarkingAgentRequestBody,
   type MarkingAgentTelemetry,
 } from "@/lib/marking/agent/protocol";
+import {
+  parseMarkingAgentClaim,
+  type MarkingAgentClaim,
+} from "@/lib/marking/agent/claim";
 import { clearRecoveredAgentConnectionError } from "@/lib/marking/agent/runtime";
 import { loadMarkingSignerClient } from "@/lib/marking/signer/client";
 import { loadCertificateInfo } from "@/lib/marking/signer/provider";
@@ -69,7 +73,7 @@ async function main() {
             telemetry,
           },
         });
-        const claimed = parseClaim(response, operation);
+        const claimed = parseMarkingAgentClaim(response, operation);
         if (claimed) {
           await processClaim({ config, runtime, secret, signer, certificate, claimed });
         }
@@ -92,13 +96,7 @@ async function processClaim(input: {
   secret: Uint8Array;
   signer: Awaited<ReturnType<typeof loadMarkingSignerClient>>;
   certificate: Awaited<ReturnType<typeof loadCertificateInfo>>;
-  claimed: {
-    id: string;
-    purpose: "crpt_auth_attached_cades_bes";
-    payloadSha256: string;
-    payloadBase64: string;
-    expiresAt: string;
-  };
+  claimed: MarkingAgentClaim;
 }) {
   const payload = decodePayload(input.claimed.payloadBase64);
   try {
@@ -265,36 +263,6 @@ async function signerSocketExists(path: string) {
   } catch {
     return false;
   }
-}
-
-function parseClaim(value: unknown, operation: "heartbeat" | "claim") {
-  if (!isRecord(value) || value.ok !== true || value.operation !== operation) {
-    throw codedError("agent_response_invalid", "Marking server response is invalid");
-  }
-  if (operation === "heartbeat" || value.request === null) return null;
-  if (!isRecord(value.request)) {
-    throw codedError("agent_response_invalid", "Marking server response is invalid");
-  }
-  const request = value.request;
-  if (
-    typeof request.id !== "string"
-    || !/^[0-9a-f-]{36}$/i.test(request.id)
-    || request.purpose !== "crpt_auth_attached_cades_bes"
-    || typeof request.payloadSha256 !== "string"
-    || !/^[0-9a-f]{64}$/.test(request.payloadSha256)
-    || typeof request.payloadBase64 !== "string"
-    || typeof request.expiresAt !== "string"
-    || !Number.isFinite(Date.parse(request.expiresAt))
-  ) {
-    throw codedError("agent_response_invalid", "Marking server response is invalid");
-  }
-  return request as {
-    id: string;
-    purpose: "crpt_auth_attached_cades_bes";
-    payloadSha256: string;
-    payloadBase64: string;
-    expiresAt: string;
-  };
 }
 
 function decodePayload(value: string) {

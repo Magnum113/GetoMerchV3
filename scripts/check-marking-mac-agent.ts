@@ -14,6 +14,7 @@ import {
   verifyAgentRequestAuth,
   verifyAgentResponseAuth,
 } from "@/lib/marking/agent/protocol";
+import { parseMarkingAgentClaim } from "@/lib/marking/agent/claim";
 import { clearRecoveredAgentConnectionError } from "@/lib/marking/agent/runtime";
 import { parseMarkingRuntimeConfig } from "@/lib/marking/config";
 import type { DatabaseQueryExecutor, DatabaseQueryResult } from "@/lib/db/pool";
@@ -23,6 +24,7 @@ import { exchangeSignerRequest } from "@/lib/marking/signer/client";
 import { providerErrorFromStderr, runProvider } from "@/lib/marking/signer/provider";
 import { createRemoteMarkingSignerClient } from "@/lib/marking/signer/remote-client";
 import type { SignerCertificateInfo } from "@/lib/marking/signer/protocol";
+import { SIGNER_PURPOSES } from "@/lib/marking/signer/protocol";
 import { readSignerSessionPin } from "@/lib/marking/signer/session-pin";
 
 const TEST_ID = "10000000-0000-4000-8000-000000000001";
@@ -34,6 +36,7 @@ main().catch((error) => {
 
 async function main() {
   testAgentProtocol();
+  testAgentClaims();
   testTelemetry();
   testRecoveredConnectionError();
   testOperationalFailureStates();
@@ -43,6 +46,37 @@ async function main() {
   await testDelayedUnixSocketResponse();
   await testEncryptedBrokerClient();
   console.log("Mac marking agent protocol, encryption and remote signer checks passed");
+}
+
+function testAgentClaims() {
+  for (const purpose of SIGNER_PURPOSES) {
+    const request = {
+      id: randomUUID(),
+      purpose,
+      payloadSha256: "a".repeat(64),
+      payloadBase64: Buffer.from("payload", "utf8").toString("base64"),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    assert.deepEqual(
+      parseMarkingAgentClaim({ ok: true, operation: "claim", request }, "claim"),
+      request,
+    );
+  }
+  assert.equal(
+    parseMarkingAgentClaim({ ok: true, operation: "claim", request: null }, "claim"),
+    null,
+  );
+  assert.throws(() => parseMarkingAgentClaim({
+    ok: true,
+    operation: "claim",
+    request: {
+      id: randomUUID(),
+      purpose: "arbitrary_signature",
+      payloadSha256: "a".repeat(64),
+      payloadBase64: "cGF5bG9hZA==",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+  }, "claim"), (error: unknown) => code(error) === "agent_response_invalid");
 }
 
 async function testHiddenSessionPin() {
