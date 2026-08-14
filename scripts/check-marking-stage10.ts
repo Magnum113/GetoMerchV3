@@ -137,6 +137,7 @@ async function testStaticSafety() {
   const execution = await readFile("src/lib/marking/services/crpt-introduction-execution.ts", "utf8");
   const migration = await readFile("db/migrations/0015_marking_crpt_introduction.sql", "utf8");
   const repository = await readFile("src/lib/marking/repositories/documents.ts", "utf8");
+  const workerBootstrap = await readFile("ops/getomerch-marking-postgres-bootstrap", "utf8");
   assert.doesNotMatch(execution, /\/utilisation|REPORT_UTILIZE/);
   assert.match(execution, /submit_ambiguous/);
   assert.match(execution, /crpt_submit_outcome_unknown/);
@@ -148,6 +149,23 @@ async function testStaticSafety() {
   assert.match(migration, /ambiguous submission must be reconciled before correction/);
   assert.match(migration, /circulation_state/);
   assert.match(migration, /payload_ciphertext/);
+  assert.match(workerBootstrap, /GRANT SELECT ON getomerch_marking\.document_safe,[\s\S]*?TO \$ROLE/);
+  for (const routine of [
+    "prepare_introduction_document",
+    "get_introduction_document_material",
+    "store_introduction_payload",
+    "store_introduction_signature",
+    "record_introduction_submitted",
+    "record_introduction_submit_started",
+    "record_introduction_poll",
+    "record_introduction_manual_review",
+    "record_introduction_circulation_review",
+    "confirm_introduction_circulation",
+  ]) {
+    assert.match(workerBootstrap, new RegExp(
+      `GRANT EXECUTE ON FUNCTION getomerch_marking\\.${routine}\\(`,
+    ));
+  }
   assert.doesNotMatch(repository, /SELECT \*/i);
   const safeList = repository.slice(
     repository.indexOf("export async function listMarkingDocuments"),

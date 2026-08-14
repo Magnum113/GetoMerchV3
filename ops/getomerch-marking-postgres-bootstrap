@@ -186,8 +186,10 @@ BEGIN
      OR to_regclass('getomerch_marking.ozon_submission_safe') IS NULL
      OR to_regprocedure('getomerch_jobs.append_marking_job_event(uuid,text,text,jsonb)') IS NULL
      OR to_regprocedure('getomerch_marking.claim_crpt_read_query(uuid,text)') IS NULL
+     OR to_regprocedure('getomerch_marking.prepare_introduction_document(uuid,text,uuid,boolean)') IS NULL
+     OR to_regprocedure('getomerch_marking.get_introduction_document_material(uuid,text)') IS NULL
      OR to_regprocedure('getomerch_marking.create_remote_signature_request(text,text,bytea,bytea,bytea,integer,text,uuid,timestamp with time zone)') IS NULL THEN
-    RAISE EXCEPTION 'marking remote signer database objects are missing; apply migrations first';
+    RAISE EXCEPTION 'marking worker database objects are missing; apply migrations first';
   END IF;
 END
 \$grants\$;
@@ -250,6 +252,38 @@ GRANT EXECUTE ON FUNCTION getomerch_marking.record_crpt_read_success(
   uuid, text, text, jsonb, boolean, boolean
 ) TO $ROLE;
 GRANT EXECUTE ON FUNCTION getomerch_marking.record_crpt_read_failure(
+  uuid, text, text
+) TO $ROLE;
+GRANT SELECT ON getomerch_marking.document_safe,
+  getomerch_marking.document_code_safe TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.prepare_introduction_document(
+  uuid, text, uuid, boolean
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.get_introduction_document_material(
+  uuid, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.store_introduction_payload(
+  uuid, text, bytea, bytea, bytea, integer, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.store_introduction_signature(
+  uuid, text, bytea, bytea, bytea, integer, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_introduction_submitted(
+  uuid, text, jsonb, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_introduction_submit_started(
+  uuid, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_introduction_poll(
+  uuid, text, jsonb, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_introduction_manual_review(
+  uuid, text, text, jsonb
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.record_introduction_circulation_review(
+  uuid, text, text, text
+) TO $ROLE;
+GRANT EXECUTE ON FUNCTION getomerch_marking.confirm_introduction_circulation(
   uuid, text, text
 ) TO $ROLE;
 GRANT EXECUTE ON FUNCTION getomerch_marking.create_remote_signature_request(
