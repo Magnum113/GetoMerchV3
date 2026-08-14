@@ -540,7 +540,7 @@ export default function MarkingPage() {
         documentId: localDocumentId,
         externalDocumentId,
       });
-      toast.success("Документ сверен с ГИС МТ");
+      toast.success("Сверка документа поставлена в очередь");
       setCrptDocumentId("");
       await loadCrpt();
     } catch (error) {

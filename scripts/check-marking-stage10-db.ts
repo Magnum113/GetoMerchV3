@@ -257,7 +257,7 @@ async function buildSignAndStart(documentId: string) {
 }
 
 async function reconcile(documentId: string, externalDocumentId: string, remoteStatus: string) {
-  return (await asApp<{ status: string }>(
+  return (await asWorker<{ status: string }>(
     `SELECT getomerch_marking.reconcile_introduction_submission(
       $1::uuid,$2,$3,$4::jsonb,$5,$6,$7
     ) AS status`,
@@ -288,14 +288,29 @@ async function confirmCirculation(documentId: string) {
   );
 }
 
+async function asWorker<Row extends QueryResultRow = QueryResultRow>(
+  text: string,
+  values: unknown[] = [],
+) {
+  return asRole<Row>("getomerch_marking_worker", text, values);
+}
+
 async function asApp<Row extends QueryResultRow = QueryResultRow>(
+  text: string,
+  values: unknown[] = [],
+) {
+  return asRole<Row>("getomerch_app", text, values);
+}
+
+async function asRole<Row extends QueryResultRow = QueryResultRow>(
+  role: "getomerch_app" | "getomerch_marking_worker",
   text: string,
   values: unknown[] = [],
 ) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SET LOCAL ROLE getomerch_app");
+    await client.query(`SET LOCAL ROLE ${role}`);
     const result = await client.query<Row>(text, values);
     await client.query("COMMIT");
     return result;

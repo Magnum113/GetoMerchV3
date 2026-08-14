@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
         documentId: requiredString(body, "documentId"),
         externalDocumentId: requiredString(body, "externalDocumentId"),
       }, context);
-      return adminJson({ data });
+      return adminJson({ data }, { status: 202 });
     }
     if (operation === "retry_circulation") {
       const data = await retryCrptCirculationConfirmation(

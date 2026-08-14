@@ -76,9 +76,11 @@ confirmation.circulation_state = pending | confirmed | requires_manual_review
 - повторная проверка КМ для принятого документа без подтвержденного оборота.
 
 При `crpt_submit_outcome_unknown` UI позволяет указать внешний ID и выполняет
-read-only сверку. Привязка разрешена только при совпадении типа, товарной
-группы, ИНН и SHA-256 исходного содержимого документа; автоматический повторный
-submit до сверки запрещён.
+read-only сверку через изолированный marking-worker. Веб-процесс только ставит
+задание в durable queue и не имеет права выполнять DB-функцию привязки.
+Привязка разрешена только при совпадении типа, товарной группы, ИНН и SHA-256
+исходного содержимого документа; автоматический повторный submit до сверки
+запрещён. UI обновляет результат фонового задания каждые 10 секунд.
 
 ## Feature flags
 
@@ -102,7 +104,10 @@ CRPT write и allow-lists GTIN/offer/admin. Все значения server-only.
 - транзакционный DB-сценарий
   `rejected -> superseded -> revision 2 -> accepted -> in_circulation`;
 - повторный terminal poll и повторное confirmation без второго события;
-- ACL и отсутствие encrypted material в safe views.
+- ACL и отсутствие encrypted material в safe views;
+- миграция `0022`: `getomerch_app` не может выполнить reconciliation,
+  `getomerch_marking_worker` может;
+- сверка одинакового raw/Base64 content по одному SHA-256 и отказ при mismatch.
 
 ## Что остается до rollout
 

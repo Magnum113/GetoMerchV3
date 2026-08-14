@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { CrptTokenManager, CrptTrueApiClient } from "@/lib/marking/adapters/crpt/client";
 import { parseCrptDocumentStatus } from "@/lib/marking/adapters/crpt/contracts";
@@ -10,6 +11,7 @@ import {
   introductionRetryJobIdempotencyKey,
   shouldForceIntroductionCorrection,
 } from "@/lib/marking/services/crpt-introduction-service";
+import { matchesCrptDocumentContentHash } from "@/lib/marking/services/crpt-introduction-execution";
 import { createSignerRequest, verifySignerRequest, type SignerCertificateInfo } from "@/lib/marking/signer/protocol";
 
 main().catch((error) => {
@@ -22,9 +24,20 @@ async function main() {
   testCanonicalPayload();
   testDetachedSignerPurpose();
   testIntroductionRetryMode();
+  testReconciliationContentHash();
   await testTrueApiContracts();
   await testStaticSafety();
   console.log("Stage 10 payload, signer, True API and no-duplicate safety checks passed");
+}
+
+function testReconciliationContentHash() {
+  const content = Buffer.from('{"document":"synthetic"}', "utf8");
+  const hash = createHash("sha256").update(content).digest("hex");
+  assert.equal(matchesCrptDocumentContentHash(content.toString("utf8"), hash), true);
+  assert.equal(matchesCrptDocumentContentHash(content.toString("base64"), hash), true);
+  assert.equal(matchesCrptDocumentContentHash("different", hash), false);
+  assert.equal(matchesCrptDocumentContentHash("not-base64=", hash), false);
+  content.fill(0);
 }
 
 function testIntroductionRetryMode() {
@@ -214,6 +227,12 @@ async function testStaticSafety() {
     "db/migrations/0021_marking_crpt_conformity_reconciliation.sql",
     "utf8",
   );
+  const reconciliationAclMigration = await readFile(
+    "db/migrations/0022_marking_reconciliation_worker_acl.sql",
+    "utf8",
+  );
+  const service = await readFile("src/lib/marking/services/crpt-introduction-service.ts", "utf8");
+  const worker = await readFile("src/lib/marking/worker.ts", "utf8");
   const repository = await readFile("src/lib/marking/repositories/documents.ts", "utf8");
   const workerBootstrap = await readFile("ops/getomerch-marking-postgres-bootstrap", "utf8");
   assert.doesNotMatch(execution, /\/utilisation|REPORT_UTILIZE/);
@@ -240,6 +259,11 @@ async function testStaticSafety() {
   assert.doesNotMatch(materialOfferSourceMigration, /assignment\.offer_id/);
   assert.match(hardeningMigration, /certificate_document_data|conformity_documents/);
   assert.match(hardeningMigration, /reconcile_introduction_submission/);
+  assert.match(service, /reconcileDocumentId/);
+  assert.doesNotMatch(service, /createRemoteMarkingSignerClient|CrptTrueApiClient/);
+  assert.match(worker, /executeCrptIntroductionReconciliation/);
+  assert.match(reconciliationAclMigration, /REVOKE EXECUTE[\s\S]*?FROM getomerch_app/);
+  assert.match(reconciliationAclMigration, /GRANT EXECUTE[\s\S]*?TO getomerch_marking_worker/);
   assert.match(execution, /crpt_conformity_document_missing/);
   assert.match(workerBootstrap, /GRANT SELECT ON getomerch_marking\.document_safe,[\s\S]*?TO \$ROLE/);
   for (const routine of [

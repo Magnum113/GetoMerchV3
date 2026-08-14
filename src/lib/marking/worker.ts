@@ -21,6 +21,7 @@ import {
 } from "@/lib/marking/services/crpt-read-execution";
 import {
   executeCrptApplicationConfirmation,
+  executeCrptIntroductionReconciliation,
   executeCrptIntroductionPoll,
   executeCrptIntroductionSubmit,
 } from "@/lib/marking/services/crpt-introduction-execution";
@@ -220,6 +221,9 @@ export async function dispatchMarkingJob(context: JobExecutionContext) {
     case "marking_crpt_code_status_sync":
       return executeCrptReadQuery(context);
     case "marking_crpt_document_poll": {
+      if ("reconcileDocumentId" in context.job.payload) {
+        return executeCrptIntroductionReconciliation(context);
+      }
       if (!("documentId" in context.job.payload)) return executeCrptReadQuery(context);
       const documentType = await getMarkingDocumentType(
         queryServerDatabase,

@@ -20,6 +20,7 @@ import {
   recordIntroductionManualReview,
   recordIntroductionPoll,
   recordIntroductionCirculationReview,
+  reconcileIntroductionSubmission,
   recordIntroductionSubmitted,
   recordIntroductionSubmitStarted,
   storeIntroductionPayload,
@@ -376,6 +377,111 @@ export async function executeCrptIntroductionPoll(
   return { documentId, status: material.status, reused: true };
 }
 
+export async function executeCrptIntroductionReconciliation(
+  context: JobExecutionContext,
+  dependencies: Dependencies = {},
+) {
+  const documentId = requiredUuid(context.job.payload.reconcileDocumentId, "reconcileDocumentId");
+  const externalDocumentId = requiredExternalDocumentId(context.job.payload.externalDocumentId);
+  const runtime = await createRuntime(dependencies);
+  assertIntroductionRead(runtime.config, context.job.actor);
+  const local = (await runtime.query<{
+    status: string;
+    error_code: string | null;
+    external_document_id: string | null;
+    payload_hash: string | null;
+  }>(
+    `SELECT status, error_code, external_document_id, payload_hash
+     FROM getomerch_marking.document_safe
+     WHERE id = $1::uuid AND document_type = 'introduction'`,
+    [documentId],
+  )).rows[0];
+  if (!local) throw new Error("CRPT introduction document was not found");
+  if (local.external_document_id === externalDocumentId
+      && ["processing", "accepted", "rejected"].includes(local.status)) {
+    const pollJobId = local.status === "processing" || local.status === "accepted"
+      ? (await enqueueIntroductionPoll(context, documentId)).id
+      : null;
+    return {
+      documentId,
+      externalDocumentId,
+      status: local.status,
+      pollJobId,
+      reused: true,
+    };
+  }
+  if (local.status !== "requires_manual_review"
+      || local.error_code !== "crpt_submit_outcome_unknown"
+      || local.external_document_id !== null) {
+    throw new Error("CRPT introduction document is not awaiting reconciliation");
+  }
+
+  await context.report(
+    { phase: "reconciliation", documentId },
+    "crpt_introduction_reconciliation_started",
+  );
+  const remote = await runtime.client.getDocumentStatus(
+    externalDocumentId,
+    "lp",
+    { includeContent: true },
+  );
+  if ((remote.type && remote.type !== "LP_INTRODUCE_GOODS")
+      || (remote.productGroup && remote.productGroup !== "lp")) {
+    throw new Error("CRPT reconciliation returned another document type or product group");
+  }
+  if (!runtime.config.crptInn || remote.senderInn !== runtime.config.crptInn) {
+    throw new Error("CRPT reconciliation sender INN does not match the configured participant");
+  }
+  if (!local.payload_hash || !remote.content
+      || !matchesCrptDocumentContentHash(remote.content, local.payload_hash)) {
+    throw new Error("CRPT reconciliation content does not match the locally signed document");
+  }
+
+  const status = await reconcileIntroductionSubmission(runtime.query, {
+    documentId,
+    externalDocumentId,
+    remoteStatus: remote.status,
+    response: {
+      number: remote.number,
+      type: remote.type,
+      status: remote.status,
+      productGroup: remote.productGroup,
+      senderInn: remote.senderInn,
+      contentVerified: true,
+    },
+    errorCode: remote.errorCode
+      ? stableErrorCode(remote.errorCode, "crpt_document_rejected")
+      : null,
+    errorMessage: remote.errorMessage
+      ? redactText(remote.errorMessage).slice(0, 1000)
+      : null,
+    actorId: context.job.actor,
+  });
+  let pollJobId: string | null = null;
+  if (status === "processing" || status === "accepted") {
+    pollJobId = (await enqueueIntroductionPoll(context, documentId)).id;
+  }
+  await context.report(
+    { phase: "reconciled", documentId, status },
+    "crpt_introduction_reconciled",
+  );
+  return { documentId, externalDocumentId, status, pollJobId };
+}
+
+export function matchesCrptDocumentContentHash(content: string, expectedHash: string) {
+  if (!/^[0-9a-f]{64}$/.test(expectedHash)) return false;
+  if (createHash("sha256").update(content, "utf8").digest("hex") === expectedHash) return true;
+  if (content.length === 0 || content.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]*={0,2}$/.test(content)) return false;
+  const decoded = Buffer.from(content, "base64");
+  try {
+    if (decoded.toString("base64") !== content) return false;
+    return sha256(decoded) === expectedHash;
+  } finally {
+    decoded.fill(0);
+  }
+}
+
 async function enqueueIntroductionSubmit(context: JobExecutionContext, documentId: string) {
   return (await enqueueJob({
     type: "marking_crpt_introduction_submit",
@@ -434,6 +540,12 @@ function inCanaryScope(config: MarkingRuntimeConfig, gtin: string, offerId: stri
 }
 function requiredUuid(value: unknown, name: string) {
   if (typeof value !== "string" || !/^[0-9a-f-]{36}$/i.test(value)) throw new Error(`Invalid ${name}`);
+  return value;
+}
+function requiredExternalDocumentId(value: unknown) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(value)) {
+    throw new Error("Invalid externalDocumentId");
+  }
   return value;
 }
 function requiredInn(value: string) {
