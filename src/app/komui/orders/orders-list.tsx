@@ -176,6 +176,7 @@ export function OrdersList() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-44">Заказ</TableHead>
+                    <TableHead className="min-w-72">Товар</TableHead>
                     <TableHead>Клиент</TableHead>
                     <TableHead>Доставка</TableHead>
                     <TableHead className="w-32 text-right">Сумма</TableHead>
@@ -228,6 +229,9 @@ export function OrdersList() {
 
 function OrderRow({ order }: { order: StorefrontOrderSummary }) {
   const total = moneyFromKopecks(order.amounts?.total ?? null);
+  const product = order.firstItem;
+  const productName = product?.productName ?? product?.name;
+  const productImage = storefrontImageUrl(product?.imageUrl);
   const customerName = [order.customer?.firstName, order.customer?.lastName]
     .filter(Boolean)
     .join(" ");
@@ -253,6 +257,46 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
           <div className="text-[10px] text-muted-foreground">
             {order.itemCount} шт / {order.lineCount ?? "?"} позиции
           </div>
+        )}
+      </TableCell>
+      <TableCell>
+        {product ? (
+          <div className="flex items-center gap-2 min-w-0">
+            {productImage ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={productImage}
+                alt=""
+                className="h-11 w-11 shrink-0 rounded-md border bg-muted object-cover"
+                loading="lazy"
+              />
+            ) : (
+              <div className="h-11 w-11 shrink-0 rounded-md border bg-muted" />
+            )}
+            <div className="min-w-0">
+              <div className="max-w-72 truncate text-sm font-medium">
+                {productName || "Товар без названия"}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {product.size ? `Размер ${product.size}` : "Размер не указан"}
+                {product.quantity ? ` · ${product.quantity} шт.` : ""}
+              </div>
+              {(product.sku || product.offerId) && (
+                <div className="max-w-72 truncate font-mono text-[10px] text-muted-foreground">
+                  {product.sku || product.offerId}
+                </div>
+              )}
+              {(order.lineCount ?? 0) > 1 && (
+                <div className="text-[10px] text-muted-foreground">
+                  ещё {(order.lineCount ?? 1) - 1} поз.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {order.itemCount ? `${order.itemCount} шт.` : "Нет позиций"}
+          </span>
         )}
       </TableCell>
       <TableCell>
@@ -309,4 +353,11 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
       </TableCell>
     </TableRow>
   );
+}
+
+function storefrontImageUrl(value?: string | null): string | null {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  const path = value.replace(/^\.\//, "/");
+  return `https://komui.ru${path.startsWith("/") ? path : `/${path}`}`;
 }

@@ -485,6 +485,18 @@ export type OrderLatestPayment = {
   errorMessage?: string | null;
 };
 
+export type StorefrontOrderItemPreview = {
+  id?: string | number;
+  productId?: string | null;
+  offerId?: string | null;
+  sku?: string | null;
+  productName?: string;
+  name?: string;
+  size?: string | null;
+  quantity?: number;
+  imageUrl?: string | null;
+};
+
 export type StorefrontOrderSummary = {
   id: string;
   orderNumber: string;
@@ -498,6 +510,7 @@ export type StorefrontOrderSummary = {
   source?: string;
   itemCount?: number;
   lineCount?: number;
+  firstItem?: StorefrontOrderItemPreview | null;
   latestPayment?: OrderLatestPayment | null;
   cdek?: OrderCdek | null;
   paidAt?: string | null;
@@ -508,22 +521,33 @@ export type StorefrontOrderSummary = {
 };
 
 export type StorefrontOrderItem = {
-  id?: string;
-  productId?: string;
+  id?: string | number;
+  productId?: string | null;
+  offerId?: string | null;
+  sku?: string | null;
+  productName?: string;
   name?: string;
-  slug?: string;
+  slug?: string | null;
   size?: string;
   quantity?: number;
+  unitPriceAmount?: number; // фактический контракт Komui backend
   unitPrice?: number; // копейки
+  lineTotalAmount?: number;
   totalPrice?: number;
-  imageUrl?: string;
+  imageUrl?: string | null;
+  productSnapshot?: Record<string, unknown>;
+  createdAt?: string | null;
 };
 
 export type PaymentAttempt = {
-  id?: string;
+  id?: string | number;
+  provider?: string;
+  providerStatus?: string;
   status?: string;
   amount?: number;
   currency?: string;
+  externalPaymentId?: string | null;
+  paymentUrl?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
   createdAt?: string;
@@ -531,7 +555,9 @@ export type PaymentAttempt = {
 };
 
 export type PaymentEvent = {
-  id?: string;
+  id?: string | number;
+  externalPaymentId?: string | null;
+  providerStatus?: string | null;
   type?: string;
   receivedAt?: string;
   status?: string;
@@ -540,7 +566,7 @@ export type PaymentEvent = {
 };
 
 export type CdekShipment = {
-  id?: string;
+  id?: string | number;
   status?: CdekStatus;
   uuid?: string | null;
   number?: string | null;
@@ -550,7 +576,10 @@ export type CdekShipment = {
 };
 
 export type CdekEvent = {
-  id?: string;
+  id?: string | number;
+  eventType?: string | null;
+  statusCode?: string | null;
+  statusName?: string | null;
   type?: string;
   receivedAt?: string;
   status?: string;

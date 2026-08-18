@@ -288,16 +288,22 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                   </TableHeader>
                   <TableBody>
                     {items.map((it, idx) => {
-                      const unit = moneyFromKopecks(it.unitPrice);
-                      const totalLine = moneyFromKopecks(it.totalPrice);
+                      const unit = moneyFromKopecks(
+                        it.unitPriceAmount ?? it.unitPrice,
+                      );
+                      const totalLine = moneyFromKopecks(
+                        it.lineTotalAmount ?? it.totalPrice,
+                      );
+                      const itemName = it.productName ?? it.name;
+                      const itemImage = storefrontImageUrl(it.imageUrl);
                       return (
                         <TableRow key={it.id ?? idx}>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              {it.imageUrl && (
+                              {itemImage && (
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img
-                                  src={it.imageUrl}
+                                  src={itemImage}
                                   alt=""
                                   className="h-10 w-10 rounded object-cover border bg-muted"
                                   loading="lazy"
@@ -305,11 +311,11 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                               )}
                               <div className="min-w-0">
                                 <div className="text-sm truncate max-w-[280px]">
-                                  {it.name ?? "—"}
+                                  {itemName ?? "—"}
                                 </div>
-                                {it.slug && (
+                                {(it.sku || it.offerId || it.slug) && (
                                   <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[280px]">
-                                    {it.slug}
+                                    {it.sku || it.offerId || it.slug}
                                   </div>
                                 )}
                               </div>
@@ -374,7 +380,9 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                         key={a.id ?? i}
                         className="flex flex-wrap gap-2 items-center"
                       >
-                        <span className="font-mono">{a.status ?? "?"}</span>
+                        <span className="font-mono">
+                          {a.providerStatus ?? a.status ?? "?"}
+                        </span>
                         {a.amount != null && (
                           <span className="tabular-nums">
                             {formatMoney(moneyFromKopecks(a.amount) ?? 0)}
@@ -407,10 +415,12 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                         key={ev.id ?? i}
                         className="flex flex-wrap gap-2 items-center"
                       >
-                        <span className="font-mono">{ev.type ?? "?"}</span>
-                        {ev.status && (
+                        <span className="font-mono">
+                          {ev.providerStatus ?? ev.type ?? "?"}
+                        </span>
+                        {(ev.status || ev.externalPaymentId) && (
                           <span className="text-muted-foreground">
-                            {ev.status}
+                            {ev.status || ev.externalPaymentId}
                           </span>
                         )}
                         {ev.receivedAt && (
@@ -474,10 +484,12 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                         key={ev.id ?? i}
                         className="flex flex-wrap gap-2 items-center"
                       >
-                        <span className="font-mono">{ev.type ?? "?"}</span>
-                        {ev.status && (
+                        <span className="font-mono">
+                          {ev.eventType ?? ev.type ?? "?"}
+                        </span>
+                        {(ev.statusName || ev.statusCode || ev.status) && (
                           <span className="text-muted-foreground">
-                            {ev.status}
+                            {ev.statusName || ev.statusCode || ev.status}
                           </span>
                         )}
                         {ev.receivedAt && (
@@ -728,6 +740,13 @@ function Field({
       <div className="text-xs">{children}</div>
     </div>
   );
+}
+
+function storefrontImageUrl(value?: string | null): string | null {
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  const path = value.replace(/^\.\//, "/");
+  return `https://komui.ru${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function SumRow({
