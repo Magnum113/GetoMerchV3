@@ -1,4 +1,4 @@
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import { AdminApiError, adminErrorResponse, adminJson } from "@/lib/admin/http";
 import { markingReadRepository } from "@/lib/marking/read-models/repository";
 
@@ -9,7 +9,7 @@ export async function GET(
   contextInput: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const { id } = await contextInput.params;
     const data = await markingReadRepository.getCodeImport(id);
     if (!data) throw new AdminApiError(404, "not_found", "Импорт не найден");

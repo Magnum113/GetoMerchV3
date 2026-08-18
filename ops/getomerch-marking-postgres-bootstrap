@@ -182,6 +182,7 @@ REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM $ROLE;
 DO \$grants\$
 BEGIN
   IF to_regclass('getomerch_jobs.marking_jobs') IS NULL
+     OR to_regclass('getomerch_admin.feature_flag_safe') IS NULL
      OR to_regclass('getomerch_marking.ozon_submission_batch_safe') IS NULL
      OR to_regclass('getomerch_marking.ozon_submission_safe') IS NULL
      OR to_regprocedure('getomerch_jobs.append_marking_job_event(uuid,text,text,jsonb)') IS NULL
@@ -195,6 +196,8 @@ END
 \$grants\$;
 GRANT USAGE ON SCHEMA getomerch_jobs TO $ROLE;
 GRANT USAGE ON SCHEMA getomerch_marking TO $ROLE;
+GRANT USAGE ON SCHEMA getomerch_admin TO $ROLE;
+GRANT SELECT ON getomerch_admin.feature_flag_safe TO $ROLE;
 GRANT SELECT ON getomerch_jobs.marking_jobs TO $ROLE;
 GRANT INSERT (
   type,

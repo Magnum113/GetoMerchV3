@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAdminFeature } from "@/components/admin-feature-flags";
 
 type NavItem = { href: string; label: string; icon: typeof LineChart };
 type NavSection = { label: string; items: NavItem[] };
@@ -42,7 +43,7 @@ const NAV: NavItem[] = [
   { href: "/expenses", label: "Расходы", icon: Wallet },
   { href: "/transactions", label: "Журнал", icon: ArrowLeftRight },
   { href: "/designs", label: "Дизайны", icon: Palette },
-  { href: "/settings", label: "Справочники", icon: Settings },
+  { href: "/settings", label: "Настройки", icon: Settings },
 ];
 
 // Отдельная админка бренда Komui (свой сайт, свой backend). Полностью
@@ -63,8 +64,13 @@ function isActive(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
 }
 
+function visibleNavigation(markingEnabled: boolean) {
+  return NAV.filter((item) => item.href !== "/marking" || markingEnabled);
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const markingEnabled = useAdminFeature("chestny_znak");
 
   return (
     <aside className="hidden lg:flex w-64 flex-col border-r bg-background sticky top-0 h-screen">
@@ -76,7 +82,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
-        {NAV.map((item) => {
+        {visibleNavigation(markingEnabled).map((item) => {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
           return (
@@ -131,6 +137,7 @@ export function Sidebar() {
 export function MobileHeader() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const markingEnabled = useAdminFeature("chestny_znak");
 
   return (
     <>
@@ -158,7 +165,7 @@ export function MobileHeader() {
             onClick={() => setOpen(false)}
           />
           <nav className="lg:hidden fixed top-14 left-0 right-0 z-40 bg-background border-b shadow-lg p-2 space-y-0.5 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
-            {NAV.map((item) => {
+            {visibleNavigation(markingEnabled).map((item) => {
               const active = isActive(pathname, item.href);
               const Icon = item.icon;
               return (

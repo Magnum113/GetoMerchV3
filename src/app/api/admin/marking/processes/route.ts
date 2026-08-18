@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const params = request.nextUrl.searchParams;
     const status = params.get("status");
     if (status && !(MARKING_PROCESS_STATUSES as readonly string[]).includes(status)) {

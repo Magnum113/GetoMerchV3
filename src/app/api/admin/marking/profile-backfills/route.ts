@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import {
   adminErrorResponse,
   adminJson,
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const data = await markingReadRepository.listProfileBackfills(
       parseLimitParam(request.nextUrl.searchParams.get("limit"), {
         defaultValue: 20,

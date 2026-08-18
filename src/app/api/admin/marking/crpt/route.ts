@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
 import { AdminApiError, adminErrorResponse, adminJson } from "@/lib/admin/http";
 import {
   markingMutationError,
+  requireMarkingAdminSession,
   requireMarkingMutationContext,
   requireObjectBody,
   requiredString,
@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     return adminJson({ data: await getCrptReadWorkspace() });
   } catch (error) {
     return adminErrorResponse(markingMutationError(error));

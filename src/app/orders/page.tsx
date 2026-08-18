@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProductDisplay } from "@/components/product-display";
-import { OrderItemMarkingControls } from "@/components/marking/order-item-controls";
+import { useAdminFeature } from "@/components/admin-feature-flags";
 import {
   applyMarkingLabelDownload,
   type MarkingLabelDownloadReceipt,
@@ -43,6 +44,11 @@ const TERMINAL_STATUSES = new Set([...POST_SHIPMENT_STATUSES, "cancelled"]);
 const BULK_LABEL_STATUSES = new Set(["awaiting_deliver", "acceptance_in_progress"]);
 import { formatDate, formatMoney, errorMessage } from "@/lib/utils";
 
+const OrderItemMarkingControls = dynamic(
+  () => import("@/components/marking/order-item-controls")
+    .then((module) => module.OrderItemMarkingControls),
+);
+
 // Срочность заказа: дата отгрузки ↑ → дата создания на Ozon ↑ → дата записи.
 // Тот же порядок используется и при распределении остатков (availabilityByItem),
 // и при массовой отгрузке — чтобы списание шло в одинаковой последовательности.
@@ -57,6 +63,7 @@ function urgencyCompare(a: OzonOrder, b: OzonOrder) {
 }
 
 export default function OrdersPage() {
+  const markingEnabled = useAdminFeature("chestny_znak");
   const [orders, setOrders] = useState<OzonOrder[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [inv, setInv] = useState<Inventory[]>([]);
@@ -190,7 +197,7 @@ export default function OrdersPage() {
   // null — заказ нельзя закрыть без дополнительных шагов (нет остатков, нужен цех и т.п.).
   function fulfillKind(order: OzonOrder): "workshop" | "ship" | "produce" | null {
     if (order.source === "fbo" || order.shipped_at || TERMINAL_STATUSES.has(order.status)) return null;
-    if (!markingCanShip(order)) return null;
+    if (!markingCanShip(order, markingEnabled)) return null;
     if (order.workshop_order_id) return "workshop";
     if (orderReady(order)) return "ship";
     if (canProduceAndShip(order)) return "produce";
@@ -216,7 +223,7 @@ export default function OrdersPage() {
   }
 
   async function ship(order: OzonOrder) {
-    const question = order.marking_shipping
+    const question = markingEnabled && order.marking_shipping
       ? "Подтвердить фактическую передачу заказа Ozon? Товар спишется со склада, а для КМ будет создан дистанционный вывод из оборота."
       : `Списать ${order.items?.length ?? 0} позиций со склада?`;
     if (!confirm(question)) return;
@@ -242,7 +249,7 @@ export default function OrdersPage() {
 
   async function produceAndShip(order: OzonOrder) {
     if (!ownWarehouse) return toast.error("Не настроен свой склад");
-    const question = order.marking_shipping
+    const question = markingEnabled && order.marking_shipping
       ? "Произвести недостающие изделия и подтвердить их фактическую передачу Ozon? Для КМ будет создан дистанционный вывод из оборота."
       : "Произвести недостающие изделия и отправить заказ? Спишутся пустые и принты со склада.";
     if (!confirm(question)) return;
@@ -268,7 +275,7 @@ export default function OrdersPage() {
   }
 
   async function fulfillViaWorkshop(order: OzonOrder) {
-    const question = order.marking_shipping
+    const question = markingEnabled && order.marking_shipping
       ? "Подтвердить, что заказ произведён и фактически передан Ozon? Для КМ будет создан дистанционный вывод из оборота."
       : "Подтвердить, что заказ произведён и отправлен покупателю?";
     if (!confirm(question)) return;
@@ -285,7 +292,9 @@ export default function OrdersPage() {
   async function bulkFulfill(targets: OzonOrder[]) {
     const list = targets.filter((o) => fulfillKind(o) !== null).sort(urgencyCompare);
     if (list.length === 0) return toast.error("Нет заказов, готовых к отправке");
-    const markedCount = list.filter((order) => order.marking_shipping).length;
+    const markedCount = markingEnabled
+      ? list.filter((order) => order.marking_shipping).length
+      : 0;
     const kinds = new Set(list.map((order) => fulfillKind(order)));
     const question = markedCount > 0
       ? `Подтвердить фактическую передачу Ozon ${list.length} заказ(ов), включая маркируемых: ${markedCount}? Для их КМ будет создан дистанционный вывод из оборота.`
@@ -521,6 +530,7 @@ export default function OrdersPage() {
               availabilityByItem={availabilityByItem}
               canSendToWorkshop={workshopEligible(o)}
               canProduceAndShip={canProduceAndShip(o)}
+              markingEnabled={markingEnabled}
               selectable={selectable}
               selected={selected.has(o.id)}
               onToggleSelect={() => toggleOne(o.id)}
@@ -539,12 +549,13 @@ export default function OrdersPage() {
   );
 }
 
-function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, selectable, selected, onToggleSelect, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip, onMarkingChanged, onMarkingLabelRendered }: {
+function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canProduceAndShip, markingEnabled, selectable, selected, onToggleSelect, onShip, onUnship, onSendToWorkshop, onFulfillViaWorkshop, onProduceAndShip, onMarkingChanged, onMarkingLabelRendered }: {
   order: OzonOrder;
   ready: boolean;
   availabilityByItem: Map<string, ItemAvailability>;
   canSendToWorkshop: boolean;
   canProduceAndShip: boolean;
+  markingEnabled: boolean;
   selectable: boolean;
   selected: boolean;
   onToggleSelect: () => void;
@@ -565,7 +576,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
   const showAvailability = !shipped && !cancelled && !onOzonSide;
   const wsLinked = !!order.workshop_order_id && !shipped && !cancelled && !onOzonSide;
   const ws = order.workshop_order ?? null;
-  const markingBlocked = !markingCanShip(order);
+  const markingBlocked = !markingCanShip(order, markingEnabled);
   const [labelBusy, setLabelBusy] = useState(false);
   const unitCount = order.items?.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
 
@@ -610,7 +621,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
                   <Hammer className="h-3 w-3" /> Цех: {WORKSHOP_STATUS_LABELS[ws.status]}
                 </Badge>
               )}
-              {order.marking_shipping && order.marking_shipping.requiredUnits > 0 && (
+              {markingEnabled && order.marking_shipping && order.marking_shipping.requiredUnits > 0 && (
                 <Badge variant={order.marking_shipping.allowed ? "outline"
                   : order.marking_shipping.mode === "enforce" ? "destructive" : "secondary"}
                   title="Предварительная готовность КМ. Окончательная проверка выполняется сервером при передаче."
@@ -647,19 +658,19 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
             {showActions && !shipped && wsLinked && (
               <Button size="sm" onClick={onFulfillViaWorkshop} disabled={markingBlocked}>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                {order.marking_shipping ? "Произвели и передали Ozon" : "Произвели и отправили"}
+                {markingEnabled && order.marking_shipping ? "Произвели и передали Ozon" : "Произвели и отправили"}
               </Button>
             )}
             {showActions && !shipped && !wsLinked && ready && (
               <Button size="sm" onClick={onShip} disabled={markingBlocked}>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                {order.marking_shipping ? "Передал Ozon" : "Отправил заказ"}
+                {markingEnabled && order.marking_shipping ? "Передал Ozon" : "Отправил заказ"}
               </Button>
             )}
             {showActions && !shipped && !wsLinked && !ready && canProduceAndShip && (
               <Button size="sm" onClick={onProduceAndShip} disabled={markingBlocked}>
                 <Hammer className="h-3.5 w-3.5" />
-                {order.marking_shipping ? "Произвёл и передал Ozon" : "Произвёл и отправил"}
+                {markingEnabled && order.marking_shipping ? "Произвёл и передал Ozon" : "Произвёл и отправил"}
               </Button>
             )}
             {showActions && !shipped && !wsLinked && !ready && !canProduceAndShip && canSendToWorkshop && (
@@ -688,7 +699,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0">
-        {order.marking_shipping && !order.marking_shipping.allowed && (
+        {markingEnabled && order.marking_shipping && !order.marking_shipping.allowed && (
           <div className={`mb-3 flex items-start gap-2 border-y px-3 py-2 text-xs ${
             order.marking_shipping.mode === "enforce"
               ? "border-destructive/30 bg-destructive/5 text-destructive"
@@ -711,6 +722,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
               availability={showAvailability ? availabilityByItem.get(it.id) ?? null : null}
               top={idx === 0}
               showPrice={(order.items?.length ?? 0) > 1}
+              markingEnabled={markingEnabled}
               onMarkingChanged={onMarkingChanged}
               onMarkingLabelRendered={onMarkingLabelRendered}
             />
@@ -725,8 +737,9 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
   );
 }
 
-function markingCanShip(order: OzonOrder) {
-  return !order.marking_shipping
+function markingCanShip(order: OzonOrder, markingEnabled: boolean) {
+  return !markingEnabled
+    || !order.marking_shipping
     || order.marking_shipping.mode !== "enforce"
     || order.marking_shipping.allowed;
 }
@@ -740,6 +753,7 @@ function ItemRow({
   availability,
   top,
   showPrice,
+  markingEnabled,
   onMarkingChanged,
   onMarkingLabelRendered,
 }: {
@@ -747,6 +761,7 @@ function ItemRow({
   availability: ItemAvailability | null;
   top: boolean;
   showPrice: boolean;
+  markingEnabled: boolean;
   onMarkingChanged: () => Promise<void>;
   onMarkingLabelRendered: (receipt: MarkingLabelDownloadReceipt) => void;
 }) {
@@ -771,11 +786,13 @@ function ItemRow({
             <AvailabilityBadge a={availability} />
           </div>
         )}
-        <OrderItemMarkingControls
-          item={item}
-          onChanged={onMarkingChanged}
-          onLabelRendered={onMarkingLabelRendered}
-        />
+        {markingEnabled ? (
+          <OrderItemMarkingControls
+            item={item}
+            onChanged={onMarkingChanged}
+            onLabelRendered={onMarkingLabelRendered}
+          />
+        ) : null}
       </div>
       <div className="text-right shrink-0">
         <div className="font-semibold tabular-nums">{item.quantity} шт</div>

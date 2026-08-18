@@ -6,6 +6,7 @@ import { getAdminSupabaseKeyMode } from "@/lib/supabase/server";
 import { getDatabaseRuntimeConfig } from "@/lib/db/config";
 import { markingConfigForHealth } from "@/lib/marking/config";
 import { getMaintenanceState } from "@/lib/maintenance";
+import { getAdminFeatureSnapshot } from "@/lib/admin/features";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export async function GET(_request: NextRequest) {
     const databaseConfig = getDatabaseRuntimeConfig();
     await services.catalog.listCategories();
     const maintenance = getMaintenanceState();
+    const features = await getAdminFeatureSnapshot();
     return adminJson({
       data: {
         status: "ok",
@@ -25,6 +27,7 @@ export async function GET(_request: NextRequest) {
         databaseWriteSource: databaseConfig.writeSource,
         shadowSource: services.shadowSource,
         supabaseKeyMode: getAdminSupabaseKeyMode(),
+        features,
         marking: markingConfigForHealth(),
       },
     });

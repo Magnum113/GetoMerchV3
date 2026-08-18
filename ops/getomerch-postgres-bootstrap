@@ -330,6 +330,16 @@ BEGIN
     EXECUTE 'REVOKE ALL ON FUNCTION getomerch_jobs.prune_finished_jobs(interval, integer) FROM PUBLIC';
     EXECUTE 'GRANT EXECUTE ON FUNCTION getomerch_jobs.prune_finished_jobs(interval, integer) TO getomerch_app';
   END IF;
+  IF to_regnamespace('getomerch_admin') IS NOT NULL
+     AND to_regclass('public.merch_admin_feature_flags') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA getomerch_admin FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON public.merch_admin_feature_flags FROM PUBLIC, getomerch_app';
+    EXECUTE 'GRANT USAGE ON SCHEMA getomerch_admin TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT ON getomerch_admin.feature_flag_safe TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT ON public.merch_admin_feature_flags TO getomerch_backup';
+    EXECUTE 'REVOKE ALL ON FUNCTION getomerch_admin.set_feature_flag(text,boolean,bigint,text) FROM PUBLIC';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION getomerch_admin.set_feature_flag(text,boolean,bigint,text) TO getomerch_app';
+  END IF;
 END
 $grants$;
 RESET ROLE;

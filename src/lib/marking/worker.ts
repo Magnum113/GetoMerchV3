@@ -2,6 +2,7 @@ import "server-only";
 
 import { hostname } from "node:os";
 import { assertAdminWritesEnabled } from "@/lib/admin/maintenance";
+import { isAdminFeatureEnabled } from "@/lib/admin/features";
 import { closeServerDatabasePool, queryServerDatabase } from "@/lib/db/pool";
 import type { JobExecutionContext } from "@/lib/jobs/execution";
 import {
@@ -124,7 +125,7 @@ export async function runMarkingWorker() {
     workerId,
     activeClaimTypes: claimTypes.length,
   });
-  if (claimTypes.length > 0) {
+  if (claimTypes.length > 0 && await isAdminFeatureEnabled("chestny_znak")) {
     const recovered = await recoverStaleJobs(staleSeconds, { scope: "marking" });
     for (const job of recovered) {
       if (job.status === "failed") await reconcileTerminalWithdrawalFailure(job);
@@ -132,7 +133,10 @@ export async function runMarkingWorker() {
   }
   try {
     while (!stopping) {
-      if (claimTypes.length === 0) {
+      if (
+        claimTypes.length === 0
+        || !await isAdminFeatureEnabled("chestny_znak")
+      ) {
         await sleep(pollMs);
         continue;
       }

@@ -1,4 +1,4 @@
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -14,7 +14,7 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const { id: rawId } = await context.params;
     const id = requireUuidParam(rawId, "id");
     if (!id) throw new AdminApiError(400, "bad_request", "Process id is required");

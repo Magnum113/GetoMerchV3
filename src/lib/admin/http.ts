@@ -7,6 +7,7 @@ export type AdminApiErrorCode =
   | "bad_request"
   | "unauthorized"
   | "not_found"
+  | "feature_disabled"
   | "conflict"
   | "maintenance"
   | "method_not_allowed"

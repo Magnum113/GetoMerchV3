@@ -22,6 +22,7 @@ import {
   uuidValue,
 } from "@/lib/db/mutations/validation";
 import { enqueueJob } from "@/lib/jobs/queue";
+import { isAdminFeatureEnabled } from "@/lib/admin/features";
 import { getMarkingRuntimeConfig } from "@/lib/marking/config";
 import {
   evaluateShippingGate,
@@ -109,10 +110,11 @@ export async function shipOzonOrderInternal(
     if (!item.product_id) conflict("ozon_product_unmatched", `Не сопоставлен товар для ${item.offer_id}.`);
   }
 
-  const markingConfig = getMarkingRuntimeConfig();
+  const markingFeatureEnabled = await isAdminFeatureEnabled("chestny_znak", query);
+  const markingConfig = markingFeatureEnabled ? getMarkingRuntimeConfig() : null;
   let markingGate: ShippingGateEvaluation | null = null;
   if (
-    markingConfig.enabled
+    markingConfig?.enabled
     && order.fulfillment_order_id
     && await hasRequiredMarking(query, order.fulfillment_order_id)
   ) {
@@ -240,7 +242,7 @@ export async function shipOzonOrderInternal(
       requestId: context.requestId,
       idempotencyKey: `shipping-handover:${context.idempotencyKey}`,
     });
-    if (markingHandover.documentId && markingConfig.withdrawalEnabled) {
+    if (markingHandover.documentId && markingConfig?.withdrawalEnabled) {
       await enqueueJob({
         type: "marking_withdrawal_submit",
         dedupeKey: `crpt-withdrawal-submit:${markingHandover.documentId}`,

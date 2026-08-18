@@ -10,6 +10,7 @@ import {
 } from "@/lib/marking/agent/protocol";
 import { authenticateMarkingAgentRequest } from "@/lib/marking/agent/server-auth";
 import { getMarkingRuntimeConfig } from "@/lib/marking/config";
+import { isAdminFeatureEnabled } from "@/lib/admin/features";
 import { queryServerDatabase } from "@/lib/db/pool";
 import {
   acceptSigningAgentEnvelope,
@@ -50,6 +51,7 @@ export async function POST(request: NextRequest) {
       return signedJson({ ok: false, error: "agent_endpoint_disabled" }, 503, requestId, secret);
     }
     const body = parseRequestBody(bodyText);
+    const featureEnabled = await isAdminFeatureEnabled("chestny_znak");
     await acceptSigningAgentEnvelope(queryServerDatabase, {
       agentId: authenticated.envelope.agentId,
       nonce: authenticated.envelope.nonce,
@@ -57,15 +59,22 @@ export async function POST(request: NextRequest) {
       issuedAt: authenticated.envelope.issuedAt,
       telemetry: body.telemetry,
     });
-    const keyring = await getKeyring(config.keyringFile);
     if (body.operation === "heartbeat") {
       return signedJson({
         ok: true,
         operation: body.operation,
+        featureEnabled,
         summary: await getSignatureRequestSummary(queryServerDatabase),
       }, 200, requestId, secret);
     }
     if (body.operation === "claim") {
+      if (!featureEnabled) {
+        return signedJson({
+          ok: true,
+          operation: body.operation,
+          request: null,
+        }, 200, requestId, secret);
+      }
       const claimed = await claimRemoteSignatureRequest(
         queryServerDatabase,
         authenticated.envelope.agentId,
@@ -74,6 +83,7 @@ export async function POST(request: NextRequest) {
       if (!claimed) {
         return signedJson({ ok: true, operation: body.operation, request: null }, 200, requestId, secret);
       }
+      const keyring = await getKeyring(config.keyringFile);
       const payload = keyring.decryptBytes(claimed.encryptedPayload);
       try {
         return signedJson({
@@ -93,6 +103,7 @@ export async function POST(request: NextRequest) {
     }
     const signatureRequestId = requiredUuid(body.signatureRequestId);
     if (body.operation === "complete") {
+      const keyring = await getKeyring(config.keyringFile);
       if (!isSignerCertificateInfo(body.certificate)) {
         throw new MarkingAgentProtocolError("agent_certificate_invalid", "Signer certificate is invalid");
       }

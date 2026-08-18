@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -22,7 +22,7 @@ const CONFLICT_TYPES = [
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const params = request.nextUrl.searchParams;
     const data = await markingReadRepository.listConflicts({
       limit: parseLimitParam(params.get("limit"), { defaultValue: 100, max: 500 }),

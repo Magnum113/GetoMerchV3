@@ -369,6 +369,20 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO getomerch_app;
 GRANT USAGE ON SCHEMA getomerch_meta TO getomerch_app, getomerch_backup;
 GRANT SELECT ON getomerch_meta.schema_migrations TO getomerch_app, getomerch_backup;
 REVOKE ALL ON SCHEMA getomerch_meta FROM PUBLIC;
+DO $grants$
+BEGIN
+  IF to_regnamespace('getomerch_admin') IS NOT NULL
+     AND to_regclass('public.merch_admin_feature_flags') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA getomerch_admin FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON public.merch_admin_feature_flags FROM PUBLIC, getomerch_app';
+    EXECUTE 'GRANT USAGE ON SCHEMA getomerch_admin TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT ON getomerch_admin.feature_flag_safe TO getomerch_app, getomerch_backup';
+    EXECUTE 'GRANT SELECT ON public.merch_admin_feature_flags TO getomerch_backup';
+    EXECUTE 'REVOKE ALL ON FUNCTION getomerch_admin.set_feature_flag(text,boolean,bigint,text) FROM PUBLIC';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION getomerch_admin.set_feature_flag(text,boolean,bigint,text) TO getomerch_app';
+  END IF;
+END
+$grants$;
 ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO getomerch_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE getomerch_owner IN SCHEMA public

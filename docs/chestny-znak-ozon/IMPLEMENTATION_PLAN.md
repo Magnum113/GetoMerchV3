@@ -1388,6 +1388,21 @@ Alerts не содержат полный КМ. Ссылки ведут на ent
 
 ## 24. Feature flags
 
+Верхний бизнес-флаг хранится в production PostgreSQL и управляется владельцем
+из админки:
+
+```text
+chestny_znak=false
+```
+
+Он скрывает весь пользовательский контур, закрывает marking API, исключает
+marking-hydration и handover из обычных Ozon-заказов и останавливает выдачу
+новых marking/signature jobs. Сохранённая история не удаляется, а уже взятая
+внешняя операция доводится до согласованного состояния. Изменение проходит
+через idempotency ledger и audit log.
+
+Ниже расположен второй, технический уровень server-only env gates:
+
 ```text
 GETOMERCH_MARKING_ENABLED=false
 GETOMERCH_MARKING_IMPORT_ENABLED=false
@@ -1418,7 +1433,10 @@ GETOMERCH_MARKING_ALLOWED_ADMIN_IDS=
 
 Правила:
 
-- глобальный flag выключает создание новых процессов, но не скрывает уже
+- `chestny_znak=false` является штатным состоянием до готовности документов и
+  production flow;
+- включение бизнес-флага не включает автоматически ни один внешний write;
+- глобальный env flag выключает создание новых процессов, но не удаляет уже
   существующие обязательства;
 - выключение write flag останавливает новые внешние mutations, но status
   polling и read-only reconciliation могут продолжаться;

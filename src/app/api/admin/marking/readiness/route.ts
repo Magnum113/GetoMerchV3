@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
+import { requireMarkingAdminSession } from "@/lib/marking/http";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -23,7 +23,7 @@ const READINESS_STATUSES = ["ready", "blocked", "not_required", "archived"] as c
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const params = request.nextUrl.searchParams;
     const page = await markingReadRepository.listReadiness({
       limit: parseLimitParam(params.get("limit"), { defaultValue: 50, max: 100 }),

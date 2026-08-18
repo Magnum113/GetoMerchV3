@@ -2,6 +2,7 @@ import "server-only";
 
 import type { NextRequest } from "next/server";
 import { requireAdminSession } from "@/lib/admin/auth";
+import { requireAdminFeatureEnabled } from "@/lib/admin/features";
 import { AdminApiError } from "@/lib/admin/http";
 import type { ServerMutationContext } from "@/lib/db/mutations/runner";
 import { DatabaseBusinessError } from "@/lib/db/errors";
@@ -12,7 +13,7 @@ import { MarkingKeyringError } from "@/lib/marking/security/keyring";
 export async function requireMarkingMutationContext(
   request: NextRequest,
 ): Promise<ServerMutationContext> {
-  const session = await requireAdminSession();
+  const session = await requireMarkingAdminSession();
   assertSameOrigin(request);
   const idempotencyKey = request.headers.get("x-idempotency-key")?.trim() ?? "";
   if (
@@ -33,6 +34,12 @@ export async function requireMarkingMutationContext(
     requestId: isUuid(requestedId) ? requestedId : crypto.randomUUID(),
     idempotencyKey,
   };
+}
+
+export async function requireMarkingAdminSession() {
+  const session = await requireAdminSession();
+  await requireAdminFeatureEnabled("chestny_znak");
+  return session;
 }
 
 export function markingMutationError(error: unknown) {

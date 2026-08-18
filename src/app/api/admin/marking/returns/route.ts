@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -10,6 +9,7 @@ import { queryServerDatabase } from "@/lib/db/pool";
 import { getMarkingRuntimeConfig } from "@/lib/marking/config";
 import {
   markingMutationError,
+  requireMarkingAdminSession,
   requireMarkingMutationContext,
   requireObjectBody,
   requiredBoolean,
@@ -29,7 +29,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const [items, warehouses] = await Promise.all([
       listReturnCases(
         queryServerDatabase,

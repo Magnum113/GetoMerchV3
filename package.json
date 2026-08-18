@@ -14,6 +14,7 @@
     "check:ozon-dry-run": "node scripts/check-ozon-dry-run.mjs",
     "check:preproduction": "node scripts/check-preproduction.mjs",
     "check:maintenance": "node scripts/check-maintenance-mode.mjs",
+    "check:admin-features": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-admin-feature-flags.ts",
     "check:marking-security": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-marking-security.ts",
     "check:fulfillment-stage2": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-fulfillment-stage2.ts",
     "check:fulfillment-stage2:db": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-fulfillment-stage2-db.ts",

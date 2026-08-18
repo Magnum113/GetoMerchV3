@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { requireAdminSession } from "@/lib/admin/auth";
 import {
   AdminApiError,
   adminErrorResponse,
@@ -9,6 +8,7 @@ import {
 import { queryServerDatabase } from "@/lib/db/pool";
 import {
   markingMutationError,
+  requireMarkingAdminSession,
   requireMarkingMutationContext,
   requireObjectBody,
   requiredString,
@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminSession();
+    await requireMarkingAdminSession();
     const data = await listOzonSubmissionBatches(
       queryServerDatabase,
       parseLimitParam(request.nextUrl.searchParams.get("limit"), {

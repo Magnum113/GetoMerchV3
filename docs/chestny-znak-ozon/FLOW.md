@@ -2513,6 +2513,36 @@ RPO в один час может быть неприемлем для марк�
 
 ## 31. Feature flags и rollout
 
+Флаги разделены на два уровня.
+
+### 31.1. Бизнес-флаг админки
+
+```text
+Database feature key: chestny_znak
+Default:              false
+UI:                   Настройки -> Функции
+```
+
+Флаг хранится в `public.merch_admin_feature_flags`, читается через
+`getomerch_admin.feature_flag_safe` и меняется аудируемой mutation-функцией.
+Он является верхним выключателем всего пользовательского контура.
+
+При `false`:
+
+- скрыты навигация, `/marking` и элементы маркировки в Ozon-заказах;
+- `/api/admin/marking/*` закрыт fail-closed;
+- Ozon order API не загружает marking assignments/candidates и shipping gate;
+- складская отгрузка не создаёт marking handover и документы вывода;
+- marking worker не берёт новые задания;
+- remote signer-agent не получает новые signature requests;
+- история КМ, документы, события и аудит сохраняются без изменений.
+
+Уже взятая worker/agent операция не прерывается посередине: она может завершить
+текущий атомарный переход, после чего новые задания не выдаются. Это безопаснее
+принудительного обрыва после внешнего запроса с неизвестным результатом.
+
+### 31.2. Технические env-флаги
+
 Минимальный набор:
 
 ```text
@@ -2536,16 +2566,16 @@ GETOMERCH_MARKING_AUTOMATION_ENABLED=false
 GETOMERCH_MARKING_SHIPPING_GATE_MODE=observe
 ```
 
-Все flags являются server-only. `jit_after_order` является целевым штатным
+Все env flags являются server-only. `jit_after_order` является целевым штатным
 режимом GetoMerch FBS, но его runtime-флаг остается `false` до production
 миграций и canary. При отсутствии или неверном значении внешние записи и
 just-in-time flow остаются выключенными; значения не экспортируются как
 `NEXT_PUBLIC_*`.
 
-Глобальный `GETOMERCH_MARKING_ENABLED=false` не является обходом для уже
-verified маркируемого SKU. До rollout он скрывает новый контур; после включения
-enforce аварийный режим оставляет required-заказы заблокированными до
-проверенного manual flow. Gate не трактует timeout/disabled worker как
+`chestny_znak=true` не ослабляет ни один env gate и не подтверждает наличие
+обязательных документов или готовность профиля. Глобальный
+`GETOMERCH_MARKING_ENABLED=false` также не является обходом для уже
+зафиксированных обязательств. Gate не трактует timeout или disabled worker как
 `маркировка не требуется`.
 
 Rollout:
@@ -2567,6 +2597,7 @@ Rollout:
 
 Rollback не возвращает runtime на Supabase и не удаляет marking data. Он:
 
+- выключает `chestny_znak` в `Настройки -> Функции`;
 - выключает external write flags;
 - останавливает marking worker;
 - сохраняет read-only UI, required classification, shipping gate и аудит;

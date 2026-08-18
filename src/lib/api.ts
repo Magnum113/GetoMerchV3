@@ -23,6 +23,10 @@ import type {
 import type { BackgroundJob } from "@/lib/jobs/types";
 import type { OzonImportApplyResult, OzonImportPreview } from "@/lib/ozon-import";
 import type { OzonImportSelection } from "@/lib/ozon/import-selection";
+import type {
+  AdminFeatureFlag,
+  AdminFeatureKey,
+} from "@/lib/admin/feature-types";
 
 type ApiResponse<T> =
   | { ok: true; data: T }
@@ -134,6 +138,23 @@ async function adminPost<T>(path: string, body: unknown): Promise<T> {
   const response = await adminFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await readJson<ApiResponse<T>>(response);
+  if (!response.ok || !payload?.ok) {
+    throw apiError(response, payload);
+  }
+  return payload.data as T;
+}
+
+async function adminPatch<T>(path: string, body: unknown): Promise<T> {
+  const response = await adminFetch(path, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Idempotency-Key": crypto.randomUUID(),
+      "X-Request-Id": crypto.randomUUID(),
+    },
     body: JSON.stringify(body),
   });
   const payload = await readJson<ApiResponse<T>>(response);
@@ -447,6 +468,15 @@ function apiError<T>(response: Response, payload: ApiResponse<T> | null) {
 }
 
 export const api = {
+  // ---------- ADMIN FEATURES ----------
+  listAdminFeatureFlags: () =>
+    adminGet<AdminFeatureFlag[]>("/api/admin/features"),
+  updateAdminFeatureFlag: (input: {
+    key: AdminFeatureKey;
+    enabled: boolean;
+    expectedRevision: number;
+  }) => adminPatch<AdminFeatureFlag>("/api/admin/features", input),
+
   // ---------- WAREHOUSES ----------
   listWarehouses: () => adminRpc<Warehouse[]>("listWarehouses"),
 

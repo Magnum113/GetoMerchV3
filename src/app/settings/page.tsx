@@ -11,15 +11,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import type { Warehouse, Color, Size } from "@/lib/types";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import type { AdminFeatureFlag } from "@/lib/admin/feature-types";
+import { Loader2, Pencil, Plus, ScanLine, Trash2 } from "lucide-react";
 
 export default function SettingsPage() {
   return (
     <div>
-      <PageHeader title="Справочники" description="Склады, цвета, размеры — базовые сущности учёта" />
+      <PageHeader title="Настройки" description="Функции и справочники учёта" />
+
+      <div className="mb-6">
+        <FeatureFlagsCard />
+      </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
         <WarehousesCard />
@@ -27,6 +33,95 @@ export default function SettingsPage() {
         <SizesCard />
       </div>
     </div>
+  );
+}
+
+function FeatureFlagsCard() {
+  const [items, setItems] = useState<AdminFeatureFlag[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.listAdminFeatureFlags()
+      .then((flags) => {
+        if (active) setItems(flags);
+      })
+      .catch((error) => toast.error(errorMessage(error)))
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  async function change(flag: AdminFeatureFlag, enabled: boolean) {
+    const question = enabled
+      ? "Включить функции Честного знака в админке? Технические ограничения на внешние операции останутся активны."
+      : "Выключить функции Честного знака? Новые операции маркировки будут остановлены, раздел и действия с КМ скроются.";
+    if (!confirm(question)) return;
+    setBusyKey(flag.key);
+    try {
+      const updated = await api.updateAdminFeatureFlag({
+        key: flag.key,
+        enabled,
+        expectedRevision: flag.revision,
+      });
+      setItems((current) => current.map((item) => (
+        item.key === updated.key ? updated : item
+      )));
+      toast.success(enabled ? "Функция включена" : "Функция выключена");
+      window.location.reload();
+    } catch (error) {
+      toast.error(errorMessage(error));
+      setBusyKey(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Функции</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex min-h-20 items-center justify-center text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" aria-label="Загрузка функций" />
+          </div>
+        ) : (
+          <div className="divide-y rounded-md border">
+            {items.map((flag) => (
+              <div
+                key={flag.key}
+                className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="mt-0.5 rounded-md border bg-muted/50 p-2">
+                    <ScanLine className="h-4 w-4" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{flag.label}</span>
+                      <Badge variant={flag.enabled ? "default" : "secondary"}>
+                        {flag.enabled ? "Включено" : "Выключено"}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {flag.description}
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={flag.enabled}
+                  disabled={busyKey !== null}
+                  onCheckedChange={(enabled) => void change(flag, enabled)}
+                  aria-label={`${flag.enabled ? "Выключить" : "Включить"} ${flag.label}`}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
