@@ -58,7 +58,8 @@ expected_tables(table_name) as (
     ('merch_expense_categories'),
     ('merch_expenses'),
     ('merch_ozon_import_runs'),
-    ('merch_ozon_import_items')
+    ('merch_ozon_import_items'),
+    ('merch_admin_feature_flags')
 ),
 all_rows(table_name, payload) as materialized (
   select 'merch_warehouses', to_jsonb(t) from public.merch_warehouses t
@@ -119,6 +120,7 @@ all_rows(table_name, payload) as materialized (
   union all select 'merch_expenses', to_jsonb(t) from public.merch_expenses t
   union all select 'merch_ozon_import_runs', to_jsonb(t) from public.merch_ozon_import_runs t
   union all select 'merch_ozon_import_items', to_jsonb(t) from public.merch_ozon_import_items t
+  union all select 'merch_admin_feature_flags', to_jsonb(t) from public.merch_admin_feature_flags t
 ),
 not_null_columns as (
   select c.table_name, c.column_name
