@@ -439,7 +439,7 @@ export default function AnalyticsDashboardPage() {
           </Card>
 
           {/* Невыкуп */}
-          <div className="grid lg:grid-cols-2 gap-5 mb-5">
+          <div className="mb-5 grid gap-5 2xl:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -481,14 +481,14 @@ export default function AnalyticsDashboardPage() {
                   <div className="text-sm text-muted-foreground text-center py-10">Нет финализированных товаров за период</div>
                 ) : (
                   <div className="overflow-hidden rounded-md border">
-                    <Table className="min-w-[760px] table-fixed">
+                    <Table className="min-w-[600px] table-fixed 2xl:min-w-0">
                       <TableHeader className="bg-muted/40">
                         <TableRow>
-                          <TableHead className="w-[44%] px-4">Товар</TableHead>
-                          <TableHead className="w-24 px-3 text-right">Невыкуп</TableHead>
-                          <TableHead className="w-24 px-3 text-right">Доставлено</TableHead>
-                          <TableHead className="w-24 px-3 text-right">Всего</TableHead>
-                          <TableHead className="w-24 px-4 text-right">%</TableHead>
+                          <TableHead className="w-[48%] px-4">Товар</TableHead>
+                          <TableHead className="w-[13%] px-3 text-right">Невыкуп</TableHead>
+                          <TableHead className="w-[17%] px-3 text-right">Доставлено</TableHead>
+                          <TableHead className="w-[10%] px-3 text-right">Всего</TableHead>
+                          <TableHead className="w-[12%] px-4 text-right">%</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -538,7 +538,7 @@ export default function AnalyticsDashboardPage() {
           </div>
 
           {/* Donut + Top products */}
-          <div className="grid lg:grid-cols-2 gap-5 mb-5">
+          <div className="mb-5 grid gap-5 2xl:grid-cols-2">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -560,13 +560,13 @@ export default function AnalyticsDashboardPage() {
                   <div className="text-sm text-muted-foreground text-center py-10">Нет данных</div>
                 ) : (
                   <div className="overflow-hidden rounded-md border">
-                    <Table className="min-w-[640px] table-fixed">
+                    <Table className="min-w-[560px] table-fixed 2xl:min-w-0">
                       <TableHeader className="bg-muted/40">
                         <TableRow>
-                          <TableHead className="w-[48%] px-4">Товар</TableHead>
-                          <TableHead className="w-16 px-3 text-right">Шт</TableHead>
-                          <TableHead className="w-28 px-3 text-right">Выручка</TableHead>
-                          <TableHead className="w-28 px-4 text-right">Чистая</TableHead>
+                          <TableHead className="w-1/2 px-4">Товар</TableHead>
+                          <TableHead className="w-[10%] px-3 text-right">Шт</TableHead>
+                          <TableHead className="w-[20%] px-3 text-right">Выручка</TableHead>
+                          <TableHead className="w-[20%] px-4 text-right">Чистая</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
