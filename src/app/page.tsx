@@ -472,7 +472,7 @@ export default function AnalyticsDashboardPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Топ товаров по невыкупу</CardTitle>
               </CardHeader>
@@ -551,7 +551,7 @@ export default function AnalyticsDashboardPage() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Топ продуктов по чистой прибыли</CardTitle>
               </CardHeader>
