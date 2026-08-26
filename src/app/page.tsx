@@ -476,45 +476,47 @@ export default function AnalyticsDashboardPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Топ товаров по невыкупу</CardTitle>
               </CardHeader>
-              <CardContent className="p-0">
+              <CardContent className="px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
                 {productNonRedemption.length === 0 ? (
                   <div className="text-sm text-muted-foreground text-center py-10">Нет финализированных товаров за период</div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Товар</TableHead>
-                        <TableHead className="text-right w-20">Невыкуп</TableHead>
-                        <TableHead className="text-right w-20">Доставлено</TableHead>
-                        <TableHead className="text-right w-20">Всего</TableHead>
-                        <TableHead className="text-right w-20">%</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleProductNonRedemption.map((row) => (
-                        <TableRow key={row.key}>
-                          <TableCell>
-                            {row.product ? (
-                              <ProductDisplay p={row.product} compact />
-                            ) : (
-                              <div>
-                                <div className="font-medium">{row.name}</div>
-                                <div className="text-[11px] font-mono text-muted-foreground">{row.offerId}</div>
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums text-state-danger-fg">{row.nonRedeemed}</TableCell>
-                          <TableCell className="text-right tabular-nums text-muted-foreground">{row.delivered}</TableCell>
-                          <TableCell className="text-right tabular-nums text-muted-foreground">{row.terminal}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">{(row.rate * 100).toFixed(1)}%</TableCell>
+                  <div className="overflow-hidden rounded-md border">
+                    <Table className="min-w-[760px] table-fixed">
+                      <TableHeader className="bg-muted/40">
+                        <TableRow>
+                          <TableHead className="w-[44%] px-4">Товар</TableHead>
+                          <TableHead className="w-24 px-3 text-right">Невыкуп</TableHead>
+                          <TableHead className="w-24 px-3 text-right">Доставлено</TableHead>
+                          <TableHead className="w-24 px-3 text-right">Всего</TableHead>
+                          <TableHead className="w-24 px-4 text-right">%</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {visibleProductNonRedemption.map((row) => (
+                          <TableRow key={row.key}>
+                            <TableCell className="px-4 py-4 align-top">
+                              {row.product ? (
+                                <ProductDisplay p={row.product} compact layout="stacked" />
+                              ) : (
+                                <div className="min-w-0 space-y-1">
+                                  <div className="break-words font-medium leading-snug">{row.name}</div>
+                                  <div className="break-all font-mono text-xs text-muted-foreground">{row.offerId}</div>
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-4 text-right tabular-nums text-state-danger-fg">{row.nonRedeemed}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-4 text-right tabular-nums text-muted-foreground">{row.delivered}</TableCell>
+                            <TableCell className="whitespace-nowrap px-3 py-4 text-right tabular-nums text-muted-foreground">{row.terminal}</TableCell>
+                            <TableCell className="whitespace-nowrap px-4 py-4 text-right tabular-nums font-semibold">{(row.rate * 100).toFixed(1)}%</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
                 {productNonRedemption.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
-                    <p className="text-[11px] text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-4">
+                    <p className="max-w-xl text-xs leading-relaxed text-muted-foreground">
                       Сортировка по количеству невыкупленных товаров, процент считается внутри финализированных единиц товара.
                     </p>
                     {productNonRedemption.length > 5 && (
@@ -553,53 +555,57 @@ export default function AnalyticsDashboardPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Топ продуктов по чистой прибыли</CardTitle>
               </CardHeader>
-              <CardContent className="p-0">
+              <CardContent className="px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
                 {topProducts.length === 0 ? (
                   <div className="text-sm text-muted-foreground text-center py-10">Нет данных</div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Товар</TableHead>
-                        <TableHead className="text-right w-12">Шт</TableHead>
-                        <TableHead className="text-right w-24">Выручка</TableHead>
-                        <TableHead className="text-right w-24">Чистая</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {topProducts.map((p) => {
-                        const totalDeductions = p.cogs + p.ozonFees + p.allocatedOverhead;
-                        const breakdownTitle =
-                          `Выручка ${formatMoney(p.revenue)}\n` +
-                          `− Себестоимость ${formatMoney(p.cogs)}\n` +
-                          `− Расходы Ozon ${formatMoney(p.ozonFees)}\n` +
-                          `− Налог + прочее ${formatMoney(p.allocatedOverhead)}\n` +
-                          `= Чистая ${formatMoney(p.netProfit)} (всего вычетов ${formatMoney(totalDeductions)})`;
-                        return (
-                          <TableRow key={p.productId}>
-                            <TableCell>
-                              <ProductDisplay p={p.product} compact />
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{p.unitsSold}</TableCell>
-                            <TableCell className="text-right tabular-nums">{formatMoney(p.revenue)}</TableCell>
-                            <TableCell className="relative w-24 tabular-nums" title={breakdownTitle}>
-                              <span
-                                className={cn(
-                                  "absolute right-2 top-1/2 -translate-y-1/2 font-semibold",
-                                  p.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg",
-                                )}
-                              >
-                                {formatMoney(p.netProfit)}
-                              </span>
-                              <span className="absolute right-2 top-[calc(50%+0.75rem)] text-[10px] text-muted-foreground">
-                                {(p.marginPct * 100).toFixed(0)}%
-                              </span>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                  <div className="overflow-hidden rounded-md border">
+                    <Table className="min-w-[640px] table-fixed">
+                      <TableHeader className="bg-muted/40">
+                        <TableRow>
+                          <TableHead className="w-[48%] px-4">Товар</TableHead>
+                          <TableHead className="w-16 px-3 text-right">Шт</TableHead>
+                          <TableHead className="w-28 px-3 text-right">Выручка</TableHead>
+                          <TableHead className="w-28 px-4 text-right">Чистая</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {topProducts.map((p) => {
+                          const totalDeductions = p.cogs + p.ozonFees + p.allocatedOverhead;
+                          const breakdownTitle =
+                            `Выручка ${formatMoney(p.revenue)}\n` +
+                            `− Себестоимость ${formatMoney(p.cogs)}\n` +
+                            `− Расходы Ozon ${formatMoney(p.ozonFees)}\n` +
+                            `− Налог + прочее ${formatMoney(p.allocatedOverhead)}\n` +
+                            `= Чистая ${formatMoney(p.netProfit)} (всего вычетов ${formatMoney(totalDeductions)})`;
+                          return (
+                            <TableRow key={p.productId}>
+                              <TableCell className="px-4 py-4 align-top">
+                                <ProductDisplay p={p.product} compact layout="stacked" />
+                              </TableCell>
+                              <TableCell className="whitespace-nowrap px-3 py-4 text-right tabular-nums">{p.unitsSold}</TableCell>
+                              <TableCell className="whitespace-nowrap px-3 py-4 text-right tabular-nums">{formatMoney(p.revenue)}</TableCell>
+                              <TableCell className="px-4 py-4 text-right tabular-nums" title={breakdownTitle}>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span
+                                    className={cn(
+                                      "whitespace-nowrap font-semibold",
+                                      p.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg",
+                                    )}
+                                  >
+                                    {formatMoney(p.netProfit)}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {(p.marginPct * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -615,42 +621,44 @@ export default function AnalyticsDashboardPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base">По периодам</CardTitle>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
               {buckets.length === 0 ? (
                 <div className="text-sm text-muted-foreground text-center py-10">Нет данных</div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-24">{granularity === "month" ? "Месяц" : granularity === "week" ? "Неделя" : "День"}</TableHead>
-                      <TableHead className="text-right">Выручка</TableHead>
-                      <TableHead className="text-right">Заказы</TableHead>
-                      <TableHead className="text-right">Себест.</TableHead>
-                      <TableHead className="text-right">Ozon</TableHead>
-                      <TableHead className="text-right">Налог</TableHead>
-                      <TableHead className="text-right">Прочее</TableHead>
-                      <TableHead className="text-right">Чистая</TableHead>
-                      <TableHead className="text-right w-20">Маржа</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {[...buckets].reverse().map((b) => (
-                      <TableRow key={b.key}>
-                        <TableCell className="font-medium">{b.label}</TableCell>
-                        <TableCell className="text-right tabular-nums">{formatMoney(b.metrics.revenue)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{b.metrics.ordersCount}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.cogs)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.ozonFeesTotal)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.tax)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.otherExpenses)}</TableCell>
-                        <TableCell className={cn("text-right tabular-nums font-semibold", b.metrics.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg")}>
-                          {formatMoney(b.metrics.netProfit)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">{(b.metrics.margin * 100).toFixed(0)}%</TableCell>
+                <div className="overflow-hidden rounded-md border">
+                  <Table className="min-w-[920px]">
+                    <TableHeader className="bg-muted/40">
+                      <TableRow>
+                        <TableHead className="w-28 px-4">{granularity === "month" ? "Месяц" : granularity === "week" ? "Неделя" : "День"}</TableHead>
+                        <TableHead className="px-3 text-right">Выручка</TableHead>
+                        <TableHead className="px-3 text-right">Заказы</TableHead>
+                        <TableHead className="px-3 text-right">Себест.</TableHead>
+                        <TableHead className="px-3 text-right">Ozon</TableHead>
+                        <TableHead className="px-3 text-right">Налог</TableHead>
+                        <TableHead className="px-3 text-right">Прочее</TableHead>
+                        <TableHead className="px-3 text-right">Чистая</TableHead>
+                        <TableHead className="w-20 px-4 text-right">Маржа</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {[...buckets].reverse().map((b) => (
+                        <TableRow key={b.key}>
+                          <TableCell className="whitespace-nowrap px-4 py-3 font-medium">{b.label}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{formatMoney(b.metrics.revenue)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">{b.metrics.ordersCount}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.cogs)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.ozonFeesTotal)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.tax)}</TableCell>
+                          <TableCell className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-muted-foreground">{formatMoney(b.metrics.otherExpenses)}</TableCell>
+                          <TableCell className={cn("whitespace-nowrap px-3 py-3 text-right tabular-nums font-semibold", b.metrics.netProfit >= 0 ? "text-state-success-fg" : "text-state-danger-fg")}>
+                            {formatMoney(b.metrics.netProfit)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-muted-foreground">{(b.metrics.margin * 100).toFixed(0)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
