@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Loader2,
+  Mail,
   MapPin,
   PackageCheck,
   Phone,
@@ -52,6 +53,8 @@ import {
 } from "@/lib/komui/types";
 import {
   CdekBadge,
+  CdekDeliveryBadge,
+  EmailStatusBadge,
   FulfillmentBadge,
   PaymentBadge,
 } from "../status-badges";
@@ -451,6 +454,18 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                   <Field label="Статус">
                     <CdekBadge status={cdekShipment?.status ?? order.cdek?.status} />
                   </Field>
+                  <Field label="Статус доставки">
+                    <CdekDeliveryBadge
+                      code={
+                        cdekShipment?.deliveryStatusCode ??
+                        order.cdek?.deliveryStatusCode
+                      }
+                      name={
+                        cdekShipment?.deliveryStatusName ??
+                        order.cdek?.deliveryStatusName
+                      }
+                    />
+                  </Field>
                   <Field label="Номер">
                     <span className="font-mono">
                       {cdekShipment?.number ?? order.cdek?.number ?? "—"}
@@ -470,6 +485,41 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                       "—"
                     )}
                   </Field>
+                  {(cdekShipment?.plannedDeliveryDate ??
+                    order.cdek?.plannedDeliveryDate) && (
+                    <Field label="Плановая доставка">
+                      {formatDate(
+                        (cdekShipment?.plannedDeliveryDate ??
+                          order.cdek?.plannedDeliveryDate)!,
+                      )}
+                    </Field>
+                  )}
+                  {(cdekShipment?.keepFreeUntil ?? order.cdek?.keepFreeUntil) && (
+                    <Field label="Хранение до">
+                      {formatDate(
+                        (cdekShipment?.keepFreeUntil ??
+                          order.cdek?.keepFreeUntil)!,
+                      )}
+                    </Field>
+                  )}
+                  {(cdekShipment?.deliveryStatusSyncedAt ??
+                    order.cdek?.deliveryStatusSyncedAt) && (
+                    <Field label="Синхронизация">
+                      {formatDate(
+                        (cdekShipment?.deliveryStatusSyncedAt ??
+                          order.cdek?.deliveryStatusSyncedAt)!,
+                      )}
+                    </Field>
+                  )}
+                  {(cdekShipment?.deliveryStatusSyncError ??
+                    order.cdek?.deliveryStatusSyncError) && (
+                    <Field label="Ошибка синхронизации">
+                      <span className="text-state-danger-fg">
+                        {cdekShipment?.deliveryStatusSyncError ??
+                          order.cdek?.deliveryStatusSyncError}
+                      </span>
+                    </Field>
+                  )}
                 </div>
               )}
 
@@ -492,9 +542,12 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                             {ev.statusName || ev.statusCode || ev.status}
                           </span>
                         )}
-                        {ev.receivedAt && (
+                        {ev.city && (
+                          <span className="text-muted-foreground">{ev.city}</span>
+                        )}
+                        {(ev.statusAt || ev.receivedAt) && (
                           <span className="text-muted-foreground tabular-nums">
-                            {formatDate(ev.receivedAt)}
+                            {formatDate(ev.statusAt || ev.receivedAt!)}
                           </span>
                         )}
                       </li>
@@ -502,6 +555,44 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                   </ul>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4 space-y-3">
+              <div className="text-sm font-medium flex items-center gap-2">
+                <Mail className="h-4 w-4" /> Письма клиенту
+              </div>
+              <Separator />
+              {[
+                ["Оплата подтверждена", order.email?.orderPaid],
+                ["Заказ передан в СДЭК", order.email?.shipmentHandedOver],
+                ["Заказ готов к получению", order.email?.shipmentReady],
+              ].map(([label, email]) => {
+                const status =
+                  typeof email === "object" && email ? email : null;
+                return (
+                  <div
+                    key={String(label)}
+                    className="flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div>{String(label)}</div>
+                      {status?.sentAt && (
+                        <div className="text-[10px] text-muted-foreground">
+                          {formatDate(status.sentAt)}
+                        </div>
+                      )}
+                      {status?.lastError && status.status === "failed" && (
+                        <div className="text-[10px] text-state-danger-fg">
+                          {status.lastError}
+                        </div>
+                      )}
+                    </div>
+                    <EmailStatusBadge status={status?.status} />
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
         </div>

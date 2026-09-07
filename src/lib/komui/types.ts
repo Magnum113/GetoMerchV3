@@ -477,6 +477,37 @@ export type OrderCdek = {
   uuid?: string;
   number?: string;
   errorMessage?: string | null;
+  deliveryStatusCode?: string | null;
+  deliveryStatusName?: string | null;
+  deliveryStatusAt?: string | null;
+  deliveryStatusCity?: string | null;
+  deliveryStatusSyncedAt?: string | null;
+  deliveryStatusSyncError?: string | null;
+  plannedDeliveryDate?: string | null;
+  keepFreeUntil?: string | null;
+};
+
+export type EmailOutboxStatus =
+  | "pending"
+  | "processing"
+  | "retry"
+  | "sent"
+  | "failed"
+  | "cancelled";
+
+export type OrderEmailStatus = {
+  status: EmailOutboxStatus;
+  attemptCount: number;
+  lastError?: string | null;
+  sentAt?: string | null;
+  failedAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type OrderEmailStatuses = {
+  orderPaid?: OrderEmailStatus | null;
+  shipmentHandedOver?: OrderEmailStatus | null;
+  shipmentReady?: OrderEmailStatus | null;
 };
 
 export type OrderLatestPayment = {
@@ -513,6 +544,7 @@ export type StorefrontOrderSummary = {
   firstItem?: StorefrontOrderItemPreview | null;
   latestPayment?: OrderLatestPayment | null;
   cdek?: OrderCdek | null;
+  email?: OrderEmailStatuses | null;
   paidAt?: string | null;
   shippedAt?: string | null;
   deliveredAt?: string | null;
@@ -571,6 +603,18 @@ export type CdekShipment = {
   uuid?: string | null;
   number?: string | null;
   errorMessage?: string | null;
+  deliveryStatusCode?: string | null;
+  deliveryStatusName?: string | null;
+  deliveryStatusAt?: string | null;
+  deliveryStatusCity?: string | null;
+  deliveryStatusSyncedAt?: string | null;
+  deliveryStatusSyncAttempts?: number;
+  deliveryStatusSyncError?: string | null;
+  deliveryStatusNextSyncAt?: string | null;
+  deliveryStatusTerminal?: boolean;
+  plannedDeliveryDate?: string | null;
+  keepFreeUntil?: string | null;
+  deliveryMode?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -580,6 +624,10 @@ export type CdekEvent = {
   eventType?: string | null;
   statusCode?: string | null;
   statusName?: string | null;
+  statusAt?: string | null;
+  reasonCode?: string | null;
+  city?: string | null;
+  deleted?: boolean;
   type?: string;
   receivedAt?: string;
   status?: string;

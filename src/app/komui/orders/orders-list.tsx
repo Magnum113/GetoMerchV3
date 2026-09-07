@@ -34,7 +34,12 @@ import {
   type StorefrontOrderListResponse,
   type StorefrontOrderSummary,
 } from "@/lib/komui/types";
-import { CdekBadge, FulfillmentBadge, PaymentBadge } from "./status-badges";
+import {
+  CdekBadge,
+  CdekDeliveryBadge,
+  FulfillmentBadge,
+  PaymentBadge,
+} from "./status-badges";
 
 const PAGE_SIZE = 50;
 
@@ -324,7 +329,14 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
           {order.delivery?.pointCode}
         </div>
         <div className="mt-1">
-          <CdekBadge status={order.cdek?.status} />
+          {order.cdek?.deliveryStatusCode || order.cdek?.deliveryStatusName ? (
+            <CdekDeliveryBadge
+              code={order.cdek.deliveryStatusCode}
+              name={order.cdek.deliveryStatusName}
+            />
+          ) : (
+            <CdekBadge status={order.cdek?.status} />
+          )}
           {order.cdek?.number && (
             <span className="ml-1 text-[10px] font-mono text-muted-foreground">
               {order.cdek.number}
