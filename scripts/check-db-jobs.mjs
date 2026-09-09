@@ -192,22 +192,38 @@ async function checkFullOrderPagination(testToken) {
 }
 
 async function checkFinancePagination(testToken) {
-  const from = "2026-01-01T00:00:00.000Z";
-  const to = "2026-01-02T00:00:00.000Z";
+  const from = "2026-09-08T00:00:00.000Z";
+  const to = "2026-09-09T00:00:00.000Z";
+  const legacyId = Number(`7${Date.now().toString().slice(-10)}`);
+  await client.query(`
+    INSERT INTO merch_ozon_finance_operations (
+      operation_id, operation_type, operation_date, amount, raw
+    ) VALUES ($1, 'LegacyTransaction', $2, 999, $3::jsonb)
+  `, [legacyId, from, JSON.stringify({ source: "legacy-test" })]);
   const first = await enqueue(`/api/ozon/sync-finance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, `stage8-finance-${testToken}`);
   const firstJob = await waitForJob(first.payload.jobId, 60_000);
   expect(firstJob.status === "succeeded", `finance job failed: ${firstJob.errorMessage}`);
   expect(firstJob.result.fetched === 2 && firstJob.result.created === 2, `finance first result invalid: ${JSON.stringify(firstJob.result)}`);
+  expect(firstJob.result.replaced === 1, `finance did not replace the legacy daily slice: ${JSON.stringify(firstJob.result)}`);
+  const stored = await client.query(`
+    SELECT operation_id, raw->>'_getomerch_source' AS source
+    FROM merch_ozon_finance_operations
+    WHERE operation_date >= $1 AND operation_date < $2
+    ORDER BY operation_id
+  `, [from, to]);
+  expect(stored.rows.length === 2, `finance daily replacement left ${stored.rows.length} rows`);
+  expect(stored.rows.every((row) => row.source === "finance_accrual_by_day"), "finance source marker is missing");
   const second = await enqueue(`/api/ozon/sync-finance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, `stage8-finance-repeat-${testToken}`);
   const secondJob = await waitForJob(second.payload.jobId, 60_000);
   expect(secondJob.status === "succeeded" && secondJob.result.created === 0 && secondJob.result.updated === 2, "finance replay is not idempotent");
-  console.log("ok - finance page_count pagination and idempotent upsert");
+  expect(secondJob.result.replaced === 2, "finance replay did not replace the existing daily slice");
+  console.log("ok - finance cursor pagination, atomic daily replacement and idempotent replay");
 }
 
 async function checkFinanceDryRun(testToken) {
   const before = Number((await client.query("SELECT count(*) FROM merch_ozon_finance_operations")).rows[0].count);
   const response = await enqueue(
-    `/api/ozon/sync-finance?from=2026-01-01T00%3A00%3A00.000Z&to=2026-01-02T00%3A00%3A00.000Z&dryRun=true`,
+    `/api/ozon/sync-finance?from=2026-09-08T00%3A00%3A00.000Z&to=2026-09-09T00%3A00%3A00.000Z&dryRun=true`,
     `stage8-finance-dry-${testToken}`,
   );
   const job = await waitForJob(response.payload.jobId, 60_000);
@@ -357,9 +373,15 @@ async function startOzonMock(product, testToken) {
     if (path === "/v2/posting/fbo/list") {
       return json(response, 200, { result: Number(body.offset || 0) === 0 ? [posting(`STAGE8-FBO-${testToken}`, "delivered", product)] : [] });
     }
-    if (path === "/v3/finance/transaction/list") {
-      const page = Number(body.page || 1);
-      return json(response, 200, { result: { page_count: 2, operations: [financeOperation(financeBase + page, page)] } });
+    if (path === "/v1/finance/accrual/types") {
+      return json(response, 200, { accrual_types: [] });
+    }
+    if (path === "/v1/finance/accrual/by-day") {
+      const page = body.last_id ? 2 : 1;
+      return json(response, 200, {
+        accruals: [financeAccrual(financeBase + page, page, String(body.date))],
+        last_id: page === 1 ? "finance-page-2" : "",
+      });
     }
     if (path === "/v5/product/info/prices") {
       if (!body.cursor) {
@@ -394,16 +416,27 @@ function posting(postingNumber, status, product) {
   };
 }
 
-function financeOperation(operationId, page) {
+function financeAccrual(operationId, page, date) {
   return {
-    operation_id: operationId,
-    operation_type: "OperationAgentDeliveredToCustomer",
-    operation_type_name: `Page ${page}`,
-    operation_date: `2026-01-01T0${page}:00:00.000Z`,
-    amount: 100 + page,
-    posting: { posting_number: `FIN-${token}-${page}` },
-    items: [],
-    services: [],
+    accrual_id: operationId,
+    date,
+    total_amount: { amount: String(100 + page), currency: "RUB" },
+    unit_number: `FIN-${token}-${page}`,
+    accrued_category: "POSTING",
+    posting: {
+      delivery_schema: "Fbs",
+      products: [{
+        sku: 1000 + page,
+        delivery: { total_accrued: { amount: "0", currency: "RUB" }, services: [] },
+        commission: {
+          seller_price: { amount: String(200 + page), currency: "RUB" },
+          sale_commission: { amount: "-100", currency: "RUB" },
+        },
+      }],
+    },
+    item_fees: null,
+    non_item_fee: null,
+    container_fees: null,
   };
 }
 

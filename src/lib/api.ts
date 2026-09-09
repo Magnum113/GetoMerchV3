@@ -715,7 +715,15 @@ export const api = {
     const params = new URLSearchParams();
     if (opts.from) params.set("from", opts.from);
     if (opts.to) params.set("to", opts.to);
-    return startAndWaitForJob<{ fetched: number; created: number; updated: number; from: string; to: string }>(
+    return startAndWaitForJob<{
+      fetched: number;
+      created: number;
+      updated: number;
+      replaced: number;
+      from: string;
+      to: string;
+      days: number;
+    }>(
       `/api/ozon/sync-finance?${params.toString()}`,
       { method: "POST" },
     ).then((response) => response.result);

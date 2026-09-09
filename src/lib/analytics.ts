@@ -123,7 +123,7 @@ export function buildCostIndex(orders: OzonOrder[], skuMap?: Array<{ ozon_sku: s
 
 // Resolve cost for a finance operation. Priority: exact posting match in our
 // orders → fallback to Ozon SKU lookup from items. Ozon's
-// /v3/finance/transaction/list items only carry {sku, name} — no quantity —
+// Ozon finance accrual items only carry SKU without quantity,
 // so for a single-item op we infer qty from accruals_for_sale / sale_price
 // when possible (otherwise default to 1).
 function lookupCost(op: OzonFinanceOperation, cost: CostIndex): PostingCost | null {

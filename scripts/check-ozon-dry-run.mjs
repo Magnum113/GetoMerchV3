@@ -28,7 +28,7 @@ const prices = await startJob("/api/ozon/sync-prices?dryRun=true");
 expect(prices.result?.dryRun === true, "prices smoke was not a dry run");
 console.log(`ok - real Ozon prices dry run, fetched=${Number(prices.result?.fetchedPrices ?? 0)}`);
 
-const to = new Date(Date.now() + 86_400_000).toISOString();
+const to = new Date().toISOString();
 const from = new Date(Date.now() - 2 * 86_400_000).toISOString();
 const finance = await startJob(
   `/api/ozon/sync-finance?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&dryRun=true`,

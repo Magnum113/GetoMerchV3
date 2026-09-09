@@ -121,7 +121,7 @@ export default function AnalyticsDashboardPage() {
     setSyncing(true);
     try {
       // 1) Дотягиваем заказы за 180 дней, чтобы COGS считалась по максимуму свежей карточки заказа
-      // 2) Тянем все финансовые операции за год
+      // 2) Актуализируем финансовые начисления от границы нового Ozon API
       const [ordRes, finRes] = await Promise.all([
         api.syncOzonOrders({ scope: "all", days: 180 }).catch((e) => ({ error: errorMessage(e) })),
         api.syncOzonFinance(),
@@ -129,7 +129,7 @@ export default function AnalyticsDashboardPage() {
       const ordMsg = "error" in ordRes
         ? `Заказы: ошибка (${ordRes.error})`
         : `Заказы: +${ordRes.created} / обн. ${ordRes.updated}${ordRes.failedOrders ? `, не обновлено ${ordRes.failedOrders}` : ""}${ordRes.failedItemOrders ? `, позиции ${ordRes.failedItemOrders}` : ""}`;
-      toast.success(`Финансы: +${finRes.created} / обн. ${finRes.updated}. ${ordMsg}`);
+      toast.success(`Финансы: загружено ${finRes.fetched}, заменено прежних ${finRes.replaced}. ${ordMsg}`);
       await reload();
     } catch (e) {
       toast.error(errorMessage(e));

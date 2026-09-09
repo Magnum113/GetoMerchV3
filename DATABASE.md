@@ -635,7 +635,7 @@ DELETE + INSERT по `order_id` для неотправленных заказо
 **Зачем нужен `ozon_sku`**
 
 В Ozon Finance API события (`merch_ozon_finance_operations`) приходят с
-`items[].sku` (числовой Ozon SKU). Иногда `posting_number` финопа не
+SKU товара без quantity. Иногда `posting_number` финопа не
 матчится с нашими `merch_ozon_orders` (например, старые/неподтянутые
 отправления). Тогда `buildCostIndex.bySku` использует пару
 `ozon_sku ↔ product` как fallback. Это аппроксимация — для одной строки
@@ -646,31 +646,35 @@ items quantity выводим через `accruals / sale_price`, для мно�
 
 ## 16. `merch_ozon_finance_operations`
 
-Зеркало финансовых операций Ozon: продажи, возвраты, комиссии, логистика,
-эквайринг, штрафы, подписки. Каждая операция — атомарное изменение баланса
-продавца. Источник КАЖДОЙ цифры в дашборде (выручка, расходы, чистая прибыль).
+Нормализованное зеркало финансовых операций Ozon: продажи, возвраты,
+комиссии, логистика, эквайринг, штрафы, подписки. До 2026-09-06 включительно
+таблица содержит проверенную историю старого Transaction API. Начиная с
+2026-09-07 источник — `/v1/finance/accrual/by-day`; старый метод Ozon отключил
+2026-09-08. Каждая строка — атомарное изменение баланса продавца и источник
+цифр дашборда (выручка, расходы, чистая прибыль).
 
 | Колонка | Тип | NULL | Default | Описание |
 |---|---|---|---|---|
 | `id` | uuid | NO | `gen_random_uuid()` | PK |
-| `operation_id` | bigint | NO | — | UNIQUE. ID операции в Ozon (идемпотентный ключ) |
-| `operation_type` | text | NO | — | Машинный тип (`OperationAgentDeliveredToCustomer`, `ClientReturnAgentOperation`, `DefectFineShipmentDelay`...) |
-| `operation_type_name` | text | YES | — | Человекочитаемое название от Ozon |
-| `operation_date` | timestamptz | NO | — | Дата операции (на ней основан кассовый метод выручки) |
+| `operation_id` | bigint | NO | — | UNIQUE. ID операции Ozon; для нового API равен `accrual_id` |
+| `operation_type` | text | NO | — | Нормализованный машинный тип; у новых строк `FinanceAccrualPosting` / `Item` / `NonItem` / `Container` |
+| `operation_type_name` | text | YES | — | Описания типов начислений из `/v1/finance/accrual/types` либо fallback |
+| `operation_date` | timestamptz | NO | — | Дата начисления; новый API отдаёт день, поэтому хранится полночь UTC |
 | `posting_number` | text | YES | — | Привязка к отправлению. NULL для штрафов/подписок |
 | `accruals_for_sale` | numeric | YES | — | Сколько начислено за продажу (положительное; для возвратов — отрицательное) |
 | `sale_commission` | numeric | YES | — | Комиссия Ozon (отрицательная — удержали; положительная — вернули комиссию) |
 | `amount` | numeric | NO | — | Нетто-движение по счёту продавца. Сумма `amount` всех операций за период = деньги, пришедшие от Ozon |
-| `services` | jsonb | YES | — | Массив `{name: string, price: number}` — логистика, эквайринг и прочие услуги |
-| `items` | jsonb | YES | — | Массив `{sku, name}` — какие товары участвовали. Без quantity |
-| `raw` | jsonb | YES | — | Полный ответ Ozon (страховка) |
+| `services` | jsonb | YES | — | Массив `{name, price}` из `posting.products[].delivery.services` и `item_fees`; `non_item_fee` и `container_fees` остаются в остаточном бакете аналитики |
+| `items` | jsonb | YES | — | Массив объектов с `sku` из posting/item fees. Без quantity |
+| `raw` | jsonb | YES | — | Полное исходное начисление; новые строки имеют `_getomerch_source = finance_accrual_by_day` |
 | `synced_at` | timestamptz | NO | `now()` | |
 
 **Ограничения**
 
-- `UNIQUE (operation_id)` — идемпотентный апсерт. Перед апсертом батч
-  обязательно дедуплицировать (Ozon на границах месячных окон может
-  вернуть одну и ту же операцию дважды → ошибка `21000` без дедупа)
+- `UNIQUE (operation_id)` — идемпотентный ключ. Новый sync сначала полностью
+  получает и проверяет баланс всех начислений диапазона, затем в одной
+  транзакции удаляет и заново вставляет дневные срезы от 2026-09-07. При
+  ошибке API или записи прежний срез остаётся целиком
 
 **Индексы**
 

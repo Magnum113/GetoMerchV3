@@ -59,7 +59,7 @@ src/
     api/ozon/               # серверные роуты для Ozon (ключи прячутся здесь)
       sync-prices/          # POST → /v5/product/info/prices
       sync-orders/          # POST → /v3/posting/fbs/list + /v2/posting/fbo/list
-      sync-finance/         # POST → /v3/finance/transaction/list (ВСЕ операции)
+      sync-finance/         # POST → /v1/finance/accrual/by-day (финансовые начисления)
     inventory/              # /inventory — остатки по складам (матрицы)
     orders/                 # /orders — заказы Ozon
     products/               # /products — каталог SKU
@@ -147,7 +147,7 @@ supabase/
 | `merch_transactions` | Журнал любых движений товара или принта. `product_id` и `design_id` оба nullable, но обязательно одно из двух. Поле `type` ∈ {`receive`, `transfer`, `sale`, `production`, `adjustment`, `writeoff`} |
 | `merch_workshop_orders` / `_items` | Заказы в цех вышивки. Жизненный цикл: `sent → ready → received` (плюс терминальный `cancelled`). Колонка `merch_ozon_orders.workshop_order_id` указывает на заказ в цех, созданный из заказа Ozon |
 | `merch_ozon_orders` / `_items` | Зеркало отправлений Ozon: FBS из `/v3/posting/fbs/list` и FBO из `/v2/posting/fbo/list`. Колонка `source text` ∈ {`fbs`, `fbo`} (с индексом `merch_ozon_orders_source_idx`) — основной фильтр на странице `/orders` и в логике приоритета складов. Поле `workshop_order_id` (nullable, `ON DELETE SET NULL`) используется только для FBS-заказов, если для отгрузки требуется производство вышивки. `_items.ozon_sku` (Ozon SKU как строка) используется как fallback-индекс для COGS на финопах без сматченного posting |
-| `merch_ozon_finance_operations` | Зеркало `/v3/finance/transaction/list`. UNIQUE по `operation_id`. Поля: `operation_type` (например `OperationAgentDeliveredToCustomer`, `ClientReturnAgentOperation`, `DefectFineShipmentDelay`), `operation_type_name`, `operation_date`, `posting_number` (nullable — у штрафов/подписок его нет), `accruals_for_sale` (положительная для продажи, отрицательная для возврата), `sale_commission` (отрицательная для удержания, положительная для возврата комиссии), `amount` (нетто-движение по счёту), `services` (jsonb массив `{name, price}`), `items` (jsonb — только `{sku, name}`, без quantity), `raw` (полный ответ Ozon на всякий случай) |
+| `merch_ozon_finance_operations` | Нормализованное зеркало финансов Ozon. До 2026-09-06 включительно хранит данные прежнего Transaction API; с 2026-09-07 — `/v1/finance/accrual/by-day`. UNIQUE по `operation_id`, который для нового API равен `accrual_id`. Поля: `operation_type`, `operation_type_name`, `operation_date`, `posting_number` (nullable), `accruals_for_sale`, `sale_commission`, `amount` (нетто-движение), `services` (delivery + item fees), `items` (SKU без quantity), `raw` (исходное начисление с `_getomerch_source`) |
 | `merch_expense_categories` | Пользовательские категории ручных расходов: `name`, `color` (hex для donut), `sort_order`, `archived` |
 | `merch_expenses` | Ручные расходы вне Ozon. `amount > 0`, `occurred_at date`, `category_id` (`ON DELETE SET NULL`). Используются в дашборде в категории «Прочие расходы» и в собственных категориях donut |
 
@@ -690,10 +690,17 @@ UI — на русском (целевой пользователь говори
   - `POST /v2/posting/fbo/list` — синхронизация FBO-заказов для аналитики
     заказов и точного COGS по FBO-финоперациям (`/api/ozon/sync-orders`,
     только при `scope=all`)
-  - `POST /v3/finance/transaction/list` — синхронизация всех финансовых
-    операций для аналитики (`/api/ozon/sync-finance`). Ограничение Ozon:
-    максимум 1 месяц на запрос → ходим 28-дневными окнами, идемпотентный
-    upsert по `operation_id` после дедупликации внутри партии
+  - `POST /v1/finance/accrual/by-day` — основной источник финансовых
+    начислений для аналитики (`/api/ozon/sync-finance`), по одному календарному
+    дню с курсорной пагинацией `last_id`
+  - `POST /v1/finance/accrual/types` — справочник названий начислений. Он
+    кэшируется в процессе worker; временный `429` не блокирует денежную
+    синхронизацию, для названия используется стабильный fallback по `type_id`
+  - `/v3/finance/transaction/list` отключён Ozon 2026-09-08 и не используется.
+    Граница источников — 2026-09-07: более ранняя проверенная история остаётся
+    неизменной, а дни начиная с границы целиком заменяются данными нового API
+    в одной транзакции. Это предотвращает дубли старых операций и частично
+    записанные дневные срезы
 - Матчинг с каталогом:
   - Заказы FBS/FBO: `offer_id ↔ merch_products.sku` (или одному из `legacy_skus`)
   - Финопы: сначала `posting_number ↔ merch_ozon_orders.posting_number`,
@@ -715,7 +722,9 @@ UI — на русском (целевой пользователь говори
 - Внутренний Bearer token принимается только пятью точными Ozon route и
   повторно проверяется самим Route Handler; остальные API требуют admin cookie
 - Кнопка «Обновить данные Ozon» в дашборде запускает sync-orders (180 дней,
-  `scope=all`) + sync-finance параллельно
+  `scope=all`) + sync-finance параллельно. Finance-задание запрашивает только
+  дни от границы 2026-09-07 до текущего дня, даже если UI передал годовой
+  диапазон; старые строки до границы не удаляются и не пересчитываются
 
 ### 10.2. Что НЕ интегрировано (на будущее)
 
