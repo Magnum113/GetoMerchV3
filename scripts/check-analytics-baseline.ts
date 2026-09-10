@@ -22,6 +22,7 @@ import {
   type Granularity,
 } from "../src/lib/analytics";
 import { buildStockValueSummary } from "../src/lib/analytics-stock";
+import { buildAnalyticsDashboardSnapshot } from "../src/lib/analytics-dashboard";
 import type {
   Expense,
   ExpenseCategory,
@@ -276,6 +277,55 @@ function buildPresetBaseline(preset: PresetKey) {
     productNonRedemption: productNonRedemptionView(nonRedemptionByProduct(orders, filter, 12)),
     topProducts,
   };
+
+  const serverSnapshot = buildAnalyticsDashboardSnapshot({
+    filter,
+    orders,
+    financeOperations,
+    expenses,
+    expenseCategories: categories,
+    skuMap: [{ ozon_sku: "2002", product: printB }],
+    inventory,
+    warehouses,
+    lastSync: "2026-09-10T12:00:00.000Z",
+  });
+  const serverGranularity = serverSnapshot.granularities[granularity];
+  const serverFullView = {
+    metrics: serverSnapshot.metrics,
+    prevMetrics: serverSnapshot.prevMetrics,
+    metricDeltas: {
+      revenue: delta(serverSnapshot.metrics.revenue, serverSnapshot.prevMetrics.revenue),
+      orders: delta(serverSnapshot.metrics.ordersCount, serverSnapshot.prevMetrics.ordersCount),
+      expenses: delta(serverSnapshot.metrics.totalExpenses, serverSnapshot.prevMetrics.totalExpenses),
+      profit: delta(serverSnapshot.metrics.netProfit, serverSnapshot.prevMetrics.netProfit),
+    },
+    buckets: serverGranularity.buckets,
+    breakdown: serverSnapshot.breakdown,
+    ordersBuckets: serverGranularity.ordersBuckets,
+    prevOrdersBuckets: serverGranularity.prevOrdersBuckets,
+    ordersStats: serverSnapshot.ordersStats,
+    prevOrdersStats: serverSnapshot.prevOrdersStats,
+    nonRedemptionRate:
+      serverSnapshot.ordersStats.delivered + serverSnapshot.ordersStats.cancelled > 0
+        ? serverSnapshot.ordersStats.cancelled
+          / (serverSnapshot.ordersStats.delivered + serverSnapshot.ordersStats.cancelled)
+        : 0,
+    prevNonRedemptionRate:
+      serverSnapshot.prevOrdersStats.delivered + serverSnapshot.prevOrdersStats.cancelled > 0
+        ? serverSnapshot.prevOrdersStats.cancelled
+          / (serverSnapshot.prevOrdersStats.delivered + serverSnapshot.prevOrdersStats.cancelled)
+        : 0,
+    revenueBuckets: serverGranularity.revenueBuckets,
+    prevRevenueBuckets: serverGranularity.prevRevenueBuckets,
+    revenueStats: serverSnapshot.revenueStats,
+    prevRevenueStats: serverSnapshot.prevRevenueStats,
+    nonRedemptionBuckets: serverGranularity.nonRedemptionBuckets,
+    prevNonRedemptionBuckets: serverGranularity.prevNonRedemptionBuckets,
+    productNonRedemption: productNonRedemptionView(serverSnapshot.productNonRedemption),
+    topProducts: productProfitView(serverSnapshot.topProducts),
+  };
+  assert.deepStrictEqual(serverFullView, fullView);
+  assert.deepStrictEqual(serverSnapshot.stock, buildStockValueSummary(inventory, warehouses));
 
   return {
     period: formatDateRange(filter),

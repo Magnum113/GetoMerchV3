@@ -27,6 +27,7 @@ import type {
   AdminFeatureFlag,
   AdminFeatureKey,
 } from "@/lib/admin/feature-types";
+import type { AnalyticsDashboardSnapshot } from "@/lib/analytics-dashboard";
 
 type ApiResponse<T> =
   | { ok: true; data: T }
@@ -513,6 +514,17 @@ function apiError<T>(response: Response, payload: ApiResponse<T> | null) {
 }
 
 export const api = {
+  // ---------- ANALYTICS ----------
+  getAnalyticsDashboard: (
+    filter: { from: string; to: string },
+    options: AdminRequestOptions = {},
+  ) => adminGet<AnalyticsDashboardSnapshot>(
+    "/api/admin/analytics/dashboard",
+    filter,
+    60_000,
+    options,
+  ),
+
   // ---------- ADMIN FEATURES ----------
   listAdminFeatureFlags: () =>
     adminGet<AdminFeatureFlag[]>("/api/admin/features"),

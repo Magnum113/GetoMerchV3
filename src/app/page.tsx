@@ -19,27 +19,19 @@ import { Sparkline } from "@/components/analytics/sparkline";
 import { StockValueCard } from "@/components/analytics/stock-value-card";
 import { api } from "@/lib/api";
 import {
-  bucketize,
-  bucketizeNonRedemption,
-  bucketizeOrders,
-  bucketizeOrdersRevenue,
-  buildCostIndex,
-  computePeriodMetrics,
   delta,
-  expenseBreakdown,
   formatDateRange,
-  isoDate,
-  nonRedemptionByProduct,
-  ordersRevenueSummary,
-  ordersSummary,
   presetRange,
-  previousPeriod,
   suggestGranularity,
-  topProductsByProfit,
   type Granularity,
   type PeriodFilter,
+  type PeriodMetrics,
 } from "@/lib/analytics";
-import type { Expense, ExpenseCategory, Inventory, OzonFinanceOperation, OzonOrder, Product, Warehouse } from "@/lib/types";
+import type {
+  AnalyticsDashboardSnapshot,
+  AnalyticsGranularityView,
+} from "@/lib/analytics-dashboard";
+import { emptyStockValueBucket, type StockValueSummary } from "@/lib/analytics-stock";
 import { cn, errorMessage, formatMoney } from "@/lib/utils";
 
 type PresetKey = "7d" | "30d" | "90d" | "mtd" | "ytd";
@@ -62,17 +54,44 @@ const PRESETS: { key: PresetKey; label: string }[] = [
   { key: "ytd", label: "Год" },
 ];
 
+const ZERO_METRICS: PeriodMetrics = {
+  revenue: 0,
+  returns: 0,
+  netRevenue: 0,
+  ozonCommission: 0,
+  ozonServices: 0,
+  ozonOther: 0,
+  ozonFeesTotal: 0,
+  cashFromOzon: 0,
+  cogs: 0,
+  tax: 0,
+  otherExpenses: 0,
+  totalExpenses: 0,
+  netProfit: 0,
+  margin: 0,
+  ordersCount: 0,
+  unitsSold: 0,
+};
+
+const EMPTY_GRANULARITY_VIEW: AnalyticsGranularityView = {
+  buckets: [],
+  ordersBuckets: [],
+  prevOrdersBuckets: [],
+  revenueBuckets: [],
+  prevRevenueBuckets: [],
+  nonRedemptionBuckets: [],
+  prevNonRedemptionBuckets: [],
+};
+
+const EMPTY_STOCK: StockValueSummary = {
+  perWarehouse: {},
+  total: emptyStockValueBucket(),
+};
+
 export default function AnalyticsDashboardPage() {
   const [preset, setPreset] = useState<PresetKey>("30d");
   const [loadedFilter, setLoadedFilter] = useState<PeriodFilter>(() => presetRange("30d"));
-  const [orders, setOrders] = useState<OzonOrder[]>([]);
-  const [ops, setOps] = useState<OzonFinanceOperation[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<ExpenseCategory[]>([]);
-  const [skuMap, setSkuMap] = useState<Array<{ ozon_sku: string; product: Product }>>([]);
-  const [inventory, setInventory] = useState<Inventory[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [dashboard, setDashboard] = useState<AnalyticsDashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasLoadedData, setHasLoadedData] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -83,31 +102,15 @@ export default function AnalyticsDashboardPage() {
   const activeReload = useRef<ActiveReload | null>(null);
 
   const requestedFilter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
-  const requestedPrevFilter = useMemo(() => previousPeriod(requestedFilter), [requestedFilter]);
-  const requestedDataWindow = useMemo(() => {
-    const from = new Date(Math.min(requestedFilter.from.getTime(), requestedPrevFilter.from.getTime()));
-    const toExclusive = new Date(Math.max(requestedFilter.to.getTime(), requestedPrevFilter.to.getTime()));
-    const toInclusive = new Date(toExclusive.getTime() - 1);
-    return {
-      financeFrom: from.toISOString(),
-      financeTo: toExclusive.toISOString(),
-      expenseFrom: isoDate(from),
-      expenseTo: isoDate(toInclusive),
-    };
-  }, [requestedFilter, requestedPrevFilter]);
 
   const filter = loadedFilter;
-  const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
 
   async function reload() {
     const presetForRequest = preset;
-    const dataWindow = requestedDataWindow;
     const reloadKey = [
       presetForRequest,
-      dataWindow.financeFrom,
-      dataWindow.financeTo,
-      dataWindow.expenseFrom,
-      dataWindow.expenseTo,
+      requestedFilter.from.toISOString(),
+      requestedFilter.to.toISOString(),
     ].join(":");
     const existing = activeReload.current;
     if (existing && existing.key === reloadKey && !existing.controller.signal.aborted) {
@@ -121,26 +124,19 @@ export default function AnalyticsDashboardPage() {
     setLoading(true);
     const promise = (async () => {
       try {
-        const [ord, opsAll, exp, cats, sync, sku, invRows, whRows] = await Promise.all([
-          api.listOzonOrders(requestOptions),
-          api.listFinanceOperations({ from: dataWindow.financeFrom, to: dataWindow.financeTo }, requestOptions),
-          api.listExpenses({ from: dataWindow.expenseFrom, to: dataWindow.expenseTo }, requestOptions),
-          api.listExpenseCategories(undefined, requestOptions),
-          api.lastFinanceSyncAt(requestOptions),
-          api.listOzonSkuProductMap(requestOptions),
-          api.listInventory(undefined, requestOptions),
-          api.listWarehouses(requestOptions),
-        ]);
+        const nextDashboard = await api.getAnalyticsDashboard(
+          {
+            from: requestedFilter.from.toISOString(),
+            to: requestedFilter.to.toISOString(),
+          },
+          requestOptions,
+        );
         if (sequence !== reloadSequence.current || controller.signal.aborted) return;
-        setOrders(ord);
-        setOps(opsAll);
-        setExpenses(exp);
-        setCategories(cats);
-        setLastSync(sync);
-        setSkuMap(sku);
-        setInventory(invRows);
-        setWarehouses(whRows);
-        setLoadedFilter(requestedFilter);
+        setDashboard(nextDashboard);
+        setLoadedFilter({
+          from: new Date(nextDashboard.period.from),
+          to: new Date(nextDashboard.period.to),
+        });
         setHasLoadedData(true);
       } catch (error) {
         if (!isAbortError(error) && sequence === reloadSequence.current) {
@@ -182,59 +178,41 @@ export default function AnalyticsDashboardPage() {
     }
   }
 
-  const costIndex = useMemo(() => buildCostIndex(orders, skuMap), [orders, skuMap]);
-
-  const metrics = useMemo(
-    () => computePeriodMetrics(ops, expenses, costIndex, filter, orders),
-    [ops, expenses, costIndex, filter, orders],
-  );
-  const prevMetrics = useMemo(
-    () => computePeriodMetrics(ops, expenses, costIndex, prevFilter, orders),
-    [ops, expenses, costIndex, prevFilter, orders],
-  );
-
-  const granularity: Granularity = gran === "auto" ? suggestGranularity(filter) : gran;
-  const buckets = useMemo(
-    () => bucketize(ops, expenses, costIndex, filter, granularity, orders),
-    [ops, expenses, costIndex, filter, granularity, orders],
-  );
-
-  const breakdown = useMemo(
-    () => expenseBreakdown(metrics, expenses, categories, filter),
-    [metrics, expenses, categories, filter],
-  );
-  const ordersBuckets = useMemo(
-    () => bucketizeOrders(orders, filter, granularity),
-    [orders, filter, granularity],
-  );
-  const prevOrdersBuckets = useMemo(
-    () => bucketizeOrders(orders, prevFilter, granularity),
-    [orders, prevFilter, granularity],
-  );
-  const ordersStats = useMemo(() => ordersSummary(orders, filter), [orders, filter]);
-  const prevOrdersStats = useMemo(() => ordersSummary(orders, prevFilter), [orders, prevFilter]);
-  const revenueBuckets = useMemo(
-    () => bucketizeOrdersRevenue(orders, filter, granularity),
-    [orders, filter, granularity],
-  );
-  const prevRevenueBuckets = useMemo(
-    () => bucketizeOrdersRevenue(orders, prevFilter, granularity),
-    [orders, prevFilter, granularity],
-  );
-  const revenueStats = useMemo(() => ordersRevenueSummary(orders, filter), [orders, filter]);
-  const prevRevenueStats = useMemo(() => ordersRevenueSummary(orders, prevFilter), [orders, prevFilter]);
-  const nonRedemptionBuckets = useMemo(
-    () => bucketizeNonRedemption(orders, filter, granularity),
-    [orders, filter, granularity],
-  );
-  const prevNonRedemptionBuckets = useMemo(
-    () => bucketizeNonRedemption(orders, prevFilter, granularity),
-    [orders, prevFilter, granularity],
-  );
-  const productNonRedemption = useMemo(
-    () => nonRedemptionByProduct(orders, filter, 12),
-    [orders, filter],
-  );
+  const metrics = dashboard?.metrics ?? ZERO_METRICS;
+  const prevMetrics = dashboard?.prevMetrics ?? ZERO_METRICS;
+  const granularity: Granularity = gran === "auto"
+    ? dashboard?.suggestedGranularity ?? suggestGranularity(filter)
+    : gran;
+  const granularityView = dashboard?.granularities[granularity] ?? EMPTY_GRANULARITY_VIEW;
+  const {
+    buckets,
+    ordersBuckets,
+    prevOrdersBuckets,
+    revenueBuckets,
+    prevRevenueBuckets,
+    nonRedemptionBuckets,
+    prevNonRedemptionBuckets,
+  } = granularityView;
+  const breakdown = dashboard?.breakdown ?? [];
+  const ordersStats = dashboard?.ordersStats ?? {
+    total: 0,
+    delivered: 0,
+    cancelled: 0,
+    inflight: 0,
+    orders: 0,
+    fulfillmentRate: 0,
+  };
+  const prevOrdersStats = dashboard?.prevOrdersStats ?? {
+    total: 0,
+    delivered: 0,
+    cancelled: 0,
+    inflight: 0,
+    orders: 0,
+    fulfillmentRate: 0,
+  };
+  const revenueStats = dashboard?.revenueStats ?? { revenue: 0, orders: 0, units: 0, avgCheck: 0 };
+  const prevRevenueStats = dashboard?.prevRevenueStats ?? { revenue: 0, orders: 0, units: 0, avgCheck: 0 };
+  const productNonRedemption = dashboard?.productNonRedemption ?? [];
   const visibleProductNonRedemption = showAllNonRedemptionProducts
     ? productNonRedemption
     : productNonRedemption.slice(0, 5);
@@ -242,22 +220,7 @@ export default function AnalyticsDashboardPage() {
   const prevNonRedemptionTerminal = prevOrdersStats.delivered + prevOrdersStats.cancelled;
   const nonRedemptionRate = nonRedemptionTerminal > 0 ? ordersStats.cancelled / nonRedemptionTerminal : 0;
   const prevNonRedemptionRate = prevNonRedemptionTerminal > 0 ? prevOrdersStats.cancelled / prevNonRedemptionTerminal : 0;
-  const topProducts = useMemo(
-    () =>
-      topProductsByProfit(
-        ops,
-        costIndex,
-        filter,
-        {
-          tax: metrics.tax,
-          ozonOther: metrics.ozonOther,
-          otherExpenses: metrics.otherExpenses,
-          totalRevenue: metrics.revenue,
-        },
-        8,
-      ),
-    [ops, costIndex, filter, metrics.tax, metrics.ozonOther, metrics.otherExpenses, metrics.revenue],
-  );
+  const topProducts = dashboard?.topProducts ?? [];
 
   const sparkData = useMemo(() => {
     return {
@@ -269,7 +232,9 @@ export default function AnalyticsDashboardPage() {
   }, [buckets]);
 
   const showInitialLoading = loading && !hasLoadedData;
-  const noData = hasLoadedData && ops.length === 0 && expenses.length === 0;
+  const financeOperationCount = dashboard?.sourceCounts.financeOperations ?? 0;
+  const expenseCount = dashboard?.sourceCounts.expenses ?? 0;
+  const noData = hasLoadedData && financeOperationCount === 0 && expenseCount === 0;
 
   return (
     <div>
@@ -281,9 +246,9 @@ export default function AnalyticsDashboardPage() {
               <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />
               {syncing ? "Синхронизация…" : "Обновить данные Ozon"}
             </Button>
-            {lastSync && (
+            {dashboard?.lastSync && (
               <span className="text-[11px] text-muted-foreground">
-                Финансы Ozon обновлены: {new Date(lastSync).toLocaleString("ru-RU")}
+                Финансы Ozon обновлены: {new Date(dashboard.lastSync).toLocaleString("ru-RU")}
               </span>
             )}
           </div>
@@ -317,7 +282,7 @@ export default function AnalyticsDashboardPage() {
         </CardContent>
       </Card>
 
-      {hasLoadedData && ops.length === 0 && expenses.length > 0 && (
+      {hasLoadedData && financeOperationCount === 0 && expenseCount > 0 && (
         <Card className="mb-5 border-state-warning-fg/30 bg-state-warning/40">
           <CardContent className="p-3 flex items-center gap-3 text-sm">
             <Sparkles className="h-4 w-4 text-state-warning-fg shrink-0" />
@@ -664,7 +629,11 @@ export default function AnalyticsDashboardPage() {
 
           {/* Стоимость остатков */}
           <div className="mb-5">
-            <StockValueCard inv={inventory} warehouses={warehouses} loading={showInitialLoading} />
+            <StockValueCard
+              summary={dashboard?.stock ?? EMPTY_STOCK}
+              warehouses={dashboard?.warehouses ?? []}
+              loading={showInitialLoading}
+            />
           </div>
 
           {/* Period table */}

@@ -1,25 +1,21 @@
 "use client";
 
-import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Warehouse as WarehouseIcon } from "lucide-react";
-import type { Inventory, Warehouse } from "@/lib/types";
-import { buildStockValueSummary, emptyStockValueBucket } from "@/lib/analytics-stock";
+import type { Warehouse } from "@/lib/types";
+import { emptyStockValueBucket, type StockValueSummary } from "@/lib/analytics-stock";
 import { cn, formatMoney } from "@/lib/utils";
 
 export function StockValueCard({
-  inv,
+  summary,
   warehouses,
   loading,
 }: {
-  inv: Inventory[];
+  summary: StockValueSummary;
   warehouses: Warehouse[];
   loading: boolean;
 }) {
-  const { perWarehouse, total } = useMemo(
-    () => buildStockValueSummary(inv, warehouses),
-    [inv, warehouses],
-  );
+  const { perWarehouse, total } = summary;
 
   const totalValue = total.blankValue + total.finishedValue;
   const totalQty = total.blankQty + total.finishedQty;
