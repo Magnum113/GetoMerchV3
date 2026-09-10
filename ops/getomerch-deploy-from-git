@@ -525,6 +525,10 @@ npm ci
 
 load_public_build_env
 
+log "checking analytics dashboard calculation baseline"
+npm run check:analytics-baseline
+add_check "npm run check:analytics-baseline"
+
 log "building Next.js admin"
 npm run build
 add_check "npm run build"

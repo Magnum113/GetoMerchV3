@@ -861,8 +861,10 @@ export function topProductsByProfit(
 }
 
 // Build [from, to) given a preset key, with `to` being start of tomorrow (exclusive).
-export function presetRange(preset: "7d" | "30d" | "90d" | "mtd" | "ytd"): PeriodFilter {
-  const now = new Date();
+export function presetRange(
+  preset: "7d" | "30d" | "90d" | "mtd" | "ytd",
+  now = new Date(),
+): PeriodFilter {
   const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const to = new Date(todayUtc);
   to.setUTCDate(to.getUTCDate() + 1);

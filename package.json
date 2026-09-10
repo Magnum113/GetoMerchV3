@@ -13,6 +13,7 @@
     "check:db-jobs": "node scripts/check-db-jobs.mjs",
     "check:ozon-dry-run": "node scripts/check-ozon-dry-run.mjs",
     "check:finance-accruals": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-finance-accrual-adapter.ts",
+    "check:analytics-baseline": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-analytics-baseline.ts",
     "check:preproduction": "node scripts/check-preproduction.mjs",
     "check:maintenance": "node scripts/check-maintenance-mode.mjs",
     "check:admin-features": "NODE_OPTIONS=--conditions=react-server tsx scripts/check-admin-feature-flags.ts",

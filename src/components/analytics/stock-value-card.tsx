@@ -4,18 +4,8 @@ import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Warehouse as WarehouseIcon } from "lucide-react";
 import type { Inventory, Warehouse } from "@/lib/types";
+import { buildStockValueSummary, emptyStockValueBucket } from "@/lib/analytics-stock";
 import { cn, formatMoney } from "@/lib/utils";
-
-interface BucketTotals {
-  blankValue: number;
-  blankQty: number;
-  finishedValue: number;
-  finishedQty: number;
-}
-
-function emptyBucket(): BucketTotals {
-  return { blankValue: 0, blankQty: 0, finishedValue: 0, finishedQty: 0 };
-}
 
 export function StockValueCard({
   inv,
@@ -26,32 +16,10 @@ export function StockValueCard({
   warehouses: Warehouse[];
   loading: boolean;
 }) {
-  const { perWh, total } = useMemo(() => {
-    const map = new Map<string, BucketTotals>();
-    const total = emptyBucket();
-    for (const w of warehouses) map.set(w.id, emptyBucket());
-
-    for (const r of inv) {
-      const cost = Number(r.product?.cost_price ?? 0);
-      const qty = r.quantity ?? 0;
-      if (qty <= 0) continue;
-      const bucket = map.get(r.warehouse_id) ?? emptyBucket();
-      if (!map.has(r.warehouse_id)) map.set(r.warehouse_id, bucket);
-      const value = cost * qty;
-      if (r.product?.is_blank) {
-        bucket.blankValue += value;
-        bucket.blankQty += qty;
-        total.blankValue += value;
-        total.blankQty += qty;
-      } else {
-        bucket.finishedValue += value;
-        bucket.finishedQty += qty;
-        total.finishedValue += value;
-        total.finishedQty += qty;
-      }
-    }
-    return { perWh: map, total };
-  }, [inv, warehouses]);
+  const { perWarehouse, total } = useMemo(
+    () => buildStockValueSummary(inv, warehouses),
+    [inv, warehouses],
+  );
 
   const totalValue = total.blankValue + total.finishedValue;
   const totalQty = total.blankQty + total.finishedQty;
@@ -105,7 +73,7 @@ export function StockValueCard({
               </thead>
               <tbody>
                 {warehouses.map((w) => {
-                  const b = perWh.get(w.id) ?? emptyBucket();
+                  const b = perWarehouse[w.id] ?? emptyStockValueBucket();
                   const whTotal = b.blankValue + b.finishedValue;
                   const whQty = b.blankQty + b.finishedQty;
                   return (

@@ -44,6 +44,16 @@ import { cn, errorMessage, formatMoney } from "@/lib/utils";
 
 type PresetKey = "7d" | "30d" | "90d" | "mtd" | "ytd";
 
+type ActiveReload = {
+  key: string;
+  controller: AbortController;
+  promise: Promise<void>;
+};
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 const PRESETS: { key: PresetKey; label: string }[] = [
   { key: "7d", label: "7 дн" },
   { key: "30d", label: "30 дн" },
@@ -54,6 +64,7 @@ const PRESETS: { key: PresetKey; label: string }[] = [
 
 export default function AnalyticsDashboardPage() {
   const [preset, setPreset] = useState<PresetKey>("30d");
+  const [loadedFilter, setLoadedFilter] = useState<PeriodFilter>(() => presetRange("30d"));
   const [orders, setOrders] = useState<OzonOrder[]>([]);
   const [ops, setOps] = useState<OzonFinanceOperation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -63,17 +74,19 @@ export default function AnalyticsDashboardPage() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedData, setHasLoadedData] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [gran, setGran] = useState<Granularity | "auto">("auto");
   const [ordersMode, setOrdersMode] = useState<"orders" | "revenue">("orders");
   const [showAllNonRedemptionProducts, setShowAllNonRedemptionProducts] = useState(false);
   const reloadSequence = useRef(0);
+  const activeReload = useRef<ActiveReload | null>(null);
 
-  const filter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
-  const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
-  const dataWindow = useMemo(() => {
-    const from = new Date(Math.min(filter.from.getTime(), prevFilter.from.getTime()));
-    const toExclusive = new Date(Math.max(filter.to.getTime(), prevFilter.to.getTime()));
+  const requestedFilter = useMemo<PeriodFilter>(() => presetRange(preset), [preset]);
+  const requestedPrevFilter = useMemo(() => previousPeriod(requestedFilter), [requestedFilter]);
+  const requestedDataWindow = useMemo(() => {
+    const from = new Date(Math.min(requestedFilter.from.getTime(), requestedPrevFilter.from.getTime()));
+    const toExclusive = new Date(Math.max(requestedFilter.to.getTime(), requestedPrevFilter.to.getTime()));
     const toInclusive = new Date(toExclusive.getTime() - 1);
     return {
       financeFrom: from.toISOString(),
@@ -81,40 +94,71 @@ export default function AnalyticsDashboardPage() {
       expenseFrom: isoDate(from),
       expenseTo: isoDate(toInclusive),
     };
-  }, [filter, prevFilter]);
+  }, [requestedFilter, requestedPrevFilter]);
+
+  const filter = loadedFilter;
+  const prevFilter = useMemo(() => previousPeriod(filter), [filter]);
 
   async function reload() {
+    const presetForRequest = preset;
+    const dataWindow = requestedDataWindow;
+    const reloadKey = [
+      presetForRequest,
+      dataWindow.financeFrom,
+      dataWindow.financeTo,
+      dataWindow.expenseFrom,
+      dataWindow.expenseTo,
+    ].join(":");
+    const existing = activeReload.current;
+    if (existing && existing.key === reloadKey && !existing.controller.signal.aborted) {
+      return existing.promise;
+    }
+
+    existing?.controller.abort();
+    const controller = new AbortController();
+    const requestOptions = { signal: controller.signal };
     const sequence = ++reloadSequence.current;
     setLoading(true);
-    try {
-      const [ord, opsAll, exp, cats, sync, sku, invRows, whRows] = await Promise.all([
-        api.listOzonOrders(),
-        api.listFinanceOperations({ from: dataWindow.financeFrom, to: dataWindow.financeTo }),
-        api.listExpenses({ from: dataWindow.expenseFrom, to: dataWindow.expenseTo }),
-        api.listExpenseCategories(),
-        api.lastFinanceSyncAt(),
-        api.listOzonSkuProductMap(),
-        api.listInventory(),
-        api.listWarehouses(),
-      ]);
-      if (sequence !== reloadSequence.current) return;
-      setOrders(ord);
-      setOps(opsAll);
-      setExpenses(exp);
-      setCategories(cats);
-      setLastSync(sync);
-      setSkuMap(sku);
-      setInventory(invRows);
-      setWarehouses(whRows);
-    } catch (e) {
-      if (sequence === reloadSequence.current) toast.error(errorMessage(e));
-    } finally {
-      if (sequence === reloadSequence.current) setLoading(false);
-    }
+    const promise = (async () => {
+      try {
+        const [ord, opsAll, exp, cats, sync, sku, invRows, whRows] = await Promise.all([
+          api.listOzonOrders(requestOptions),
+          api.listFinanceOperations({ from: dataWindow.financeFrom, to: dataWindow.financeTo }, requestOptions),
+          api.listExpenses({ from: dataWindow.expenseFrom, to: dataWindow.expenseTo }, requestOptions),
+          api.listExpenseCategories(undefined, requestOptions),
+          api.lastFinanceSyncAt(requestOptions),
+          api.listOzonSkuProductMap(requestOptions),
+          api.listInventory(undefined, requestOptions),
+          api.listWarehouses(requestOptions),
+        ]);
+        if (sequence !== reloadSequence.current || controller.signal.aborted) return;
+        setOrders(ord);
+        setOps(opsAll);
+        setExpenses(exp);
+        setCategories(cats);
+        setLastSync(sync);
+        setSkuMap(sku);
+        setInventory(invRows);
+        setWarehouses(whRows);
+        setLoadedFilter(requestedFilter);
+        setHasLoadedData(true);
+      } catch (error) {
+        if (!isAbortError(error) && sequence === reloadSequence.current) {
+          toast.error(errorMessage(error));
+        }
+      } finally {
+        if (activeReload.current?.controller === controller) activeReload.current = null;
+        if (sequence === reloadSequence.current) setLoading(false);
+      }
+    })();
+
+    activeReload.current = { key: reloadKey, controller, promise };
+    return promise;
   }
 
   useEffect(() => {
-    reload();
+    void reload();
+    return () => activeReload.current?.controller.abort();
   }, [preset]);
 
   async function sync() {
@@ -224,7 +268,8 @@ export default function AnalyticsDashboardPage() {
     };
   }, [buckets]);
 
-  const noData = !loading && ops.length === 0 && expenses.length === 0;
+  const showInitialLoading = loading && !hasLoadedData;
+  const noData = hasLoadedData && ops.length === 0 && expenses.length === 0;
 
   return (
     <div>
@@ -263,10 +308,16 @@ export default function AnalyticsDashboardPage() {
           <span className="text-xs text-muted-foreground w-full sm:w-auto sm:ml-3">
             {formatDateRange(filter)}
           </span>
+          {loading && hasLoadedData && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              Обновление…
+            </span>
+          )}
         </CardContent>
       </Card>
 
-      {!loading && ops.length === 0 && expenses.length > 0 && (
+      {hasLoadedData && ops.length === 0 && expenses.length > 0 && (
         <Card className="mb-5 border-state-warning-fg/30 bg-state-warning/40">
           <CardContent className="p-3 flex items-center gap-3 text-sm">
             <Sparkles className="h-4 w-4 text-state-warning-fg shrink-0" />
@@ -298,7 +349,7 @@ export default function AnalyticsDashboardPage() {
               delta={delta(metrics.revenue, prevMetrics.revenue)}
               sparkData={sparkData.revenue}
               sparkColor="hsl(var(--state-info-fg))"
-              loading={loading}
+              loading={showInitialLoading}
             />
             <KpiCard
               label="Заказов"
@@ -306,7 +357,7 @@ export default function AnalyticsDashboardPage() {
               delta={delta(metrics.ordersCount, prevMetrics.ordersCount)}
               sparkData={sparkData.orders}
               sparkColor="hsl(var(--primary))"
-              loading={loading}
+              loading={showInitialLoading}
             />
             <KpiCard
               label="Расходы"
@@ -314,7 +365,7 @@ export default function AnalyticsDashboardPage() {
               delta={delta(metrics.totalExpenses, prevMetrics.totalExpenses)}
               sparkData={sparkData.expenses}
               sparkColor="hsl(var(--state-danger-fg))"
-              loading={loading}
+              loading={showInitialLoading}
               invertDelta
             />
             <KpiCard
@@ -323,7 +374,7 @@ export default function AnalyticsDashboardPage() {
               delta={delta(metrics.netProfit, prevMetrics.netProfit)}
               sparkData={sparkData.profit}
               sparkColor="hsl(var(--state-success-fg))"
-              loading={loading}
+              loading={showInitialLoading}
               hint={`Маржа ${(metrics.margin * 100).toFixed(0)}%`}
               emphasize
             />
@@ -613,7 +664,7 @@ export default function AnalyticsDashboardPage() {
 
           {/* Стоимость остатков */}
           <div className="mb-5">
-            <StockValueCard inv={inventory} warehouses={warehouses} loading={loading} />
+            <StockValueCard inv={inventory} warehouses={warehouses} loading={showInitialLoading} />
           </div>
 
           {/* Period table */}

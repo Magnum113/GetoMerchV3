@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "asOf": "2026-09-10T12:00:00.000Z",
+  "presets": {
+    "7d": {
+      "period": "04.09.2026 — 10.09.2026",
+      "previousPeriod": "28.08.2026 — 03.09.2026",
+      "granularity": "day",
+      "kpis": {
+        "revenue": 14200,
+        "orders": 4,
+        "expenses": 11396,
+        "netProfit": 2804,
+        "margin": 0.19746478873239437
+      },
+      "bucketCounts": {
+        "finance": 7,
+        "orders": 7,
+        "revenue": 7,
+        "nonRedemption": 7
+      },
+      "granularityHashes": {
+        "day": "4df956b919e430898fb962071464aac76b76855b0f931e9732f488aadec02ea2",
+        "week": "9d198a42924dde02178fe4e403ec901eab477f9272b3500d541048f195670ab2",
+        "month": "dfa3442f398a6d8a29921a9dfd9db40ba28e7addb785db457443c1d849a18c1b"
+      },
+      "fullViewHash": "7e2475b0ea2b12279b7bd3da74783ea25aacef39797e98edb8253311cb90e576"
+    },
+    "30d": {
+      "period": "12.08.2026 — 10.09.2026",
+      "previousPeriod": "13.07.2026 — 11.08.2026",
+      "granularity": "day",
+      "kpis": {
+        "revenue": 25200,
+        "orders": 8,
+        "expenses": 20976,
+        "netProfit": 4224,
+        "margin": 0.1676190476190476
+      },
+      "bucketCounts": {
+        "finance": 30,
+        "orders": 30,
+        "revenue": 30,
+        "nonRedemption": 30
+      },
+      "granularityHashes": {
+        "day": "84925e0eb2eeef763722ac9480e4bbd0257317b103cb2688e3bdee0d2974fae7",
+        "week": "e31df63501904e316cded62f375ca3eb98002cd37f49e6239dfaccb254a03c65",
+        "month": "d4bf029fe610a8ddfc55cbc2dc0f038f79842590f2e12c9e79c18a06ee86ae3b"
+      },
+      "fullViewHash": "f6db333bb980b79422a597021593d6e06b39c5736f983cbbc9a24fff5dbc5f71"
+    },
+    "90d": {
+      "period": "13.06.2026 — 10.09.2026",
+      "previousPeriod": "15.03.2026 — 12.06.2026",
+      "granularity": "week",
+      "kpis": {
+        "revenue": 35400,
+        "orders": 10,
+        "expenses": 26988,
+        "netProfit": 8412,
+        "margin": 0.2376271186440678
+      },
+      "bucketCounts": {
+        "finance": 14,
+        "orders": 14,
+        "revenue": 14,
+        "nonRedemption": 14
+      },
+      "granularityHashes": {
+        "day": "43e59a49fcf90911a78e5325a1568650c6a7e940248f011e2d88f66fd966d89f",
+        "week": "62e1f8b719e6c664b96a9e86aa9d6da96fd0f779acf8ffa3b6bd7d397d9b16d1",
+        "month": "61ffbb73e3fd81b47333f000b430a00dcd44d402cac3f33b1737577b8bb5b52e"
+      },
+      "fullViewHash": "af920009156f7e570e52806bc08801debf34d02446a4bf727b8a4934f173f06b"
+    },
+    "mtd": {
+      "period": "01.09.2026 — 10.09.2026",
+      "previousPeriod": "22.08.2026 — 31.08.2026",
+      "granularity": "day",
+      "kpis": {
+        "revenue": 19700,
+        "orders": 5,
+        "expenses": 14626,
+        "netProfit": 5074,
+        "margin": 0.25756345177664974
+      },
+      "bucketCounts": {
+        "finance": 10,
+        "orders": 10,
+        "revenue": 10,
+        "nonRedemption": 10
+      },
+      "granularityHashes": {
+        "day": "5da4bc1aa974b5da9756268b69a4830f4e1e769642c543d4f00f50689a5e6c02",
+        "week": "ffcb7a65ecf79cb1a2537d6bf29b3c18b1b5171902b9d9b2cace4cde24c835aa",
+        "month": "56619827a0f64f2e8d09b1cd18ee14584d63a08c717fdff7214eec1332ce0c96"
+      },
+      "fullViewHash": "0756933dacba2e16d0aa632141ade9ae008425b190194cbe18b3247ccd7f9ffd"
+    },
+    "ytd": {
+      "period": "01.01.2026 — 10.09.2026",
+      "previousPeriod": "23.04.2025 — 31.12.2025",
+      "granularity": "month",
+      "kpis": {
+        "revenue": 46000,
+        "orders": 12,
+        "expenses": 33274,
+        "netProfit": 12726,
+        "margin": 0.2766521739130435
+      },
+      "bucketCounts": {
+        "finance": 9,
+        "orders": 9,
+        "revenue": 9,
+        "nonRedemption": 9
+      },
+      "granularityHashes": {
+        "day": "39902b643693f6dc346a470a572cb7670c4251633ec39ece27e804d6f34741d2",
+        "week": "3f5e8f94aa8dc0360de30f9c7a23b16a7226c89e641059a5f852e8ed7439a4fe",
+        "month": "e5cda6b791ce976f773e75ddcdc10b20ee8b2bf89de003e7579dc62f505966fa"
+      },
+      "fullViewHash": "9ddb1eb12b22c530e1141fd09201092e3b4d835298405dc0869a822197132f91"
+    }
+  },
+  "stock": {
+    "perWarehouse": {
+      "own": {
+        "blankValue": 5400,
+        "blankQty": 12,
+        "finishedValue": 2100,
+        "finishedQty": 3
+      },
+      "workshop": {
+        "blankValue": 0,
+        "blankQty": 0,
+        "finishedValue": 2400,
+        "finishedQty": 2
+      }
+    },
+    "total": {
+      "blankValue": 5400,
+      "blankQty": 12,
+      "finishedValue": 4500,
+      "finishedQty": 5
+    }
+  }
+}

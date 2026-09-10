@@ -61,6 +61,10 @@ type OzonOrderPage = {
 type ExpenseFilters = { from?: string; to?: string; categoryId?: string };
 type FinanceFilters = { from?: string; to?: string };
 
+type AdminRequestOptions = {
+  signal?: AbortSignal;
+};
+
 type ExpensePage = {
   items: Expense[];
   nextOffset: number | null;
@@ -87,7 +91,11 @@ type DesignProductCount = {
 
 const ADMIN_REQUEST_TIMEOUT_MS = 30_000;
 
-async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
+async function adminRpc<T>(
+  action: string,
+  args: unknown[] = [],
+  options: AdminRequestOptions = {},
+): Promise<T> {
   const idempotencyKey = crypto.randomUUID();
   const response = await adminFetch("/api/admin/rpc", {
     method: "POST",
@@ -97,6 +105,7 @@ async function adminRpc<T>(action: string, args: unknown[] = []): Promise<T> {
       "X-Request-Id": crypto.randomUUID(),
     },
     body: JSON.stringify({ action, args }),
+    signal: options.signal,
   });
 
   const payload = await readJson<ApiResponse<T>>(response);
@@ -111,8 +120,9 @@ async function adminGet<T>(
   path: string,
   params: Record<string, string | number | boolean | null | undefined> = {},
   timeoutMs = ADMIN_REQUEST_TIMEOUT_MS,
+  options: AdminRequestOptions = {},
 ): Promise<T> {
-  const payload = await adminGetPayload<T>(path, params, timeoutMs);
+  const payload = await adminGetPayload<T>(path, params, timeoutMs, options);
   return payload.data as T;
 }
 
@@ -120,13 +130,14 @@ async function adminGetPayload<T>(
   path: string,
   params: Record<string, string | number | boolean | null | undefined> = {},
   timeoutMs = ADMIN_REQUEST_TIMEOUT_MS,
+  options: AdminRequestOptions = {},
 ): Promise<ApiSuccess<T>> {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const href = search.size > 0 ? `${path}?${search.toString()}` : path;
-  const response = await adminFetch(href, {}, timeoutMs);
+  const response = await adminFetch(href, { signal: options.signal }, timeoutMs);
   const payload = await readJson<ApiResponse<T> & { meta?: Record<string, unknown> }>(response);
   if (!response.ok || !payload?.ok) {
     throw apiError(response, payload);
@@ -166,17 +177,26 @@ async function adminPatch<T>(path: string, body: unknown): Promise<T> {
 
 async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = ADMIN_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = init.signal;
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
 
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError" && timedOut) {
       throw new Error(`Админка не получила ответ от сервера за ${Math.round(timeoutMs / 1000)} секунд. Обновите страницу или повторите действие.`);
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -219,12 +239,16 @@ async function adminGetAllProducts(filters?: ProductListFilters) {
   return out;
 }
 
-async function adminGetInventoryPage(warehouseId?: string, offset = 0): Promise<InventoryPage> {
+async function adminGetInventoryPage(
+  warehouseId?: string,
+  offset = 0,
+  options: AdminRequestOptions = {},
+): Promise<InventoryPage> {
   const payload = await adminGetPayload<Inventory[]>("/api/admin/inventory", {
     limit: 200,
     offset,
     warehouse_id: warehouseId,
-  });
+  }, ADMIN_REQUEST_TIMEOUT_MS, options);
   return {
     items: payload.data ?? [],
     nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
@@ -232,14 +256,15 @@ async function adminGetInventoryPage(warehouseId?: string, offset = 0): Promise<
   };
 }
 
-async function adminGetAllInventory(warehouseId?: string) {
+async function adminGetAllInventory(warehouseId?: string, options: AdminRequestOptions = {}) {
   const maxRows = 10_000;
   const rows: Inventory[] = [];
   const seenIds = new Set<string>();
   let offset = 0;
 
   while (rows.length < maxRows) {
-    const page = await adminGetInventoryPage(warehouseId, offset);
+    options.signal?.throwIfAborted();
+    const page = await adminGetInventoryPage(warehouseId, offset, options);
     for (const item of page.items) {
       if (seenIds.has(item.id)) {
         throw new Error("Остатки изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
@@ -257,11 +282,14 @@ async function adminGetAllInventory(warehouseId?: string) {
   throw new Error("Остатков больше 10 000 строк. Полная загрузка остановлена, чтобы не показать неполные данные.");
 }
 
-async function adminGetOzonOrdersPage(offset = 0): Promise<OzonOrderPage> {
+async function adminGetOzonOrdersPage(
+  offset = 0,
+  options: AdminRequestOptions = {},
+): Promise<OzonOrderPage> {
   const payload = await adminGetPayload<OzonOrder[]>("/api/admin/ozon/orders", {
     limit: 200,
     offset,
-  });
+  }, ADMIN_REQUEST_TIMEOUT_MS, options);
   return {
     items: payload.data ?? [],
     nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
@@ -269,14 +297,15 @@ async function adminGetOzonOrdersPage(offset = 0): Promise<OzonOrderPage> {
   };
 }
 
-async function adminGetAllOzonOrders() {
+async function adminGetAllOzonOrders(options: AdminRequestOptions = {}) {
   const maxRows = 10_000;
   const rows: OzonOrder[] = [];
   const seenIds = new Set<string>();
   let offset = 0;
 
   while (rows.length < maxRows) {
-    const page = await adminGetOzonOrdersPage(offset);
+    options.signal?.throwIfAborted();
+    const page = await adminGetOzonOrdersPage(offset, options);
     for (const item of page.items) {
       if (seenIds.has(item.id)) {
         throw new Error("Заказы изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
@@ -294,14 +323,18 @@ async function adminGetAllOzonOrders() {
   throw new Error("Заказов больше 10 000. Полная загрузка остановлена, чтобы не показать неполные данные.");
 }
 
-async function adminGetExpensesPage(filters: ExpenseFilters = {}, offset = 0): Promise<ExpensePage> {
+async function adminGetExpensesPage(
+  filters: ExpenseFilters = {},
+  offset = 0,
+  options: AdminRequestOptions = {},
+): Promise<ExpensePage> {
   const payload = await adminGetPayload<Expense[]>("/api/admin/expenses", {
     limit: 500,
     offset,
     from: filters.from,
     to: filters.to,
     category_id: filters.categoryId,
-  });
+  }, ADMIN_REQUEST_TIMEOUT_MS, options);
   return {
     items: payload.data ?? [],
     nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
@@ -309,14 +342,18 @@ async function adminGetExpensesPage(filters: ExpenseFilters = {}, offset = 0): P
   };
 }
 
-async function adminGetAllExpenses(filters: ExpenseFilters = {}) {
+async function adminGetAllExpenses(
+  filters: ExpenseFilters = {},
+  options: AdminRequestOptions = {},
+) {
   const maxRows = 50_000;
   const rows: Expense[] = [];
   const seenIds = new Set<string>();
   let offset = 0;
 
   while (rows.length < maxRows) {
-    const page = await adminGetExpensesPage(filters, offset);
+    options.signal?.throwIfAborted();
+    const page = await adminGetExpensesPage(filters, offset, options);
     for (const item of page.items) {
       if (seenIds.has(item.id)) {
         throw new Error("Расходы изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
@@ -332,13 +369,17 @@ async function adminGetAllExpenses(filters: ExpenseFilters = {}) {
   throw new Error("Расходов больше 50 000. Уточните период, чтобы не показать неполные данные.");
 }
 
-async function adminGetFinancePage(filters: FinanceFilters = {}, offset = 0): Promise<FinancePage> {
+async function adminGetFinancePage(
+  filters: FinanceFilters = {},
+  offset = 0,
+  options: AdminRequestOptions = {},
+): Promise<FinancePage> {
   const payload = await adminGetPayload<OzonFinanceOperation[]>("/api/admin/finance/ozon", {
     limit: 500,
     offset,
     from: filters.from,
     to: filters.to,
-  });
+  }, ADMIN_REQUEST_TIMEOUT_MS, options);
   return {
     items: payload.data ?? [],
     nextOffset: typeof payload.meta?.nextOffset === "number" ? payload.meta.nextOffset : null,
@@ -346,14 +387,18 @@ async function adminGetFinancePage(filters: FinanceFilters = {}, offset = 0): Pr
   };
 }
 
-async function adminGetAllFinanceOperations(filters: FinanceFilters = {}) {
+async function adminGetAllFinanceOperations(
+  filters: FinanceFilters = {},
+  options: AdminRequestOptions = {},
+) {
   const maxRows = 50_000;
   const rows: OzonFinanceOperation[] = [];
   const seenIds = new Set<string>();
   let offset = 0;
 
   while (rows.length < maxRows) {
-    const page = await adminGetFinancePage(filters, offset);
+    options.signal?.throwIfAborted();
+    const page = await adminGetFinancePage(filters, offset, options);
     for (const item of page.items) {
       if (seenIds.has(item.id)) {
         throw new Error("Финансовые операции изменились во время загрузки. Обновите страницу, чтобы получить согласованные данные.");
@@ -478,7 +523,8 @@ export const api = {
   }) => adminPatch<AdminFeatureFlag>("/api/admin/features", input),
 
   // ---------- WAREHOUSES ----------
-  listWarehouses: () => adminRpc<Warehouse[]>("listWarehouses"),
+  listWarehouses: (options: AdminRequestOptions = {}) =>
+    adminRpc<Warehouse[]>("listWarehouses", [], options),
 
   // ---------- CATEGORIES / FABRICS / COLORS / SIZES / DECORATION ----------
   listCategories: () => adminRpc<ProductCategory[]>("listCategories"),
@@ -516,7 +562,8 @@ export const api = {
   deleteProduct: (id: string) => adminRpc<void>("deleteProduct", [id]),
 
   // ---------- INVENTORY ----------
-  listInventory: (warehouseId?: string) => adminGetAllInventory(warehouseId),
+  listInventory: (warehouseId?: string, options: AdminRequestOptions = {}) =>
+    adminGetAllInventory(warehouseId, options),
   listInventoryMatrix: () => adminGet<InventoryMatrix>("/api/admin/inventory/matrix", {}, 180_000),
   getInventoryFor: (productId: string, warehouseId: string) =>
     adminRpc<number>("getInventoryFor", [productId, warehouseId]),
@@ -585,7 +632,7 @@ export const api = {
   getWorkshopOrder: (id: string) => adminRpc<WorkshopOrder | null>("getWorkshopOrder", [id]),
 
   // ---------- OZON ORDERS ----------
-  listOzonOrders: () => adminGetAllOzonOrders(),
+  listOzonOrders: (options: AdminRequestOptions = {}) => adminGetAllOzonOrders(options),
   findBlankFor: (product: Product) => adminRpc<Product | null>("findBlankFor", [product]),
   shipOzonOrder: (orderId: string, preferredWarehouseId?: string) =>
     adminRpc<void>("shipOzonOrder", [orderId, preferredWarehouseId]),
@@ -690,8 +737,10 @@ export const api = {
   deleteWarehouse: (id: string) => adminRpc<void>("deleteWarehouse", [id]),
 
   // ---------- EXPENSES / FINANCE ----------
-  listExpenseCategories: (opts?: { includeArchived?: boolean }) =>
-    adminRpc<ExpenseCategory[]>("listExpenseCategories", [opts]),
+  listExpenseCategories: (
+    opts?: { includeArchived?: boolean },
+    options: AdminRequestOptions = {},
+  ) => adminRpc<ExpenseCategory[]>("listExpenseCategories", [opts], options),
   createExpenseCategory: (input: { name: string; color?: string | null; sort_order?: number }) =>
     adminRpc<ExpenseCategory>("createExpenseCategory", [input]),
   updateExpenseCategory: (
@@ -699,7 +748,8 @@ export const api = {
     patch: { name?: string; color?: string | null; sort_order?: number; archived?: boolean },
   ) => adminRpc<void>("updateExpenseCategory", [id, patch]),
   deleteExpenseCategory: (id: string) => adminRpc<void>("deleteExpenseCategory", [id]),
-  listExpenses: (filters: ExpenseFilters = {}) => adminGetAllExpenses(filters),
+  listExpenses: (filters: ExpenseFilters = {}, options: AdminRequestOptions = {}) =>
+    adminGetAllExpenses(filters, options),
   createExpense: (input: { categoryId: string | null; amount: number; occurredAt: string; description?: string | null }) =>
     adminRpc<void>("createExpense", [input]),
   updateExpense: (
@@ -707,10 +757,12 @@ export const api = {
     patch: { categoryId?: string | null; amount?: number; occurredAt?: string; description?: string | null },
   ) => adminRpc<void>("updateExpense", [id, patch]),
   deleteExpense: (id: string) => adminRpc<void>("deleteExpense", [id]),
-  listFinanceOperations: (filters: FinanceFilters = {}) => adminGetAllFinanceOperations(filters),
-  listOzonSkuProductMap: () =>
-    adminRpc<Array<{ ozon_sku: string; product: Product }>>("listOzonSkuProductMap"),
-  lastFinanceSyncAt: () => adminRpc<string | null>("lastFinanceSyncAt"),
+  listFinanceOperations: (filters: FinanceFilters = {}, options: AdminRequestOptions = {}) =>
+    adminGetAllFinanceOperations(filters, options),
+  listOzonSkuProductMap: (options: AdminRequestOptions = {}) =>
+    adminRpc<Array<{ ozon_sku: string; product: Product }>>("listOzonSkuProductMap", [], options),
+  lastFinanceSyncAt: (options: AdminRequestOptions = {}) =>
+    adminRpc<string | null>("lastFinanceSyncAt", [], options),
   syncOzonFinance: (opts: { from?: string; to?: string } = {}) => {
     const params = new URLSearchParams();
     if (opts.from) params.set("from", opts.from);
