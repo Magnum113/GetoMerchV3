@@ -17,7 +17,6 @@ import {
   ShoppingBag,
   Wallet,
   Store,
-  Cable,
   Shirt as ShirtIcon,
   Receipt,
   DownloadCloud,
@@ -56,7 +55,6 @@ const KOMUI_NAV: NavSection = {
     { href: "/komui/orders", label: "Заказы сайта", icon: Receipt },
     { href: "/komui/products", label: "Товары сайта", icon: ShirtIcon },
     { href: "/komui/import", label: "Импорт из Ozon", icon: Store },
-    { href: "/komui/runtime", label: "Production runtime", icon: Cable },
   ],
 };
 

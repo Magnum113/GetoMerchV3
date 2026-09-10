@@ -183,9 +183,7 @@ export async function komuiFetch({ method, path, body, idempotencyKey }: KomuiFe
   return json;
 }
 
-// Вариант, который НЕ бросает на 2xx и 202 — нужен для runtime/fallback,
-// где 202 = pending и клиент должен начать polling. Возвращает status и body
-// напрямую, чтобы прокси-роут мог их передать дальше.
+// Возвращает статус и тело напрямую для диагностических proxy-маршрутов.
 export async function komuiFetchRaw({ method, path, body, idempotencyKey }: KomuiFetchInit): Promise<{
   status: number;
   body: unknown;

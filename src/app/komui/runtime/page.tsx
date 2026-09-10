@@ -1,7 +1,5 @@
-import { RuntimePanel } from "./runtime-panel";
-
-export const metadata = { title: "Production runtime — Komui" };
+import { redirect } from "next/navigation";
 
 export default function KomuiRuntimePage() {
-  return <RuntimePanel />;
+  redirect("/komui/orders");
 }

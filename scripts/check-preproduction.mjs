@@ -93,7 +93,6 @@ async function checkUiSections() {
     "/orders",
     "/expenses",
     "/ozon/import",
-    "/komui/runtime",
     "/komui/products",
     "/komui/orders",
   ];
