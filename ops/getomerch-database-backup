@@ -290,7 +290,7 @@ if [[ "$(date -u +%d)" == 01 ]] && \
   snapshot_pair "$MONTHLY_DIR"
 fi
 
-find "$HOUR_DIR" -type f -name 'getomerch-database-backup-*' -mtime +3 -delete
+find "$HOUR_DIR" -type f -name 'getomerch-database-backup-*' -mmin +2880 -delete
 find "$DAILY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +14 -delete
 find "$WEEKLY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +42 -delete
 find "$MONTHLY_DIR" -type f -name 'getomerch-database-backup-*' -mtime +190 -delete
