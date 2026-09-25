@@ -649,7 +649,7 @@ function OrderCard({ order, ready, availabilityByItem, canSendToWorkshop, canPro
                 variant="outline"
                 onClick={downloadLabels}
                 disabled={labelBusy}
-                title="Скачать официальный PDF Ozon: QR заказа и штрихкод товара, 58x40 мм. Ozon формирует файл после сборки заказа."
+                title="Скачать PDF этикеток Ozon: QR заказа и штрихкод товара, 58x40 мм. Ozon формирует данные после сборки заказа."
               >
                 {labelBusy ? <Loader2 className="animate-spin" /> : <Download />}
                 Этикетки Ozon
