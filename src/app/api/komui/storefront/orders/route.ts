@@ -22,6 +22,8 @@ export async function GET(req: Request) {
       "fulfillmentStatus",
       "dateFrom",
       "dateTo",
+      "deliveryProvider",
+      "toShip",
     ];
     for (const k of passthrough) {
       const v = url.searchParams.get(k);

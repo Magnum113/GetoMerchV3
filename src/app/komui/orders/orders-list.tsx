@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ChevronLeft,
@@ -26,9 +26,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { errorMessage, formatDate, formatMoney } from "@/lib/utils";
+import { errorMessage, formatDate } from "@/lib/utils";
 import {
   moneyFromKopecks,
+  formatOrderMoney,
   type FulfillmentStatus,
   type PaymentStatus,
   type StorefrontOrderListResponse,
@@ -37,6 +38,7 @@ import {
 import {
   CdekBadge,
   CdekDeliveryBadge,
+  ShippingBadge,
   FulfillmentBadge,
   PaymentBadge,
 } from "./status-badges";
@@ -66,8 +68,12 @@ export function OrdersList() {
   const [searchInput, setSearchInput] = useState("");
   const [q, setQ] = useState("");
   const [quick, setQuick] = useState<QuickFilterKey>("to_ship");
+  const [provider, setProvider] = useState("all");
+
+  const requestRevision = useRef(0);
 
   const load = useCallback(async () => {
+    const revision = ++requestRevision.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -75,9 +81,11 @@ export function OrdersList() {
       params.set("offset", String(offset));
       if (q) params.set("q", q);
       const qf = QUICK_FILTERS.find((f) => f.key === quick);
-      if (qf?.paymentStatus) params.set("paymentStatus", qf.paymentStatus);
-      if (qf?.fulfillmentStatus)
+      if (quick === "to_ship") params.set("toShip", "true");
+      else if (qf?.paymentStatus) params.set("paymentStatus", qf.paymentStatus);
+      if (quick !== "to_ship" && qf?.fulfillmentStatus)
         params.set("fulfillmentStatus", qf.fulfillmentStatus);
+      if (provider !== "all") params.set("deliveryProvider", provider);
 
       const res = await fetch(
         `/api/komui/storefront/orders?${params.toString()}`,
@@ -89,19 +97,22 @@ export function OrdersList() {
       if (!res.ok || "error" in data) {
         throw new Error(("error" in data && data.error) || `Ошибка ${res.status}`);
       }
+      if (revision !== requestRevision.current) return;
       setItems(data.orders);
       setTotal(data.pagination.total);
     } catch (e) {
+      if (revision !== requestRevision.current) return;
       toast.error(errorMessage(e));
       setItems([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (revision === requestRevision.current) setLoading(false);
     }
-  }, [offset, q, quick]);
+  }, [offset, q, quick, provider]);
 
   useEffect(() => {
     load();
+    return () => { requestRevision.current++; };
   }, [load]);
 
   const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 1;
@@ -135,6 +146,14 @@ export function OrdersList() {
               ))}
             </div>
             <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-xs">
+                Доставка
+                <select aria-label="Служба доставки" value={provider} onChange={(event) => { setProvider(event.target.value); setOffset(0); }} className="h-9 rounded-md border bg-background px-2">
+                  <option value="all">Все</option>
+                  <option value="cdek">СДЭК</option>
+                  <option value="ozon">Ozon</option>
+                </select>
+              </label>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -319,7 +338,7 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
       <TableCell>
         <div className="text-xs">
           <span className="font-medium uppercase">
-            {order.delivery?.provider ?? "—"}
+            {order.delivery?.provider === "cdek" ? "СДЭК" : order.delivery?.provider === "ozon" ? "Ozon" : order.delivery?.provider ?? "—"}
           </span>
           {order.delivery?.city && (
             <span className="text-muted-foreground"> · {order.delivery.city}</span>
@@ -329,7 +348,9 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
           {order.delivery?.pointCode}
         </div>
         <div className="mt-1">
-          {order.cdek?.deliveryStatusCode || order.cdek?.deliveryStatusName ? (
+          {order.delivery?.provider === "ozon" ? (
+            <ShippingBadge shipping={order.shipping} />
+          ) : order.cdek?.deliveryStatusCode || order.cdek?.deliveryStatusName ? (
             <CdekDeliveryBadge
               code={order.cdek.deliveryStatusCode}
               name={order.cdek.deliveryStatusName}
@@ -337,15 +358,15 @@ function OrderRow({ order }: { order: StorefrontOrderSummary }) {
           ) : (
             <CdekBadge status={order.cdek?.status} />
           )}
-          {order.cdek?.number && (
+          {(order.delivery?.provider === "ozon" ? order.shipping?.number : order.cdek?.number) && (
             <span className="ml-1 text-[10px] font-mono text-muted-foreground">
-              {order.cdek.number}
+              {order.delivery?.provider === "ozon" ? order.shipping?.number : order.cdek?.number}
             </span>
           )}
         </div>
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        {total != null ? formatMoney(total) : "—"}
+        {total != null ? formatOrderMoney(total) : "—"}
       </TableCell>
       <TableCell>
         <PaymentBadge status={order.paymentStatus} />

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ShippingPanel } from "./shipping-panel";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -41,12 +42,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { cn, errorMessage, formatDate, formatMoney } from "@/lib/utils";
+import { cn, errorMessage, formatDate } from "@/lib/utils";
 import {
   canMarkShipped,
   FULFILLMENT_STATUSES,
   fulfillmentStatusLabel,
   moneyFromKopecks,
+  formatOrderMoney,
   type FulfillmentStatus,
   type StorefrontOrderDetailResponse,
   type StorefrontOrderSummary,
@@ -240,13 +242,13 @@ export function OrderDetail({ orderId }: { orderId: string }) {
           <Button variant="outline" onClick={load}>
             <RefreshCcw className="h-4 w-4" /> Обновить
           </Button>
-          <Button onClick={() => setShipOpen(true)} disabled={!canShip}>
+          {order.delivery?.provider !== "ozon" && <Button onClick={() => setShipOpen(true)} disabled={!canShip}>
             <PackageCheck className="h-4 w-4" /> Отправил заказ
-          </Button>
+          </Button>}
         </div>
       </div>
 
-      {!canShip && order.paymentStatus !== "paid" &&
+      {order.delivery?.provider !== "ozon" && !canShip && order.paymentStatus !== "paid" &&
         order.fulfillmentStatus !== "shipped" &&
         order.fulfillmentStatus !== "delivered" && (
           <Card>
@@ -331,10 +333,10 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                             {it.quantity ?? "—"}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
-                            {unit != null ? formatMoney(unit) : "—"}
+                            {unit != null ? formatOrderMoney(unit) : "—"}
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
-                            {totalLine != null ? formatMoney(totalLine) : "—"}
+                            {totalLine != null ? formatOrderMoney(totalLine) : "—"}
                           </TableCell>
                         </TableRow>
                       );
@@ -388,7 +390,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
                         </span>
                         {a.amount != null && (
                           <span className="tabular-nums">
-                            {formatMoney(moneyFromKopecks(a.amount) ?? 0)}
+                            {formatOrderMoney(moneyFromKopecks(a.amount) ?? 0)}
                           </span>
                         )}
                         {a.errorMessage && (
@@ -439,6 +441,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
             </CardContent>
           </Card>
 
+          {order.delivery?.provider === "ozon" ? <ShippingPanel orderId={orderId} shipping={order.shipping} events={data.shippingEvents} effects={data.orderEffects} onUpdated={load} /> : (
           <Card>
             <CardContent className="p-4 space-y-3">
               <div className="text-sm font-medium flex items-center gap-2">
@@ -557,6 +560,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
               )}
             </CardContent>
           </Card>
+          )}
 
           <Card>
             <CardContent className="p-4 space-y-3">
@@ -566,7 +570,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
               <Separator />
               {[
                 ["Оплата подтверждена", order.email?.orderPaid],
-                ["Заказ передан в СДЭК", order.email?.shipmentHandedOver],
+                ["Заказ передан перевозчику", order.email?.shipmentHandedOver],
                 ["Заказ готов к получению", order.email?.shipmentReady],
               ].map(([label, email]) => {
                 const status =
@@ -699,7 +703,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
               <div className="text-sm font-medium">Статус обработки</div>
               <Separator />
               <div className="flex flex-wrap gap-1.5">
-                {FULFILLMENT_STATUSES.map((s) => (
+                {FULFILLMENT_STATUSES.filter(s => order.delivery?.provider !== "ozon" || (["new", "processing"].includes(s) && ["new", "processing"].includes(order.fulfillmentStatus)) || s === order.fulfillmentStatus).map((s) => (
                   <Pill
                     key={s}
                     shape="square"
@@ -748,7 +752,7 @@ export function OrderDetail({ orderId }: { orderId: string }) {
               value={shipNote}
               onChange={(e) => setShipNote(e.target.value)}
               rows={3}
-              placeholder="Передано в СДЭК, трек-номер ..."
+              placeholder="Передано перевозчику, номер отправления…"
             />
           </div>
           <DialogFooter>
@@ -866,7 +870,7 @@ function SumRow({
           negative && "text-state-danger-fg",
         )}
       >
-        {money != null ? formatMoney(money) : "—"}
+        {money != null ? formatOrderMoney(money) : "—"}
       </span>
     </div>
   );

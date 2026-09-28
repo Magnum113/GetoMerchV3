@@ -391,6 +391,42 @@ export type OrderDelivery = {
   eta?: string;
 };
 
+export type OrderShipping = {
+  provider: "cdek" | "ozon";
+  package?: { weight_g: number; length_mm: number; width_mm: number; height_mm: number } | null;
+  status: string;
+  statusName?: string | null;
+  number?: string | null;
+  orderNumber?: string | null;
+  updatedAt?: string | null;
+  error?: string | null;
+  availableActions: string[];
+  shipments?: Array<{
+    id: string;
+    number?: string | null;
+    status: string;
+    statusName?: string | null;
+    error?: string | null;
+  }>;
+};
+
+export type OrderShippingEvent = {
+  id?: string | number;
+  status?: string | null;
+  statusName?: string | null;
+  receivedAt?: string | null;
+  statusAt?: string | null;
+};
+
+export type OrderEffect = {
+  id?: string | number;
+  type: string;
+  status: string;
+  attempts: number;
+  lastError?: string | null;
+  availableAt?: string | null;
+};
+
 export type OrderAmounts = {
   subtotal?: number; // копейки
   discount?: number;
@@ -471,6 +507,7 @@ export type StorefrontOrderSummary = {
   firstItem?: StorefrontOrderItemPreview | null;
   latestPayment?: OrderLatestPayment | null;
   cdek?: OrderCdek | null;
+  shipping?: OrderShipping | null;
   email?: OrderEmailStatuses | null;
   paidAt?: string | null;
   shippedAt?: string | null;
@@ -577,6 +614,8 @@ export type StorefrontOrderDetailResponse = {
   paymentEvents?: PaymentEvent[];
   cdekShipment?: CdekShipment | null;
   cdekEvents?: CdekEvent[];
+  shippingEvents?: OrderShippingEvent[];
+  orderEffects?: OrderEffect[];
 };
 
 export type MarkShippedResponse = {
@@ -652,6 +691,7 @@ export function cdekStatusLabel(s?: string): string {
 }
 
 export function canMarkShipped(o: StorefrontOrderSummary): boolean {
+  if (o.delivery?.provider === "ozon") return false;
   if (o.paymentStatus !== "paid" && o.paymentStatus !== "authorized") return false;
   if (o.fulfillmentStatus === "shipped" || o.fulfillmentStatus === "delivered")
     return false;
@@ -662,4 +702,9 @@ export function canMarkShipped(o: StorefrontOrderSummary): boolean {
 export function moneyFromKopecks(v: number | undefined | null): number | null {
   if (v == null) return null;
   return v / 100;
+}
+
+// Preserve delivery quotes down to kopecks in KOMUI order screens.
+export function formatOrderMoney(value: number): string {
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 }

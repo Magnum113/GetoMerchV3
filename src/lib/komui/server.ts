@@ -212,3 +212,16 @@ export class KomuiApiError extends Error {
     this.status = status;
   }
 }
+
+// Only authenticated internal routes use this helper. Never proxy upstream headers.
+export async function komuiFetchLabel(path: string): Promise<Uint8Array> {
+  const target = await readSelectedTarget();
+  const env = readEnv(target);
+  const response = await fetch(`${env.baseUrl}${path}`, {
+    headers: { ...buildHeaders(env, { hasBody: false }), Accept: "application/pdf" },
+    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new KomuiApiError("Не удалось получить этикетку. Обновите статус отправления.", response.status);
+  if (!response.headers.get("content-type")?.includes("application/pdf")) throw new KomuiApiError("Сервис не вернул PDF этикетки", 502);
+  return new Uint8Array(await response.arrayBuffer());
+}

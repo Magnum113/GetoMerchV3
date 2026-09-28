@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import type { OrderShipping } from "@/lib/komui/types";
 import {
   cdekStatusLabel,
   fulfillmentStatusLabel,
@@ -15,6 +16,12 @@ export function PaymentBadge({ status }: { status?: string }) {
       {paymentStatusLabel(status)}
     </Badge>
   );
+}
+
+export function ShippingBadge({ shipping }: { shipping?: OrderShipping | null }) {
+  return <Badge variant="outline" className={cn("text-[10px]", shipping?.error ? "bg-state-danger text-state-danger-fg" : "bg-state-info text-state-info-fg")}>
+    {shipping?.error ? "Нужна проверка" : shipping?.statusName || shipping?.status || "Создаётся"}
+  </Badge>;
 }
 
 export function FulfillmentBadge({ status }: { status?: string }) {
