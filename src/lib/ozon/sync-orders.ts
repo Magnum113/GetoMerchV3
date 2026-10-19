@@ -9,7 +9,8 @@ import {
 import type { JobExecutionContext } from "@/lib/jobs/execution";
 import { ozonPost } from "@/lib/ozon/client";
 
-const PAGE_SIZE = 1000;
+const FBS_PAGE_SIZE = 100;
+const FBO_PAGE_SIZE = 1000;
 const MAX_PAGES_GUARD = 10_000;
 const STALE_REFRESH_CONCURRENCY = 4;
 const APPLY_CONCURRENCY = 4;
@@ -162,7 +163,7 @@ async function fetchAllFbs(days: number, context: JobExecutionContext) {
     }>("/v4/posting/fbs/list", {
       sort_dir: "DESC",
       filter: { since, to },
-      limit: PAGE_SIZE,
+      limit: FBS_PAGE_SIZE,
       cursor,
       with: { analytics_data: true, financial_data: false },
     }, ozonOptions(context));
@@ -191,7 +192,7 @@ async function fetchAllFbo(days: number, context: JobExecutionContext) {
       {
         dir: "DESC",
         filter: { since, to, status: "" },
-        limit: PAGE_SIZE,
+        limit: FBO_PAGE_SIZE,
         offset,
         translit: false,
         with: { analytics_data: true, financial_data: false },
@@ -201,7 +202,7 @@ async function fetchAllFbo(days: number, context: JobExecutionContext) {
     const items = response.result ?? [];
     all.push(...items.map((item) => ({ ...item, source: "fbo" as const })));
     await context.report({ phase: "fetch_fbo", page, fetched: all.length });
-    if (items.length < PAGE_SIZE) return all;
+    if (items.length < FBO_PAGE_SIZE) return all;
     offset += items.length;
   }
   throw new Error("FBO pagination exceeded safety guard");
@@ -221,7 +222,7 @@ async function fetchUnfulfilled(context: JobExecutionContext) {
     }>("/v4/posting/fbs/unfulfilled/list", {
       sort_dir: "ASC",
       filter: { cutoff_from: cutoffFrom, cutoff_to: cutoffTo },
-      limit: PAGE_SIZE,
+      limit: FBS_PAGE_SIZE,
       cursor,
       with: { analytics_data: true, financial_data: false },
     }, ozonOptions(context));

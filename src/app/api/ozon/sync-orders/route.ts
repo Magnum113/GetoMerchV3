@@ -87,7 +87,7 @@ async function fetchAllFbsPostings(sinceDays: number): Promise<OzonPosting[]> {
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
   let cursor = "";
-  const limit = 1000;
+  const limit = 100;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const r: FbsListResponse = await ozonPost("/v4/posting/fbs/list", {
@@ -147,7 +147,7 @@ async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
   const cutoffTo = new Date(Date.now() + 90 * 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
   let cursor = "";
-  const limit = 1000;
+  const limit = 100;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const r = await ozonPost<FbsListResponse>(
