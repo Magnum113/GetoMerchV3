@@ -18,6 +18,17 @@ export type OzonProjectedOrderItem = {
   exemplarFlowAvailable: boolean | null;
 };
 
+export type OzonPrice = string | number | {
+  amount?: string | number;
+  currency?: string;
+};
+
+export function ozonPriceAmount(value: OzonPrice | null | undefined) {
+  if (value == null) return null;
+  const amount = typeof value === "object" ? value.amount : value;
+  return amount == null ? Number.NaN : Number(amount);
+}
+
 export function projectOzonOrderItems(input: {
   source: "fbs" | "fbo";
   products: Array<{
@@ -26,7 +37,7 @@ export function projectOzonOrderItems(input: {
     product_id?: number | string;
     name?: string;
     quantity: number;
-    price?: string | number;
+    price?: OzonPrice;
   }>;
   mandatoryProductEntries: unknown;
   possibleProductEntries?: unknown;
@@ -70,7 +81,7 @@ export function projectOzonOrderItems(input: {
       ozonProductId,
       name: item.name ?? null,
       quantity: Number(item.quantity ?? 0),
-      price: item.price == null ? null : Number(item.price),
+      price: ozonPriceAmount(item.price),
       productId: input.productByOffer.get(offerId) ?? null,
       markingRequirement: marking.markingRequirement,
       exemplarFlowAvailable: marking.exemplarFlowAvailable,

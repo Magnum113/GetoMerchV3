@@ -423,7 +423,13 @@ function posting(postingNumber, status, product) {
     created_at: "2026-01-01T00:00:00.000Z",
     in_process_at: "2026-01-01T01:00:00.000Z",
     shipment_date: "2026-01-02T00:00:00.000Z",
-    products: [{ offer_id: product.sku, sku: product.ozon_sku ?? 1, name: "Test", quantity: 1, price: "777" }],
+    products: [{
+      offer_id: product.sku,
+      sku: product.ozon_sku ?? 1,
+      name: "Test",
+      quantity: 1,
+      price: { amount: "777", currency: "RUB" },
+    }],
   };
 }
 

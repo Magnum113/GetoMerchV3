@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 import { queryServerDatabase } from "@/lib/db/pool";
 import { syncOzonOrderSnapshot, type OzonOrderSnapshot } from "@/lib/db/mutations/sync-import";
 import {
+  ozonPriceAmount,
   projectOzonOrderItems,
+  type OzonPrice,
 } from "@/lib/fulfillment/ozon-domain";
 import type { JobExecutionContext } from "@/lib/jobs/execution";
 import { ozonPost } from "@/lib/ozon/client";
@@ -31,7 +33,7 @@ type OzonProduct = {
   product_id?: number | string;
   name?: string;
   quantity: number;
-  price?: string | number;
+  price?: OzonPrice;
 };
 
 type OzonPosting = {
@@ -313,7 +315,7 @@ function toSnapshot(posting: OzonPosting, productByOffer: Map<string, string>): 
     productByOffer,
   });
   const total = products.reduce(
-    (sum, item) => sum + Number(item.price ?? 0) * Number(item.quantity ?? 0),
+    (sum, item) => sum + (ozonPriceAmount(item.price) ?? 0) * Number(item.quantity ?? 0),
     0,
   );
   return {

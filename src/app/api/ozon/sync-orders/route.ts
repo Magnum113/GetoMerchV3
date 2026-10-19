@@ -5,6 +5,7 @@ import { adminDbQuery, hasAdminPostgres } from "@/lib/admin/postgres";
 import { getAdminSupabaseClient } from "@/lib/supabase/server";
 import { getDatabaseRuntimeConfig } from "@/lib/db/config";
 import { enqueueOzonJob } from "@/lib/jobs/http";
+import { ozonPriceAmount, type OzonPrice } from "@/lib/fulfillment/ozon-domain";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +53,7 @@ interface OzonProduct {
   sku?: number | string;
   name?: string;
   quantity: number;
-  price?: string | number;
+  price?: OzonPrice;
 }
 
 interface OzonPosting {
@@ -380,7 +381,10 @@ export async function POST(req: Request) {
     //    PostgREST/jsonb upsert, а обычному UI нужны нормализованные колонки.
     const now = new Date().toISOString();
     const orderPayloads = postings.map((p) => {
-      const total = (p.products ?? []).reduce((s, it) => s + Number(it.price ?? 0) * (it.quantity ?? 0), 0);
+      const total = (p.products ?? []).reduce(
+        (sum, item) => sum + (ozonPriceAmount(item.price) ?? 0) * (item.quantity ?? 0),
+        0,
+      );
       return {
         posting_number: p.posting_number,
         order_id: p.order_id ?? null,
@@ -466,7 +470,7 @@ export async function POST(req: Request) {
           ozon_sku: it.sku != null ? String(it.sku) : null,
           name: it.name ?? null,
           quantity: it.quantity ?? 0,
-          price: it.price != null ? Number(it.price) : null,
+          price: ozonPriceAmount(it.price),
           product_id: productId ?? null,
         });
       }
