@@ -1,21 +1,44 @@
 import "server-only";
 
-import bwipjs from "bwip-js/node";
-import { PDFDocument, StandardFonts, grayscale, rgb } from "pdf-lib";
-import { OzonApiError, ozonPost, ozonPostPdf } from "@/lib/ozon/client";
+import { PDFDocument } from "pdf-lib";
+import { OzonApiError, ozonPost } from "@/lib/ozon/client";
 
 const POSTING_NUMBER_PATTERN = /^[0-9A-Za-z-]{3,80}$/;
-const SCANIT_PATTERN = /^[0-9A-Za-z_-]{3,80}$/;
-const OZON_LABEL_BATCH_SIZE = 20;
-const OZON_LABEL_CONCURRENCY = 4;
+const OZON_LABEL_API_MAX = 1000;
+const OZON_LABEL_TASK_CONCURRENCY = 4;
+const DEFAULT_POLL_ATTEMPTS = 6;
+const DEFAULT_POLL_DELAY_MS = 1000;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
 
-type OzonPostingResponse = {
-  result?: {
-    scanit?: string | null;
+type LabelOptions = {
+  signal?: AbortSignal;
+  attempts?: number;
+  pollAttempts?: number;
+  pollDelayMs?: number;
+};
+
+type LabelCreateResponse = {
+  tasks?: Array<{
+    task_id?: number | string;
+    task_type?: string;
+  }>;
+};
+
+type LabelTaskResponse = {
+  error?: unknown;
+  file_url?: string | null;
+  status?: {
+    code?: string;
+    postings_count?: number;
+    printed_postings_count?: number;
+    unprinted_postings?: unknown;
   };
 };
 
-type LabelFetchResult = { pdf: Uint8Array } | { error: unknown };
+type LabelTaskResult = {
+  pdf?: Uint8Array;
+  notReady: string[];
+};
 
 export class OzonPackageLabelsNotReadyError extends Error {
   readonly postingNumbers: string[];
@@ -29,16 +52,10 @@ export class OzonPackageLabelsNotReadyError extends Error {
 
 export function fetchOzonPackageLabels(
   postingNumbers: readonly string[],
-  options: { signal?: AbortSignal; attempts?: number } = {},
+  options: LabelOptions = {},
 ) {
-  if (postingNumbers.length < 1 || postingNumbers.length > 20) {
-    throw new Error("Для этикеток Ozon нужно передать от 1 до 20 отправлений.");
-  }
-  const normalized = postingNumbers.map((value) => value.trim());
-  if (normalized.some((value) => !POSTING_NUMBER_PATTERN.test(value))) {
-    throw new Error("Некорректный номер отправления Ozon.");
-  }
-  return fetchNormalizedOzonPackageLabels(normalized, options);
+  const normalized = normalizePostingNumbers(postingNumbers, OZON_LABEL_API_MAX);
+  return fetchOfficialOzonPackageLabels(normalized, options);
 }
 
 export function ozonPackageLabelFilename(postingNumber: string) {
@@ -46,66 +63,191 @@ export function ozonPackageLabelFilename(postingNumber: string) {
   return `ozon-labels-${safePosting || "posting"}-58x40.pdf`;
 }
 
-export async function fetchOzonPackageLabelBundle(
+export function fetchOzonPackageLabelBundle(
   postingNumbers: readonly string[],
-  options: { signal?: AbortSignal; attempts?: number } = {},
+  options: LabelOptions = {},
 ) {
   const normalized = normalizePostingNumbers(postingNumbers, 100);
-  const pdfs: Uint8Array[] = [];
-  const notReady: string[] = [];
-
-  for (let offset = 0; offset < normalized.length; offset += OZON_LABEL_BATCH_SIZE) {
-    const batch = normalized.slice(offset, offset + OZON_LABEL_BATCH_SIZE);
-    const result = await fetchBatchWithDiagnostics(batch, options);
-    pdfs.push(...result.pdfs);
-    notReady.push(...result.notReady);
-  }
-
-  if (notReady.length > 0) {
-    throw new OzonPackageLabelsNotReadyError(notReady);
-  }
-  if (pdfs.length === 1) return pdfs[0];
-  return mergePdfDocuments(pdfs);
+  return fetchOfficialOzonPackageLabels(normalized, options);
 }
 
 export function ozonPackageLabelBundleFilename(count: number) {
   return `ozon-labels-${count}-postings-58x40.pdf`;
 }
 
-async function fetchBatchWithDiagnostics(
+async function fetchOfficialOzonPackageLabels(
   postingNumbers: string[],
-  options: { signal?: AbortSignal; attempts?: number },
-): Promise<{ pdfs: Uint8Array[]; notReady: string[] }> {
-  const results = await mapWithConcurrency<string, LabelFetchResult>(
-    postingNumbers,
-    OZON_LABEL_CONCURRENCY,
-    async (postingNumber) => {
-      try {
-        return { pdf: await fetchCurrentOzonPackageLabel(postingNumber, options) };
-      } catch (error) {
-        return { error };
-      }
-    },
+  options: LabelOptions,
+) {
+  const created = await ozonPost<LabelCreateResponse>(
+    "/v3/posting/fbs/package-label/create",
+    { posting_numbers: postingNumbers },
+    ozonOptions(options),
   );
-  const pdfs: Uint8Array[] = [];
-  const notReady: string[] = [];
-  for (let index = 0; index < results.length; index += 1) {
-    const result = results[index];
-    if ("pdf" in result) {
-      pdfs.push(result.pdf);
-      continue;
-    }
-    if (isLabelsNotReadyError(result.error)) {
-      notReady.push(postingNumbers[index]);
-      continue;
-    }
-    throw result.error;
+  const taskIds = normalizeTaskIds(created.tasks);
+  if (taskIds.length === 0) {
+    throw new OzonApiError("Ozon package label creation returned no tasks", {
+      retryable: false,
+      code: "ozon_label_tasks_missing",
+    });
   }
-  return { pdfs, notReady };
+
+  const results = await mapWithConcurrency(
+    taskIds,
+    OZON_LABEL_TASK_CONCURRENCY,
+    (taskId) => fetchOfficialLabelTask(taskId, postingNumbers, options),
+  );
+  const notReady = Array.from(new Set(results.flatMap((result) => result.notReady)));
+  if (notReady.length > 0) {
+    throw new OzonPackageLabelsNotReadyError(notReady);
+  }
+  const documents = results.flatMap((result) => result.pdf ? [result.pdf] : []);
+  if (documents.length !== taskIds.length) {
+    throw new OzonApiError("Ozon package label tasks returned incomplete files", {
+      retryable: false,
+      code: "ozon_label_files_missing",
+    });
+  }
+  if (documents.length === 1) return documents[0];
+  return mergePdfDocuments(documents);
 }
 
-function isLabelsNotReadyError(error: unknown) {
-  return error instanceof OzonApiError && (error.status === 400 || error.status === 409);
+async function fetchOfficialLabelTask(
+  taskId: number | string,
+  postingNumbers: string[],
+  options: LabelOptions,
+): Promise<LabelTaskResult> {
+  const pollAttempts = clampInteger(
+    options.pollAttempts ?? options.attempts ?? DEFAULT_POLL_ATTEMPTS,
+    1,
+    30,
+  );
+  const pollDelayMs = clampInteger(
+    options.pollDelayMs ?? DEFAULT_POLL_DELAY_MS,
+    0,
+    5000,
+  );
+
+  for (let attempt = 1; attempt <= pollAttempts; attempt += 1) {
+    const result = await ozonPost<LabelTaskResponse>(
+      "/v2/posting/fbs/package-label/get",
+      { task_id: taskId },
+      ozonOptions(options),
+    );
+    const notReady = normalizeUnprintedPostings(result.status?.unprinted_postings);
+    if (notReady.length > 0) return { notReady };
+    if (result.error != null) {
+      throw new OzonApiError("Ozon package label task failed", {
+        status: 409,
+        retryable: false,
+        code: "ozon_label_task_failed",
+      });
+    }
+    const fileUrl = result.file_url?.trim() ?? "";
+    if (fileUrl) {
+      return {
+        pdf: await downloadOfficialLabelPdf(fileUrl, options),
+        notReady: [],
+      };
+    }
+    if (attempt < pollAttempts) await abortableSleep(pollDelayMs, options.signal);
+  }
+
+  return { notReady: postingNumbers };
+}
+
+async function downloadOfficialLabelPdf(fileUrl: string, options: LabelOptions) {
+  const url = validateOfficialLabelUrl(fileUrl);
+  const attempts = clampInteger(options.attempts ?? 4, 1, 6);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (options.signal?.aborted) throw cancelledError(options.signal.reason);
+    try {
+      const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+      const signal = options.signal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : timeoutSignal;
+      const response = await fetch(url, { cache: "no-store", signal });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!response.ok) {
+        const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        const error = new OzonApiError(`Ozon package label file returned ${response.status}`, {
+          status: response.status,
+          retryable,
+          code: `ozon_label_file_http_${response.status}`,
+        });
+        if (!retryable || attempt >= attempts) throw error;
+        lastError = error;
+      } else {
+        await assertValidPdf(bytes);
+        return bytes;
+      }
+    } catch (error) {
+      if (error instanceof OzonApiError) throw error;
+      if (options.signal?.aborted) throw cancelledError(options.signal.reason);
+      lastError = error;
+      if (attempt >= attempts) break;
+    }
+    await abortableSleep(Math.min(3000, 300 * 2 ** (attempt - 1)), options.signal);
+  }
+  throw new OzonApiError("Ozon package label file download failed", {
+    retryable: true,
+    code: "ozon_label_file_download_failed",
+    cause: lastError,
+  });
+}
+
+async function assertValidPdf(bytes: Uint8Array) {
+  const signature = new TextDecoder("ascii").decode(bytes.slice(0, 5));
+  if (bytes.length < 5 || signature !== "%PDF-") {
+    throw new OzonApiError("Ozon package label file is not a PDF", {
+      retryable: false,
+      code: "ozon_invalid_pdf",
+    });
+  }
+  try {
+    const document = await PDFDocument.load(bytes, { updateMetadata: false });
+    if (document.getPageCount() < 1) throw new Error("PDF has no pages");
+  } catch (error) {
+    throw new OzonApiError("Ozon package label file is invalid", {
+      retryable: false,
+      code: "ozon_invalid_pdf",
+      cause: error,
+    });
+  }
+}
+
+function validateOfficialLabelUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new OzonApiError("Ozon package label file URL is invalid", {
+      retryable: false,
+      code: "ozon_label_file_url_invalid",
+      cause: error,
+    });
+  }
+  if (isAllowedTestUrl(url)) return url;
+  const hostname = url.hostname.toLowerCase();
+  const isOzonHost = hostname === "ozon.ru"
+    || hostname.endsWith(".ozon.ru")
+    || hostname === "ozone.ru"
+    || hostname.endsWith(".ozone.ru");
+  if (url.protocol !== "https:" || !isOzonHost) {
+    throw new OzonApiError("Ozon package label file URL is not trusted", {
+      retryable: false,
+      code: "ozon_label_file_url_untrusted",
+    });
+  }
+  return url;
+}
+
+function isAllowedTestUrl(url: URL) {
+  if (process.env.GETOMERCH_ALLOW_OZON_BASE_URL_OVERRIDE !== "true") return false;
+  const base = process.env.GETOMERCH_OZON_API_BASE_URL?.trim();
+  if (!base) return false;
+  return url.origin === new URL(base).origin;
 }
 
 async function mergePdfDocuments(documents: readonly Uint8Array[]) {
@@ -118,157 +260,54 @@ async function mergePdfDocuments(documents: readonly Uint8Array[]) {
   return target.save({ useObjectStreams: false });
 }
 
-async function fetchNormalizedOzonPackageLabels(
-  postingNumbers: readonly string[],
-  options: { signal?: AbortSignal; attempts?: number },
-) {
-  const documents = await mapWithConcurrency(
-    postingNumbers,
-    OZON_LABEL_CONCURRENCY,
-    (postingNumber) => fetchCurrentOzonPackageLabel(postingNumber, options),
-  );
-  if (documents.length === 1) return documents[0];
-  return mergePdfDocuments(documents);
+function normalizeTaskIds(tasks: LabelCreateResponse["tasks"]) {
+  if (!Array.isArray(tasks)) return [];
+  const ids = tasks
+    .map((task) => task?.task_id)
+    .filter((value): value is number | string => (
+      (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+      || (typeof value === "string" && /^\d+$/.test(value))
+    ));
+  return Array.from(new Set(ids.map(String)));
 }
 
-async function fetchCurrentOzonPackageLabel(
-  postingNumber: string,
-  options: { signal?: AbortSignal; attempts?: number },
-) {
-  const [officialPdfResult, postingResult] = await Promise.allSettled([
-    ozonPostPdf(
-      "/v2/posting/fbs/package-label",
-      { posting_number: [postingNumber] },
-      { signal: options.signal, attempts: options.attempts },
-    ),
-    ozonPost<OzonPostingResponse>(
-      "/v3/posting/fbs/get",
-      {
-        posting_number: postingNumber,
-        with: {
-          analytics_data: false,
-          barcodes: true,
-          financial_data: false,
-          translit: false,
-        },
-      },
-      { signal: options.signal, attempts: options.attempts },
-    ),
-  ]);
-  if (officialPdfResult.status === "rejected") throw officialPdfResult.reason;
-  if (postingResult.status === "rejected") throw postingResult.reason;
-  const officialPdf = officialPdfResult.value;
-  const posting = postingResult.value;
-  const scanit = posting.result?.scanit?.trim() ?? "";
-  if (!SCANIT_PATTERN.test(scanit)) {
-    throw new OzonApiError("Ozon has not prepared the current QR label code", {
-      status: 409,
-      retryable: false,
-      code: "ozon_label_scanit_missing",
-    });
+function normalizeUnprintedPostings(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const postings: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && POSTING_NUMBER_PATTERN.test(entry.trim())) {
+      postings.push(entry.trim());
+      continue;
+    }
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const candidate = record.posting_number ?? record.postingNumber;
+    if (typeof candidate === "string" && POSTING_NUMBER_PATTERN.test(candidate.trim())) {
+      postings.push(candidate.trim());
+    }
   }
-  return replacePackagePage(officialPdf, scanit);
+  return Array.from(new Set(postings));
 }
 
-async function replacePackagePage(officialPdf: Uint8Array, scanit: string) {
-  const source = await PDFDocument.load(officialPdf, { updateMetadata: false });
-  if (source.getPageCount() < 1) {
-    throw new OzonApiError("Ozon package label PDF has no pages", {
-      retryable: false,
-      code: "ozon_invalid_pdf",
-    });
+function normalizePostingNumbers(postingNumbers: readonly string[], max: number) {
+  if (postingNumbers.length < 1 || postingNumbers.length > max) {
+    throw new Error(`Для этикеток Ozon нужно передать от 1 до ${max} отправлений.`);
   }
-  const firstPage = source.getPage(0);
-  const { width, height } = firstPage.getSize();
-  const target = await PDFDocument.create();
-  const page = target.addPage([width, height]);
-  await drawCurrentPackagePage(target, page, scanit);
-  if (source.getPageCount() > 1) {
-    const productPages = await target.copyPages(
-      source,
-      source.getPageIndices().slice(1),
-    );
-    for (const productPage of productPages) target.addPage(productPage);
+  const normalized = postingNumbers.map((value) => value.trim());
+  if (normalized.some((value) => !POSTING_NUMBER_PATTERN.test(value))) {
+    throw new Error("Некорректный номер отправления Ozon.");
   }
-  return target.save({ useObjectStreams: false });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error("Номера отправлений Ozon не должны повторяться.");
+  }
+  return normalized;
 }
 
-async function drawCurrentPackagePage(
-  document: PDFDocument,
-  page: ReturnType<PDFDocument["addPage"]>,
-  scanit: string,
-) {
-  const { width, height } = page.getSize();
-  const qrBytes = await bwipjs.toBuffer({
-    bcid: "qrcode",
-    text: scanit,
-    version: "2",
-    scale: 8,
-    paddingwidth: 0,
-    paddingheight: 0,
-    backgroundcolor: "FFFFFF",
-    barcolor: "000000",
-  } as Parameters<typeof bwipjs.toBuffer>[0] & { version: string });
-  const qr = await document.embedPng(qrBytes);
-  const qrSize = Math.min(width * 0.23, height * 0.335);
-  const qrY = height * 0.577;
-  const sideMargin = width * 0.044;
-  page.drawImage(qr, { x: sideMargin, y: qrY, width: qrSize, height: qrSize });
-  page.drawImage(qr, {
-    x: width - sideMargin - qrSize,
-    y: qrY,
-    width: qrSize,
-    height: qrSize,
-  });
-
-  const bold = await document.embedFont(StandardFonts.HelveticaBold);
-  const regular = await document.embedFont(StandardFonts.Helvetica);
-  const logoSize = height * 0.17;
-  const logo = "OZON";
-  const logoWidth = bold.widthOfTextAtSize(logo, logoSize);
-  page.drawText(logo, {
-    x: (width - logoWidth) / 2,
-    y: height * 0.665,
-    size: logoSize,
-    font: bold,
-    color: grayscale(0),
-  });
-
-  const suffix = scanit.slice(-4);
-  const prefix = scanit.slice(0, -4);
-  const numberSize = height * 0.18;
-  const prefixWidth = regular.widthOfTextAtSize(prefix, numberSize);
-  const suffixWidth = bold.widthOfTextAtSize(suffix, numberSize);
-  const gap = width * 0.012;
-  const horizontalPadding = width * 0.022;
-  const boxWidth = suffixWidth + horizontalPadding * 2;
-  const boxHeight = numberSize * 1.16;
-  const totalWidth = prefixWidth + gap + boxWidth;
-  const startX = Math.max(width * 0.04, (width - totalWidth) / 2);
-  const numberY = height * 0.225;
-  const boxX = startX + prefixWidth + gap;
-  const boxY = numberY - numberSize * 0.16;
-  page.drawText(prefix, {
-    x: startX,
-    y: numberY,
-    size: numberSize,
-    font: regular,
-    color: grayscale(0),
-  });
-  page.drawRectangle({
-    x: boxX,
-    y: boxY,
-    width: boxWidth,
-    height: boxHeight,
-    color: grayscale(0),
-  });
-  page.drawText(suffix, {
-    x: boxX + horizontalPadding,
-    y: numberY,
-    size: numberSize,
-    font: bold,
-    color: rgb(1, 1, 1),
-  });
+function ozonOptions(options: LabelOptions) {
+  return {
+    signal: options.signal,
+    attempts: options.attempts,
+  };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -292,16 +331,32 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function normalizePostingNumbers(postingNumbers: readonly string[], max: number) {
-  if (postingNumbers.length < 1 || postingNumbers.length > max) {
-    throw new Error(`Для этикеток Ozon нужно передать от 1 до ${max} отправлений.`);
+function clampInteger(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) throw new Error("Invalid Ozon label integer option");
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+async function abortableSleep(milliseconds: number, signal?: AbortSignal) {
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
+    return;
   }
-  const normalized = postingNumbers.map((value) => value.trim());
-  if (normalized.some((value) => !POSTING_NUMBER_PATTERN.test(value))) {
-    throw new Error("Некорректный номер отправления Ozon.");
-  }
-  if (new Set(normalized).size !== normalized.length) {
-    throw new Error("Номера отправлений Ozon не должны повторяться.");
-  }
-  return normalized;
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(cancelledError(signal.reason));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function cancelledError(reason: unknown) {
+  return reason instanceof Error
+    ? reason
+    : new DOMException("The operation was aborted", "AbortError");
 }

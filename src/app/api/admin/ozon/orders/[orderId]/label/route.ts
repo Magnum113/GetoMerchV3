@@ -5,6 +5,7 @@ import { queryServerDatabase } from "@/lib/db/pool";
 import { OzonApiError } from "@/lib/ozon/client";
 import {
   fetchOzonPackageLabels,
+  OzonPackageLabelsNotReadyError,
   ozonPackageLabelFilename,
 } from "@/lib/ozon/package-label";
 
@@ -71,6 +72,14 @@ function assertUuid(value: string) {
 }
 
 function publicLabelError(error: unknown) {
+  if (error instanceof OzonPackageLabelsNotReadyError) {
+    return new AdminApiError(
+      409,
+      "conflict",
+      "Этикетка Ozon ещё не готова. Повторите через минуту.",
+      { cause: error },
+    );
+  }
   if (!(error instanceof OzonApiError)) return error;
   if (error.status === 400 || error.status === 409) {
     return new AdminApiError(
