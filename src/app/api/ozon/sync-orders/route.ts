@@ -72,34 +72,39 @@ interface OzonPosting {
 }
 
 interface FbsListResponse {
-  result?: { postings?: OzonPosting[]; has_next?: boolean };
+  postings?: OzonPosting[];
+  has_next?: boolean;
+  cursor?: string;
 }
 
 interface FboListResponse {
   result?: OzonPosting[];
 }
 
-// Полная история FBS — /v3/posting/fbs/list. Тянет ВСЁ за период.
+// Полная история FBS — /v4/posting/fbs/list. Тянет ВСЁ за период.
 async function fetchAllFbsPostings(sinceDays: number): Promise<OzonPosting[]> {
   const since = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
+  let cursor = "";
   const limit = 1000;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const r: FbsListResponse = await ozonPost("/v3/posting/fbs/list", {
-      dir: "DESC",
+    const r: FbsListResponse = await ozonPost("/v4/posting/fbs/list", {
+      sort_dir: "DESC",
       filter: { since, to },
       limit,
-      offset,
+      cursor,
       with: { analytics_data: true, financial_data: false },
     });
-    const items = r.result?.postings ?? [];
+    const items = r.postings ?? [];
     all.push(...items.map((p) => ({ ...p, source: "fbs" as const })));
-    if (!r.result?.has_next || items.length < limit) break;
-    offset += limit;
-    if (offset > 10000) break;
+    if (!r.has_next) break;
+    const nextCursor = r.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("FBS pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   return all;
 }
@@ -132,7 +137,7 @@ async function fetchAllFboPostings(sinceDays: number): Promise<OzonPosting[]> {
   return all;
 }
 
-// Активные — /v3/posting/fbs/unfulfilled/list. Он не возвращает отменённые
+// Активные — /v4/posting/fbs/unfulfilled/list. Он не возвращает отменённые
 // заказы, поэтому после него отдельно перепроверяем ранее активные отправления,
 // которые пропали из списка, через /v3/posting/fbs/get.
 async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
@@ -141,25 +146,28 @@ async function fetchUnfulfilledPostings(): Promise<OzonPosting[]> {
   const cutoffFrom = new Date(Date.now() - 60 * 86400 * 1000).toISOString();
   const cutoffTo = new Date(Date.now() + 90 * 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
+  let cursor = "";
   const limit = 1000;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const r = await ozonPost<{ result?: { postings?: OzonPosting[]; count?: number } }>(
-      "/v3/posting/fbs/unfulfilled/list",
+    const r = await ozonPost<FbsListResponse>(
+      "/v4/posting/fbs/unfulfilled/list",
       {
-        dir: "ASC",
+        sort_dir: "ASC",
         filter: { cutoff_from: cutoffFrom, cutoff_to: cutoffTo },
         limit,
-        offset,
+        cursor,
         with: { analytics_data: true, financial_data: false },
       },
     );
-    const items = r.result?.postings ?? [];
+    const items = r.postings ?? [];
     all.push(...items.map((p) => ({ ...p, source: "fbs" as const })));
-    if (items.length < limit) break;
-    offset += limit;
-    if (offset > 10000) break;
+    if (!r.has_next) break;
+    const nextCursor = r.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("Active FBS pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   return all;
 }

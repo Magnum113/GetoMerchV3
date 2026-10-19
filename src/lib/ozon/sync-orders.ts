@@ -152,24 +152,29 @@ async function fetchAllFbs(days: number, context: JobExecutionContext) {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const to = new Date(Date.now() + 86_400_000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
+  let cursor = "";
   for (let page = 1; page <= MAX_PAGES_GUARD; page += 1) {
     assertNotCancelled(context.signal);
     const response = await ozonPost<{
-      result?: { postings?: Omit<OzonPosting, "source">[]; has_next?: boolean };
-    }>("/v3/posting/fbs/list", {
-      dir: "DESC",
+      postings?: Omit<OzonPosting, "source">[];
+      has_next?: boolean;
+      cursor?: string;
+    }>("/v4/posting/fbs/list", {
+      sort_dir: "DESC",
       filter: { since, to },
       limit: PAGE_SIZE,
-      offset,
+      cursor,
       with: { analytics_data: true, financial_data: false },
     }, ozonOptions(context));
-    const items = response.result?.postings ?? [];
+    const items = response.postings ?? [];
     all.push(...items.map((item) => ({ ...item, source: "fbs" as const })));
     await context.report({ phase: "fetch_fbs", page, fetched: all.length });
-    if (!response.result?.has_next) return all;
-    if (items.length === 0) throw new Error("FBS pagination reported has_next without rows");
-    offset += items.length;
+    if (!response.has_next) return all;
+    const nextCursor = response.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("FBS pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   throw new Error("FBS pagination exceeded safety guard");
 }
@@ -206,23 +211,29 @@ async function fetchUnfulfilled(context: JobExecutionContext) {
   const cutoffFrom = new Date(Date.now() - 60 * 86_400_000).toISOString();
   const cutoffTo = new Date(Date.now() + 90 * 86_400_000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
+  let cursor = "";
   for (let page = 1; page <= MAX_PAGES_GUARD; page += 1) {
     assertNotCancelled(context.signal);
     const response = await ozonPost<{
-      result?: { postings?: Omit<OzonPosting, "source">[] };
-    }>("/v3/posting/fbs/unfulfilled/list", {
-      dir: "ASC",
+      postings?: Omit<OzonPosting, "source">[];
+      has_next?: boolean;
+      cursor?: string;
+    }>("/v4/posting/fbs/unfulfilled/list", {
+      sort_dir: "ASC",
       filter: { cutoff_from: cutoffFrom, cutoff_to: cutoffTo },
       limit: PAGE_SIZE,
-      offset,
+      cursor,
       with: { analytics_data: true, financial_data: false },
     }, ozonOptions(context));
-    const items = response.result?.postings ?? [];
+    const items = response.postings ?? [];
     all.push(...items.map((item) => ({ ...item, source: "fbs" as const })));
     await context.report({ phase: "fetch_active", page, fetched: all.length });
-    if (items.length < PAGE_SIZE) return all;
-    offset += items.length;
+    if (!response.has_next) return all;
+    const nextCursor = response.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("Active FBS pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   throw new Error("Active FBS pagination exceeded safety guard");
 }

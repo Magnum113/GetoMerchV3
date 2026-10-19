@@ -354,21 +354,32 @@ async function startOzonMock(product, testToken) {
   const server = http.createServer(async (request, response) => {
     const body = await readBody(request);
     const path = request.url || "";
-    if (path === "/v3/posting/fbs/unfulfilled/list") {
+    if (path === "/v4/posting/fbs/unfulfilled/list") {
       if (unfulfilledFailures < 4) {
         unfulfilledFailures += 1;
         return json(response, 503, { error: "temporary" });
       }
-      return json(response, 200, { result: { postings: [posting(`STAGE8-ACTIVE-${testToken}`, "awaiting_packaging", product)] } });
+      return json(response, 200, {
+        postings: [posting(`STAGE8-ACTIVE-${testToken}`, "awaiting_packaging", product)],
+        has_next: false,
+        cursor: "",
+      });
     }
     if (path === "/v3/posting/fbs/get") {
       return json(response, 200, { result: posting(String(body.posting_number), "cancelled", product) });
     }
-    if (path === "/v3/posting/fbs/list") {
-      const offset = Number(body.offset || 0);
-      return offset === 0
-        ? json(response, 200, { result: { postings: [posting(`STAGE8-FBS-1-${testToken}`, "delivered", product)], has_next: true } })
-        : json(response, 200, { result: { postings: [posting(`STAGE8-FBS-2-${testToken}`, "cancelled", product)], has_next: false } });
+    if (path === "/v4/posting/fbs/list") {
+      return !body.cursor
+        ? json(response, 200, {
+            postings: [posting(`STAGE8-FBS-1-${testToken}`, "delivered", product)],
+            has_next: true,
+            cursor: "fbs-page-2",
+          })
+        : json(response, 200, {
+            postings: [posting(`STAGE8-FBS-2-${testToken}`, "cancelled", product)],
+            has_next: false,
+            cursor: "",
+          });
     }
     if (path === "/v2/posting/fbo/list") {
       return json(response, 200, { result: Number(body.offset || 0) === 0 ? [posting(`STAGE8-FBO-${testToken}`, "delivered", product)] : [] });

@@ -12,11 +12,11 @@ if (baseUrl !== "https://api-seller.ozon.ru" && process.env.GETOMERCH_ALLOW_OZON
 const now = new Date();
 const since = new Date(now.getTime() - 2 * 86_400_000);
 
-await check("FBS postings", "/v3/posting/fbs/list", {
-  dir: "ASC",
-  filter: { since: since.toISOString(), to: now.toISOString(), status: "" },
+await check("FBS postings", "/v4/posting/fbs/list", {
+  sort_dir: "ASC",
+  filter: { since: since.toISOString(), to: now.toISOString() },
   limit: 1,
-  offset: 0,
+  cursor: "",
   with: { analytics_data: false, barcodes: false, financial_data: false, translit: true },
 });
 await check("product prices", "/v5/product/info/prices", {
