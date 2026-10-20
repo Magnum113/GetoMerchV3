@@ -381,8 +381,19 @@ async function startOzonMock(product, testToken) {
             cursor: "",
           });
     }
-    if (path === "/v2/posting/fbo/list") {
-      return json(response, 200, { result: Number(body.offset || 0) === 0 ? [posting(`STAGE8-FBO-${testToken}`, "delivered", product)] : [] });
+    if (path === "/v3/posting/fbo/list") {
+      if (!body.cursor) {
+        return json(response, 200, {
+          postings: [posting(`STAGE8-FBO-${testToken}`, "delivered", product)],
+          has_next: true,
+          cursor: "fbo-page-2",
+        });
+      }
+      return json(response, 200, {
+        postings: [],
+        has_next: false,
+        cursor: "",
+      });
     }
     if (path === "/v1/finance/accrual/types") {
       return json(response, 200, { accrual_types: [] });

@@ -79,7 +79,9 @@ interface FbsListResponse {
 }
 
 interface FboListResponse {
-  result?: OzonPosting[];
+  postings?: OzonPosting[];
+  has_next?: boolean;
+  cursor?: string;
 }
 
 // Полная история FBS — /v4/posting/fbs/list. Тянет ВСЁ за период.
@@ -110,30 +112,33 @@ async function fetchAllFbsPostings(sinceDays: number): Promise<OzonPosting[]> {
   return all;
 }
 
-// Полная история FBO — /v2/posting/fbo/list. Нужна для общей воронки заказов:
+// Полная история FBO — /v3/posting/fbo/list. Нужна для общей воронки заказов:
 // финансы Ozon включают FBS + FBO, поэтому блок "Заказы и доставки" должен
 // считать обе схемы.
 async function fetchAllFboPostings(sinceDays: number): Promise<OzonPosting[]> {
   const since = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
   const to = new Date(Date.now() + 86400 * 1000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
-  const limit = 1000;
+  let cursor = "";
+  const limit = 100;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const r: FboListResponse = await ozonPost("/v2/posting/fbo/list", {
-      dir: "DESC",
-      filter: { since, to, status: "" },
+    const r: FboListResponse = await ozonPost("/v3/posting/fbo/list", {
+      cursor,
+      filter: { since, to, status: [] },
       limit,
-      offset,
+      sort_dir: "DESC",
       translit: false,
-      with: { analytics_data: true, financial_data: false },
+      with: { analytics_data: true, financial_data: false, legal_info: false },
     });
-    const items = r.result ?? [];
+    const items = r.postings ?? [];
     all.push(...items.map((p) => ({ ...p, source: "fbo" as const })));
-    if (items.length < limit) break;
-    offset += limit;
-    if (offset > 10000) break;
+    if (!r.has_next) break;
+    const nextCursor = r.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("FBO pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   return all;
 }

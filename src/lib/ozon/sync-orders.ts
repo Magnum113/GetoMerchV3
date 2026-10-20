@@ -12,7 +12,7 @@ import type { JobExecutionContext } from "@/lib/jobs/execution";
 import { ozonPost } from "@/lib/ozon/client";
 
 const FBS_PAGE_SIZE = 100;
-const FBO_PAGE_SIZE = 1000;
+const FBO_PAGE_SIZE = 100;
 const MAX_PAGES_GUARD = 10_000;
 const STALE_REFRESH_CONCURRENCY = 4;
 const APPLY_CONCURRENCY = 4;
@@ -186,26 +186,34 @@ async function fetchAllFbo(days: number, context: JobExecutionContext) {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const to = new Date(Date.now() + 86_400_000).toISOString();
   const all: OzonPosting[] = [];
-  let offset = 0;
+  let cursor = "";
   for (let page = 1; page <= MAX_PAGES_GUARD; page += 1) {
     assertNotCancelled(context.signal);
-    const response = await ozonPost<{ result?: Omit<OzonPosting, "source">[] }>(
-      "/v2/posting/fbo/list",
+    const response = await ozonPost<{
+      postings?: Omit<OzonPosting, "source">[];
+      has_next?: boolean;
+      cursor?: string;
+    }>(
+      "/v3/posting/fbo/list",
       {
-        dir: "DESC",
-        filter: { since, to, status: "" },
+        cursor,
+        filter: { since, to, status: [] },
         limit: FBO_PAGE_SIZE,
-        offset,
+        sort_dir: "DESC",
         translit: false,
-        with: { analytics_data: true, financial_data: false },
+        with: { analytics_data: true, financial_data: false, legal_info: false },
       },
       ozonOptions(context),
     );
-    const items = response.result ?? [];
+    const items = response.postings ?? [];
     all.push(...items.map((item) => ({ ...item, source: "fbo" as const })));
     await context.report({ phase: "fetch_fbo", page, fetched: all.length });
-    if (items.length < FBO_PAGE_SIZE) return all;
-    offset += items.length;
+    if (!response.has_next) return all;
+    const nextCursor = response.cursor?.trim() ?? "";
+    if (items.length === 0 || !nextCursor || nextCursor === cursor) {
+      throw new Error("FBO pagination reported has_next without a new cursor");
+    }
+    cursor = nextCursor;
   }
   throw new Error("FBO pagination exceeded safety guard");
 }
